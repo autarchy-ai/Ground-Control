@@ -4,7 +4,8 @@ import { GIT_OBJECT_ID_RE, IMPLEMENT_CHECKOUT_MODES, REQUIREMENT_UID_GATE_ENV_VA
 import { extractGhErrorMessage } from "./grc-legacy-compat-2.js";
 import { assertSafeImplementCheckoutConfiguration, authorizeImplementRepoRoot, ensureGitRepo, readGitIdentity, resolveMcpLaunchWorkspaceAuthorization } from "./grc-legacy-compat-4.js";
 import { isSafeGitRefName, resolveWorkflowPrecommitCommand } from "./repo-context.js";
-import { EXACT_REQUIREMENT_UID_RE, execFile, isRequirementUidToken } from "./runtime-primitives.js";
+import { extractInScopeRequirementUids } from "./issue-requirements-scope.js";
+import { EXACT_REQUIREMENT_UID_RE, execFile } from "./runtime-primitives.js";
 import { runVerifiedGateBoundary } from "./verification-gates.js";
 
 function validatePrepareImplementBranchInput({
@@ -173,85 +174,6 @@ export function implementGateEnvironment(
     throw error;
   }
   return { ...baseEnv, [REQUIREMENT_UID_GATE_ENV_VAR]: requestedRequirementUid };
-}
-// These rewrite the lazy `\s+(.+?)\s*$` that reads as super-linear backtracking
-// (Sonar S8786), each exactly equivalent because heading titles are trimmed and
-// bullet tokens split on whitespace. Heading uses an unquantified `\s` before
-// `(.+)`, removing the quantifier-vs-quantifier ambiguity while still matching a
-// whitespace-only title (`##␠␠`) as the original did, so section breaks are
-// unchanged. Bullet keeps `\s+` (it must eat every space after the marker) and
-// anchors the capture at the first non-space `\S`; since `\s+` already consumed
-// the whitespace, that changes nothing behaviorally.
-const REQUIREMENTS_HEADING_RE = /^(#{1,6})\s(.+)$/;
-const REQUIREMENTS_BULLET_RE = /^\s*[-*+]\s+(\S.*)$/;
-
-const UID_TOKEN_LEADING_WRAPPERS = "`[(";
-const UID_TOKEN_TRAILING_WRAPPERS = "`)].:";
-
-// Strip wrapping punctuation a UID token may carry in prose (backticks,
-// brackets, parens, trailing sentence marks). A linear character scan; the
-// equivalent `[...]+$` regex reads as super-linear to the analyzer (S8786).
-function stripUidTokenWrappers(token) {
-  let start = 0;
-  let end = token.length;
-  while (start < end && UID_TOKEN_LEADING_WRAPPERS.includes(token[start])) start += 1;
-  while (end > start && UID_TOKEN_TRAILING_WRAPPERS.includes(token[end - 1])) end -= 1;
-  return token.slice(start, end);
-}
-
-// Collect the lines under a level 2-4 `## Requirements` section, ending at the
-// next heading of the same or higher level.
-function requirementsSectionLines(issueBody) {
-  const sectionLines = [];
-  let sectionLevel = null;
-  for (const line of issueBody.split(/\r?\n/)) {
-    const heading = REQUIREMENTS_HEADING_RE.exec(line);
-    if (!heading) {
-      if (sectionLevel != null) sectionLines.push(line);
-      continue;
-    }
-    const level = heading[1].length;
-    const title = heading[2].trim().toLowerCase();
-    if (sectionLevel == null) {
-      if (level >= 2 && level <= 4 && title === "requirements") sectionLevel = level;
-      continue;
-    }
-    if (level <= sectionLevel) break;
-    sectionLines.push(line);
-  }
-  return sectionLines;
-}
-
-// Read the leading run of UID tokens from one bullet line, stopping at the first
-// token that is not a recognizable UID. Recognition, not identity validation:
-// these tokens come from free-form issue prose, so the bounded-identifier
-// contract would accept ordinary words. The anchored recognizer still finds
-// allocator-minted short UIDs like APP-2, so a requirement-backed run is not
-// silently reduced to a requirement-free one (issue #1425).
-function requirementUidsFromBullet(line) {
-  const bullet = REQUIREMENTS_BULLET_RE.exec(line);
-  if (!bullet) return [];
-  const uids = [];
-  for (const token of bullet[1].split(/[\s,;]+/)) {
-    const candidate = stripUidTokenWrappers(token);
-    if (!isRequirementUidToken(candidate)) break;
-    uids.push(candidate);
-  }
-  return uids;
-}
-
-export function extractInScopeRequirementUids(issueBody) {
-  if (typeof issueBody !== "string" || issueBody === "") return [];
-  const seen = new Set();
-  const result = [];
-  for (const line of requirementsSectionLines(issueBody)) {
-    for (const candidate of requirementUidsFromBullet(line)) {
-      if (seen.has(candidate)) continue;
-      seen.add(candidate);
-      result.push(candidate);
-    }
-  }
-  return result;
 }
 export function requestedRequirementUidAuthorization(issueBody, requestedRequirementUid) {
   if (requestedRequirementUid == null || requestedRequirementUid === "") {

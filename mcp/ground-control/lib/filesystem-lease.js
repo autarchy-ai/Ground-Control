@@ -96,6 +96,20 @@ export async function acquireIntegrationLock(repoRoot, { retries = 0 } = {}) {
 // authorized per-worktree Git metadata directory (`git rev-parse --git-dir`),
 // so the lock file lives in Git metadata, never the working tree, and a linked
 // worktree gets its own lease instead of serializing on the common directory.
+// The issue-scope read-modify-write lease (issue #1569). gc_update_issue_requirements
+// GETs the issue body, resolves requirements, transforms, and PATCHes; without
+// serialization two concurrent `add` calls interleave so the slower one writes a body
+// derived from a stale scope and silently drops the UID the faster one added — a
+// narrowing that `add` is supposed to be incapable of. Like the publish lease, the lock
+// file lives in the per-worktree Git metadata directory, never the working tree.
+export async function acquireIssueScopeLock(gitDir, { retries = 5 } = {}) {
+  const canonical = canonicalLeaseDirectory("acquireIssueScopeLock", gitDir);
+  return acquireFilesystemLock(canonical, ".gc-issue-scope-lock", {
+    retries,
+    lockedMessage: `an issue-scope update is already in progress for: ${canonical}`,
+  });
+}
+
 export async function acquireImplementPublishLock(gitDir, { retries = 0 } = {}) {
   const canonical = canonicalLeaseDirectory("acquireImplementPublishLock", gitDir);
   return acquireFilesystemLock(canonical, ".gc-publish-lock", {

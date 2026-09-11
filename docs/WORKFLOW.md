@@ -12,6 +12,7 @@ a contract is stated once and read in one place.
 | Where does the MCP server read its configuration - the launch directory's `.env`, and nowhere else - and what happens when a gate cannot be evaluated? | [`mcp/ground-control/README.md`](../mcp/ground-control/README.md) and [`docs/DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) |
 | Why did the SonarCloud watcher stop before its window, and what is the difference between an analysis that has not arrived and one that will never exist? | [`docs/DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) § Step 11 and [`skills/implement/steps/step-11-sonarcloud.md`](../skills/implement/steps/step-11-sonarcloud.md) |
 | How are requirements written and traced? | [`docs/requirements/`](requirements/) and [ADR-093](../architecture/adrs/093-requirements-specs-as-code.md) |
+| How does a requirement introduced mid-run become in-scope for the run that introduced it? | [`docs/DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) and [ADR-029](../architecture/adrs/029-issue-thread-gate-model.md) - `gc_update_issue_requirements` is the only supported writer for an issue's `## Requirements` section |
 | Why is a decision the way it is? | [`architecture/adrs/`](../architecture/adrs/) |
 | What does CI verify? | [`docs/ci/CI_PIPELINE.md`](ci/CI_PIPELINE.md) |
 | How do I set up a clone and open a pull request? | [`CONTRIBUTING.md`](../CONTRIBUTING.md) |

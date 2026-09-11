@@ -140,6 +140,7 @@ schema plus a thin handler delegating to `lib.js`.
 |---|---|
 | `gc_get_repo_ground_control_context` | Read and validate the repo's `.ground-control.yaml`; returns workflow commands, routing, docs paths, and inlined plan rules |
 | `gc_create_github_issue` | Create a GitHub issue from a repo-local requirement and link it back |
+| `gc_update_issue_requirements` | Set the in-scope requirement UID list in an existing issue's `## Requirements` section; `add` unions, `remove` needs a repository writer's authorization comment, nothing else in the body moves |
 | `gc_remember` | Capture a knowledge-base entry under the repo's configured knowledge directory |
 | `gc_post_implementation_plan` | Post the Step 4 plan to the issue thread; requires the preflight marker |
 | `gc_close_issue_after_merge` | Idempotent post-merge issue close, gated on the PR actually being merged |

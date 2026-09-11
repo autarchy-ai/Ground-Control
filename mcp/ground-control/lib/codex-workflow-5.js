@@ -6,7 +6,8 @@
 
 import { realpathSync } from "node:fs";
 import { TEST_QUALITY_REVIEW_DEFAULT_MODEL, TEST_QUALITY_REVIEW_TIMEOUT_MS } from "./ci-watcher.js";
-import { assertImplementSyncCheckout, extractInScopeRequirementUids, fetchImplementBase, isImplementAncestor, readImplementGitOid, readImplementTreeOid, readRemoteImplementBranchSha } from "./codex-workflow-2.js";
+import { assertImplementSyncCheckout, fetchImplementBase, isImplementAncestor, readImplementGitOid, readImplementTreeOid, readRemoteImplementBranchSha } from "./codex-workflow-2.js";
+import { extractInScopeRequirementUids } from "./issue-requirements-scope.js";
 import { validateExistingSynchronizedImplementPr, validateImplementBranchName, validateImplementPrTitle } from "./codex-workflow.js";
 import { runGetIssueThread } from "./issue-thread.js";
 import { detectSensitiveBodyContent, extractGhErrorMessage } from "./grc-legacy-compat-2.js";
