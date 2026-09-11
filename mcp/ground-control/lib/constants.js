@@ -253,31 +253,6 @@ export function normalizeCrossCuttingConcernsConfig(raw) {
   if (errors.length) return { ok: false, errors };
   return { ok: true, value };
 }
-export function normalizeTelemetryConfig(raw) {
-  if (raw == null) {
-    return { ok: true, value: { enabled: false } };
-  }
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    return { ok: false, errors: ["telemetry must be a mapping, not a list or scalar"] };
-  }
-  const allowed = ["enabled"];
-  const errors = [];
-  for (const key of Object.keys(raw)) {
-    if (!allowed.includes(key)) {
-      errors.push(`telemetry has unknown key '${key}'`);
-    }
-  }
-  let enabled = false;
-  if (raw.enabled != null) {
-    if (typeof raw.enabled !== "boolean") {
-      errors.push("telemetry.enabled must be a boolean when set");
-    } else {
-      enabled = raw.enabled;
-    }
-  }
-  if (errors.length) return { ok: false, errors };
-  return { ok: true, value: { enabled } };
-}
 export function normalizeKnowledgeConfig(raw) {
   if (raw == null) {
     return { ok: true, value: null };

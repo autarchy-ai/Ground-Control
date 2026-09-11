@@ -7,7 +7,7 @@
 // documentation on the parser at all. A module named for its contract is the anchor.
 
 import { load as parseYaml } from "js-yaml";
-import { normalizeCrossCuttingConcernsConfig, normalizeExamplePathsConfig, normalizeKnowledgeConfig, normalizeRequirementsConfig, normalizeTelemetryConfig } from "./constants.js";
+import { normalizeCrossCuttingConcernsConfig, normalizeExamplePathsConfig, normalizeKnowledgeConfig, normalizeRequirementsConfig } from "./constants.js";
 import { normalizeRoutingConfig, normalizeWorkflowConfig } from "./repo-context-2.js";
 import { SUPPORTED_GROUND_CONTROL_SCHEMA_VERSIONS, normalizeDocsConfig, normalizeRulesConfig, normalizeSonarcloudConfig } from "./repo-context.js";
 import { normalizeArchitectureConfig } from "./repo-vocabulary.js";
@@ -126,9 +126,6 @@ export function parseGroundControlYaml(yamlText) {
   const routingResult = normalizeRoutingConfig(parsed.routing);
   if (!routingResult.ok) errors.push(...routingResult.errors);
 
-  const telemetryResult = normalizeTelemetryConfig(parsed.telemetry);
-  if (!telemetryResult.ok) errors.push(...telemetryResult.errors);
-
   const architectureResult = normalizeArchitectureConfig(parsed.architecture);
   if (!architectureResult.ok) errors.push(...architectureResult.errors);
 
@@ -151,7 +148,6 @@ export function parseGroundControlYaml(yamlText) {
       requirements: requirementsResult.value,
       cross_cutting_concerns: crossCuttingResult.value,
       routing: routingResult.value,
-      telemetry: telemetryResult.value,
       architecture: architectureResult.value,
     },
   };

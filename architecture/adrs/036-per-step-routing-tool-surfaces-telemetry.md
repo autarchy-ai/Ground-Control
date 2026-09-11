@@ -8,6 +8,15 @@ Accepted
 
 2026-05-11
 
+> **Issue #1303 amendment (2026-09-11):** The #1500 MCP-only re-platform removed
+> the persistence targets for step, workflow-run, and tool-call measurements.
+> The remaining telemetry emitters, lifecycle adapters, configuration knob, and
+> orchestration calls are now deleted rather than retained as non-enforcing
+> shadow work. This ADR remains Accepted for advisory per-step routing and the
+> deterministic durable-record tools. Its telemetry decisions below are
+> historical and superseded; telemetry is neither a gate nor a supported
+> current surface.
+
 > **Style sync for issue #751 (2026-06-14):** Repository-wide Vale cleanup normalized punctuation in workflow prose. This ADR's routing and durable-record tool contracts stay the same.
 
 ## Context

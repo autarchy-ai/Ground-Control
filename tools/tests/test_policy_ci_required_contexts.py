@@ -12,6 +12,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tools.policy.ci_strictness import (
     EXTERNALLY_POSTED_CONTEXTS,
@@ -141,6 +142,26 @@ class CiRequiredContextContractTest(unittest.TestCase):
             "every externally-posted context must still be a required context",
         )
 
+    def test_runtime_rejects_an_external_allowlist_entry_that_is_not_required(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = self._root(tmp_dir)
+            with patch(
+                "tools.policy.ci_strictness.EXTERNALLY_POSTED_CONTEXTS",
+                EXTERNALLY_POSTED_CONTEXTS | {"retired hosted check"},
+            ):
+                violations = run_ci_required_context_contract(root=root)
+            self.assertIn("ci-required-context-external-allowlist-drift", {v.code for v in violations})
+
+    def test_runtime_rejects_a_provider_map_that_does_not_exactly_cover_contexts(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = self._root(tmp_dir)
+            with patch(
+                "tools.policy.ci_strictness.CI_STRICTNESS_CONTEXT_PROVIDERS",
+                {"policy": 15368},
+            ):
+                violations = run_ci_required_context_contract(root=root)
+            self.assertIn("ci-required-context-provider-map-drift", {v.code for v in violations})
+
     def test_uses_the_display_name_when_a_job_sets_one(self):
         # GitHub reports `jobs.<id>.name` when present, so branch protection waits
         # on the display name, not the id. A gate that compared ids would pass here
@@ -203,6 +224,29 @@ class CiRequiredContextContractTest(unittest.TestCase):
             details = " ".join(d for v in violations for d in v.details)
             self.assertIn("main", details)
 
+    def test_rejects_a_required_context_producer_with_path_filters(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = self._root(tmp_dir)
+            produced = sorted(set(CI_STRICTNESS_REQUIRED_CONTEXTS) - EXTERNALLY_POSTED_CONTEXTS)
+            workflow = _workflow(produced).replace(
+                "    branches: [main, dev]\n",
+                "    branches: [main, dev]\n    paths: ['tools/**']\n",
+            )
+            (root / ".github" / "workflows" / "ci.yml").write_text(workflow, encoding="utf-8")
+            violations = run_ci_required_context_contract(root=root)
+            self.assertIn("ci-required-context-unproduced", {v.code for v in violations})
+
+    def test_rejects_a_scalar_branch_filter_instead_of_treating_it_as_unfiltered(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = self._root(tmp_dir)
+            produced = sorted(set(CI_STRICTNESS_REQUIRED_CONTEXTS) - EXTERNALLY_POSTED_CONTEXTS)
+            workflow = _workflow(produced).replace(
+                "    branches: [main, dev]\n", "    branches: main\n"
+            )
+            (root / ".github" / "workflows" / "ci.yml").write_text(workflow, encoding="utf-8")
+            violations = run_ci_required_context_contract(root=root)
+            self.assertIn("ci-required-context-unproduced", {v.code for v in violations})
+
     def test_accepts_producers_split_across_branch_filtered_workflows(self):
         # Splitting the same checks across a main-only and a dev-only workflow
         # satisfies both branches; the gate must not demand one workflow do both.
@@ -248,6 +292,12 @@ class CiRequiredContextContractTest(unittest.TestCase):
     def test_the_real_repository_satisfies_the_contract(self):
         violations = run_ci_required_context_contract()
         self.assertEqual(violations, [], msg=f"{[v.render() for v in violations]}")
+
+    def test_ci_runs_the_complete_pre_commit_configuration(self):
+        workflow = (Path(__file__).parents[2] / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("pre-commit run --all-files", workflow)
 
 
 class ProtectionFieldContractTest(unittest.TestCase):

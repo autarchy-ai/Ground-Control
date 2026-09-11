@@ -92,9 +92,6 @@ both the template and the code.
 
 | Variable | Effect when set |
 |---|---|
-| `GC_BASE_URL` | Enables workflow-run lifecycle measurement emission to that sink. Unset (the default) disables the emitter entirely - the server never attempts the call. |
-| `GROUND_CONTROL_API_TOKEN` | Bearer token for that measurement emission, when the sink requires one. |
-| `GROUND_CONTROL_PACK_REGISTRY_ADMIN_TOKEN` | Legacy token, preferred over the above for the two cross-project measurement rollups. |
 | `GC_CODEX_TIMEOUT_MS` | Per-invocation timeout for Codex-backed tools, within the bounds in `lib/model-subprocess.js`. |
 | `GC_CODEX_REVIEW_PARALLEL` | Runs the core and security reviewers concurrently when set to `2`. |
 | `GC_CODEX_REVIEW_MAX_DIFF_BYTES` | Diff-slice budget for a review cycle (see diff transport below). |
@@ -117,7 +114,7 @@ takes effect on the next server start.
 
 ## Tool surface
 
-The server registers **31 tools**. They are the `/implement`, `/quickfix`,
+The server registers **32 tools**. They are the `/implement`, `/quickfix`,
 `/integrate`, and `/review` workflow mechanics plus the coding-agent/reviewer separation - there is
 no entity CRUD surface and no ad-hoc REST escape hatch, because there is no
 backend behind them to read. Requirements and ADRs are read and written as repo
@@ -133,6 +130,8 @@ is checked rather than assumed.
 
 Registration lives in `mcp/ground-control/tools/*.js`; each tool is a zod input
 schema plus a thin handler delegating to `lib.js`.
+The complete keep/delete and placement record is in
+[`docs/architecture/SURVIVING_GATES.md`](../../docs/architecture/SURVIVING_GATES.md).
 
 **Repository context and issue entry (`tools/query.js`)**
 
@@ -208,13 +207,16 @@ enforcement layer every driver shares.
 For cross-repo workflow automation, define Ground Control context in a
 `.ground-control.yaml` file at the repo root. At minimum it declares
 `schema_version: 1` and a `project` identifier; optional sections include
-`workflow`, `sonarcloud`, `rules`, `knowledge`, `routing`, `telemetry`, plus the
+`workflow`, `sonarcloud`, `rules`, `knowledge`, `routing`, plus the
 workflow-packaging fields added in ADR-027: `docs.{adr_dir,
 architecture_overview, coding_standards, workflow_reference, knowledge_base}`,
 `example_paths.{source, test}`, `requirements.uid_examples`, and
 `cross_cutting_concerns.description`. A legacy `grc.*` block from a
 pre-ADR-089 config is tolerated and ignored - never validated, parsed, or
 returned.
+
+The legacy `telemetry` key is accepted for consumer compatibility but ignored;
+the backend projection and every emitter were retired by issues #1500 and #1303.
 
 `gc_get_repo_ground_control_context` reads and validates this file and is the
 only reader of it (ADR-027); the skills render their prose against the fields it

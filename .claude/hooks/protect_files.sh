@@ -8,9 +8,8 @@ fi
 
 BASENAME=$(basename "$FILE_PATH")
 
-# The two committed placeholder templates. They are secret-free by convention,
-# bin/policy requires them to exist (deploy-env-template-missing), and they are
-# the only way to advertise a config key at all — so they must be editable.
+# The committed root placeholder template is secret-free by convention and is
+# the only way to advertise a config key at all, so it must be editable.
 #
 # The exemption is by exact repository-relative path, never by basename: a
 # basename rule would exempt any nested `.env.example`, and an attacker-supplied
@@ -19,7 +18,6 @@ BASENAME=$(basename "$FILE_PATH")
 # for the same reason — the guard must judge the file that actually gets written.
 ENV_TEMPLATE_ALLOWLIST=(
     ".env.example"
-    "deploy/docker/.env.example"
 )
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"

@@ -10,7 +10,7 @@
 // TOOL SURFACE (issue #1500 re-platform)
 // ============================================================================
 //
-// The MCP server over repo-local files (issue #1500) exposes 31 tools that
+// The MCP server over repo-local files (issue #1500) exposes 32 tools that
 // back the /implement, /quickfix, /integrate, and /review workflow mechanics
 // plus the coding-agent<->reviewer separation. There is no backend, database, or
 // generic entity CRUD surface — requirements and ADRs are read/edited as
@@ -39,7 +39,6 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { installToolTelemetry } from "./telemetry.js";
 import { registerQuery } from "./tools/query.js";
 import { registerPostDecisionRecord } from "./tools/post-decision-record.js";
 import { registerReviewCapDisposition } from "./tools/review-cap-disposition.js";
@@ -51,12 +50,6 @@ import pkg from "./package.json" with { type: "json" };
 // package.json so it cannot drift from the package it ships in (issue #633). See
 // README.md "Server version and client compatibility" for the bump policy.
 const server = new McpServer({ name: "ground-control", version: pkg.version });
-
-// Install per-tool telemetry capture (ADR-059, issue #1104).
-// Must run BEFORE any server.tool / server.registerTool registration so all
-// tools are wrapped. Fail-open: a telemetry write failure never affects the
-// original tool result.
-installToolTelemetry(server);
 
 // Tool registrations live in ./tools/*.
 registerQuery(server);

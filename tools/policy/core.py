@@ -183,18 +183,6 @@ def extract_requirement_uid_tokens(body: str) -> list[str]:
     return tokens
 
 
-CI_PRE_COMMIT_HOOKS = (
-    "trailing-whitespace",
-    "end-of-file-fixer",
-    "check-yaml",
-    "check-json",
-    "check-added-large-files",
-    "check-merge-conflict",
-    "detect-private-key",
-    "gitleaks",
-)
-
-
 GROUND_CONTROL_YAML_PATH = Path(".ground-control.yaml")
 
 

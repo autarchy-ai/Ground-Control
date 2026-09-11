@@ -102,6 +102,28 @@ historical rationale for artifact identity, promotion, and rollback.
 The repo-wide guardrails and concept boundaries for this amendment are in
 [`architecture/notes/release-please-preflight.md`](../notes/release-please-preflight.md).
 
+## 2026-09-11 Amendment: MCP-only Release Surface (issue #1303)
+
+The #1500 re-platform removed the backend, frontend, container publication, and
+deployment surfaces. Release Please still owns the root manifest,
+`release-please-config.json`, generated `CHANGELOG.md`, immutable tag, and GitHub
+Release; there are currently no configured root-product mirror files. The MCP
+server and citation-package versions remain independent package coordinates.
+
+The release workflow therefore creates repository releases only. It does not
+build an image, publish to GHCR, or deploy. Repository policy validates strict
+SemVer, exact mirror equality, config/path containment, PR-title vocabulary
+parity, and full-SHA Action pins. The PR-title workflow is early feedback rather
+than a separate authority: policy keeps it aligned with `.ground-control.yaml`
+and the MCP PR boundary.
+
+The main-to-dev workflow keeps the human-merged back-sync decision, but its
+automation branch is now guarded by the `main` ref, automation ownership, the
+observed remote head OID, and exact `--force-with-lease`. The backend/image and
+deployment clauses in the 2026-07-15 amendment are historical and superseded.
+The complete current placement rationale is recorded in
+[`docs/architecture/SURVIVING_GATES.md`](../../docs/architecture/SURVIVING_GATES.md).
+
 ## Original Decision (superseded where the amendment conflicts)
 
 Release and deployment are **separate lifecycle events**. Deployment is the

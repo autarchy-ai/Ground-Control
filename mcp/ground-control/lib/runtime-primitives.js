@@ -154,8 +154,6 @@ function suggestedYamlPackagingSection() {
     "#   #   implementation:",
     "#   #     tier: medium",
     "#   #     model: claude-sonnet-5",
-    "# telemetry:",
-    "#   enabled: false",
     "",
   ];
 }

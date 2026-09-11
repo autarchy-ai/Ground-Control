@@ -19,6 +19,12 @@ workflow:
     pre_push_cap: 1
   test_quality_review:
     pre_push_cap: 1
+  # The advisory PR-title workflow and the privileged MCP PR-creation boundary
+  # consume this same contract; make policy rejects drift between them.
+  pr_title:
+    types: [feat, fix, docs, chore, refactor, test, build, ci, perf, style, revert]
+    require_scope: false
+    subject_pattern: '^[a-z].*$'
   # Exactly one codex cycle and one test-quality cycle per issue. The
   # auto-disposition gate is off, so nothing can grant an over-cap cycle on its
   # own; only an explicit human override_cap does.
@@ -59,8 +65,7 @@ cross_cutting_concerns:
     Tests: node --test suites at mcp/ground-control/*.test.js; Python unittest for repo policy tooling under tools/tests/
     Policy: repo-native checks via `make policy` (tools/policy + bin/policy), shared by Claude and Codex
 # Per ADR-036 — opt in to /implement cost reduction. Routing resolves
-# stage/purpose names to concrete agent/model choices; telemetry is operational
-# and can be flipped off without changing the gate contract.
+# stage/purpose names to concrete agent/model choices.
 routing:
   enabled: true
   default_provider: claude
@@ -122,9 +127,6 @@ routing:
     close_issue_after_merge:
       tier: low
       model: claude-haiku-4-5
-telemetry:
-  enabled: false
-
 # Repo design vocabulary (#931). The principal-engineer rubric in the codex
 # preflight + pre-push reviewers consumes this when present and falls back to
 # workflow-level defaults when absent. Per-repo content; nothing here is

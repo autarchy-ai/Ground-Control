@@ -191,12 +191,12 @@ class ImplementExecutionChecksTest(PolicyChecksFixture):
             "requirementUids": ["GC-O007", "GC-O009"],
             "adrRefs": ["ADR-036", "ADR-021 (amended)"],
             "summary": "Per-step routing + tool surfaces + telemetry.",
+            "changelogMode": "release-please",
             "changes": ["Added gc_post_decision_record"],
             "traceability": {
                 "implements": ["GC-O007 ← skills/implement/SKILL.md"],
                 "tests": ["GC-O007 ← mcp/ground-control/lib.test.js"],
             },
-            "changelogFragment": "changelog.d/868.changed.md",
         })
         violations = check_pr_body(body)
         codes = [v.code for v in violations]

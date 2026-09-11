@@ -19,8 +19,8 @@
 #   decouple runtime from worktree state at the cost of requiring a re-run
 #   whenever the repo-side hook file changes.
 #
-# Only hooks listed in WORKFLOW_HOOKS below are touched. Repo-scoped hooks
-# (protect_files.sh, verify-extra.sh) are wired via $CLAUDE_PROJECT_DIR in
+# Only hooks listed in WORKFLOW_HOOKS below are touched. The repo-scoped
+# protect_files.sh hook is wired via $CLAUDE_PROJECT_DIR in
 # .claude/settings.json and must NEVER land under ~/.claude/hooks/, so the
 # allowlist is explicit.
 #
@@ -60,8 +60,6 @@ WORKFLOW_HOOKS=(
   "git-merge-guard.py"
   "block-defer-language.py"
   "block-implement-worktree.py"
-  "log-skill-call.sh"
-  "verify-implementation.sh"
 )
 
 force=0

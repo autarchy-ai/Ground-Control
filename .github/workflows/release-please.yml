@@ -9,7 +9,7 @@ name: Release Please
 # After the context-graph teardown (issue #1500) there is no backend image to publish:
 # Ground Control is the MCP server over repo-local files, so this workflow no longer builds
 # or pushes a GHCR artifact. The release PR is opened by GITHUB_TOKEN, so `dev`'s required
-# checks do not auto-run on it — admin/one-click merge it. The main -> dev back-merge is
+# checks do not auto-run on it — a maintainer reviews and merges it. The main -> dev back-merge is
 # handled by sync-main-to-dev.yml.
 on:
   push:

@@ -257,7 +257,7 @@ describe("runStationWithNonVerdictRetry", () => {
     assert.equal(result.attempts[0].failure_class, "cancelled");
   });
 
-  it("records every attempt with a distinct ordinal so measurement never dedupes them", async () => {
+  it("records every attempt with a distinct ordinal for the observation ledger", async () => {
     // The ADR-090 aggregate collapses duplicate ordinals within a run, so a re-attempt that
     // reused an ordinal would vanish from the attempt sequence instead of showing the rework.
     let calls = 0;

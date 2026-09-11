@@ -18,9 +18,7 @@
             "skills/review/steps/**",
             ".claude/skills/implement/SKILL.md",
             ".claude/skills/integrate/SKILL.md",
-            ".claude/agents/completion-verifier.md",
             ".claude/rules/*.md",
-            ".claude/hooks/verify-extra.sh",
             ".github/PULL_REQUEST_TEMPLATE.md",
             "AGENTS.md"
           ],

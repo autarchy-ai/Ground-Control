@@ -8,11 +8,13 @@ Accepted
 
 2026-04-05
 
-> **Documentation sync for issue #650 (2026-09-05):** The SKILL's telemetry paragraph claimed
-> step telemetry was retired and then described writing durable rows into the ADR-061 backend
-> projection. The projection went with the backend (#1500), so the paragraph now states the
-> single true position: `telemetry.enabled` is `false`, the orchestrator makes no telemetry
-> call, and nothing is recorded. Telemetry never gated a phase, so no gate changes. The workflow
+> **Documentation sync for issues #650 and #1303 (2026-09-11):** The ADR-061
+> projection went with the backend (#1500), and #1303 removes the surviving
+> emitters and the active `telemetry` configuration surface. Legacy consumer
+> configs may still carry that key, but it is ignored. Telemetry never gated a
+> phase, so no gate changes. The same audit deletes the unregistered completion
+> verifier, backend-only implementation rule, and duplicated hook copies; the
+> configured mechanical, policy, review, and readiness gates remain. The workflow
 > documents are reconciled in the same change: `docs/DEVELOPMENT_WORKFLOW.md` drops the contract
 > surface, rollback, and Java-era sections whose subjects were deleted, and `docs/WORKFLOW.md`
 > becomes a navigation page rather than a second, contradictory workflow definition. This ADR's
@@ -62,7 +64,6 @@ Codify the gated agentic development loop as a first-class requirement (GC-O007)
 
 The workflow is implemented by:
 - `/implement` skill (`.claude/skills/implement/SKILL.md`)
-- Completion verifier agent (`.claude/agents/completion-verifier.md`)
 - Repo-native policy guardrails (`architecture/policies/adr-policy.json`, `bin/policy`, `make policy`)
 - Development workflow docs (`docs/DEVELOPMENT_WORKFLOW.md`, `docs/WORKFLOW.md`)
 - Repo-local workflow config at `.ground-control.yaml` (with larger rule files under `.gc/`), resolved by `gc_get_repo_ground_control_context`. `AGENTS.md` carries a brief pointer to this config rather than the full workflow definition inline.

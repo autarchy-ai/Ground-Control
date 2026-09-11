@@ -4,7 +4,6 @@
 // (docs/CODING_STANDARDS.md, Sonar S104). It contained no mutual recursion, so it was
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
-import { request } from "./api-controls-2.js";
 import { detectSensitiveBodyContent, extractGhErrorMessage } from "./grc-legacy-compat-2.js";
 import { getOwnerRepo } from "./grc-legacy-compat-3.js";
 import { ensureGitRepo } from "./grc-legacy-compat-4.js";
@@ -13,9 +12,6 @@ import { checkVerdictBlockingConsistency } from "./grc-legacy-compat.js";
 import { DECISION_RECORD_CLASSIFICATIONS, DECISION_RECORD_DECISIONS, DECISION_RECORD_REVIEWERS, GITHUB_ISSUE_COMMENT_BODY_MAX, buildDecisionRecordMarker, rejectReservedMarkerSequence } from "./repo-vocabulary.js";
 import { execFile } from "./runtime-primitives.js";
 
-export async function getDocumentReadingOrder(documentId) {
-  return request("GET", `/api/v1/documents/${encodeURIComponent(documentId)}/reading-order`);
-}
 function validateDecisionHeader({ issueNumber, cycle, reviewer, verdict, architectural_read }) {
   const errors = [];
   if (!Number.isInteger(issueNumber) || issueNumber <= 0) {

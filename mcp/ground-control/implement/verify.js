@@ -4,7 +4,7 @@
 // (docs/CODING_STANDARDS.md). gc-implement-mechanical.js remains the tool entry point.
 
 import { dominantGate, implementGateEnvironment, isVerificationAttestationActive, produceVerificationAttestation, readImplementWorkingTreeOid, resolveWorkflowPolicyCommand, runImplementCompletionPolicyGates, runVerifiedGateBoundary } from "../lib.js";
-import { childGateArtifactPaths, commandFailure, emitPolicyAndValeAttempts, emitSpotbugsAttempt, failure, readStatus } from "./gate-helpers.js";
+import { commandFailure, failure, readStatus } from "./gate-helpers.js";
 
 // Resolve and validate everything verify needs before running gates: repository
 // context, an authorized mutation checkout, a configured completion command, and
@@ -62,11 +62,10 @@ async function resolveVerifyInputs(args, deps, action) {
 }
 
 // Run the completion/policy gates through the attestation boundary (feature ON) or
-// the shared runner (feature OFF), emitting the persisted-artifact measurement on
-// both the success and failure paths. Returns the bound tree/toolchain identity and
+// the shared runner (feature OFF). Returns the bound tree/toolchain identity and
 // timings, or `{ ok: false, failure }` mapping the gate error to a refusal.
 async function executeVerificationGates(
-  { deps, action, repoRoot, context, childEnv, artifacts, gatesStartedAt, attestationActive },
+  { deps, action, repoRoot, context, childEnv, attestationActive },
 ) {
   let timings;
   let boundTreeOid = null;
@@ -92,13 +91,11 @@ async function executeVerificationGates(
       }));
     }
   } catch (error) {
-    await emitVerificationMeasurement(deps.emitter, repoRoot, artifacts, error.timings ?? [], gatesStartedAt);
     if (error.code === "implement_mechanical_gate_tree_changed") {
       return { ok: false, failure: failure(action, error.code, error.message ?? "A verification boundary changed the checkout", "inspect_and_commit_or_revert_gate_generated_changes") };
     }
     return { ok: false, failure: commandFailure(action, `${error.gatePhase ?? "completion"}_gate`, error) };
   }
-  await emitVerificationMeasurement(deps.emitter, repoRoot, artifacts, timings, gatesStartedAt);
   return { ok: true, timings, boundTreeOid, boundToolchainDigest };
 }
 
@@ -122,25 +119,18 @@ export async function runVerify(args, deps) {
   if (inputs.failure) return inputs.failure;
   const { context, repoRoot, command, authorized } = inputs;
   const gateEnv = implementGateEnvironment(authorized.requirementUid);
-  // Child gates write their own structured artifacts so their facts come from the run that
-  // already happened. Nothing is re-executed to be measured, and no combined console transcript
-  // is parsed (issue #1355).
-  const artifacts = childGateArtifactPaths(repoRoot);
-  const childEnv = { ...gateEnv, GC_POLICY_JSON: artifacts.policy, GC_VALE_JSON: artifacts.vale };
+  const childEnv = gateEnv;
   const policyCommand = resolveWorkflowPolicyCommand(context);
   const attestationActive = isVerificationAttestationActive(context);
-  // Measurement is emitted from the persisted gate artifacts after the run,
-  // independent of gate execution.
   // Feature ON: run through the ONE shared invariant-preserving boundary — the
   // same base synchronization uses (issue #1497) — which binds the working-tree
   // content oid + toolchain digest and re-validates them after the fingerprint
   // and after each gate, so the attestation can only describe the exact candidate
   // every gate observed. Feature OFF: keep the cheap porcelain no-mutation guard,
   // so a repo that never reuses pays nothing for the content-oid machinery.
-  const gatesStartedAt = new Date();
   const before = attestationActive ? null : await readStatus(repoRoot, deps.runGit, deps.execFile);
   const gateOutcome = await executeVerificationGates({
-    deps, action, repoRoot, context, childEnv, artifacts, gatesStartedAt, attestationActive,
+    deps, action, repoRoot, context, childEnv, attestationActive,
   });
   if (!gateOutcome.ok) return gateOutcome.failure;
   const { timings, boundTreeOid, boundToolchainDigest } = gateOutcome;
@@ -181,28 +171,6 @@ export async function runVerify(args, deps) {
   };
 }
 
-// Emit the SpotBugs, policy, and Vale station attempts from the artifacts the
-// gates persisted. Separated from gate execution so both paths use the one
-// shared runner; a missing artifact is recorded as unmeasured, never a pass.
-function emitVerificationMeasurement(emitter, repoRoot, artifacts, timings, gatesStartedAt) {
-  const completion = timings.find((entry) => entry.phase === "completion");
-  const policy = timings.some((entry) => entry.phase === "policy");
-  const tasks = [];
-  if (completion) {
-    tasks.push(emitSpotbugsAttempt(emitter, repoRoot, {
-      startedAt: gatesStartedAt,
-      durationMs: completion.duration_ms,
-      // Gradle's report tree is not cleared between attempts, so the emitter needs a
-      // floor to tell this attempt's report from the last one's.
-      freshnessFloorMs: artifacts.freshnessFloorMs,
-    }));
-  }
-  if (policy) {
-    const policyStartedAt = new Date(gatesStartedAt.getTime() + (completion?.duration_ms ?? 0));
-    tasks.push(emitPolicyAndValeAttempts(emitter, artifacts, policyStartedAt));
-  }
-  return Promise.all(tasks);
-}
 export function validateCommitMessage(message) {
   if (typeof message !== "string" || message.trim() === "") {
     return "commit_message is required";

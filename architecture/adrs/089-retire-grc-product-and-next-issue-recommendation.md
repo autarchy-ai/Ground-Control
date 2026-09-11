@@ -35,8 +35,8 @@ established planning signal.
 Issue #1346 makes the retirement decision. This ADR supersedes ADR-057 and
 ADR-058 for active product and workflow behavior, and reverses only the
 next-issue-recommendation amendments to ADR-021 and ADR-036. Their durable
-issue-record, one-human-touchpoint, routing, telemetry, and merge-verification
-decisions remain in force.
+issue-record, one-human-touchpoint, routing, and merge-verification decisions
+remain in force. ADR-036 telemetry was later superseded by issue #1303.
 
 ## Decision
 

@@ -284,8 +284,8 @@ describe("runPostDecisionRecord / runPostFinalReport boundary checks (codex cycl
   });
 });
 
-describe("parseGroundControlYaml routing/telemetry knobs", () => {
-  it("defaults routing.enabled and telemetry.enabled to false when omitted", () => {
+describe("parseGroundControlYaml routing and retired telemetry compatibility", () => {
+  it("defaults routing.enabled to false and exposes no telemetry surface", () => {
     const r = parseGroundControlYaml("schema_version: 1\nproject: gc\n");
     assert.equal(r.ok, true);
     assert.deepEqual(r.value.routing, {
@@ -293,24 +293,23 @@ describe("parseGroundControlYaml routing/telemetry knobs", () => {
       default_provider: "claude",
       stages: {},
     });
-    assert.deepEqual(r.value.telemetry, { enabled: false });
+    assert.equal(Object.hasOwn(r.value, "telemetry"), false);
   });
 
-  it("accepts routing.enabled=true and telemetry.enabled=true", () => {
+  it("accepts routing.enabled=true and ignores a legacy telemetry value", () => {
     const r = parseGroundControlYaml([
       "schema_version: 1",
       "project: gc",
       "routing:",
       "  enabled: true",
-      "telemetry:",
-      "  enabled: true",
+      "telemetry: retired-consumer-value",
       "",
     ].join("\n"));
     assert.equal(r.ok, true);
     assert.equal(r.value.routing.enabled, true);
     assert.equal(r.value.routing.default_provider, "claude");
     assert.deepEqual(r.value.routing.stages, {});
-    assert.equal(r.value.telemetry.enabled, true);
+    assert.equal(Object.hasOwn(r.value, "telemetry"), false);
   });
 
   it("accepts stage routing with canonical Claude model ids", () => {
@@ -333,7 +332,7 @@ describe("parseGroundControlYaml routing/telemetry knobs", () => {
     });
   });
 
-  it("rejects unknown subkeys under routing/telemetry", () => {
+  it("rejects unknown subkeys under routing", () => {
     const r1 = parseGroundControlYaml([
       "schema_version: 1",
       "project: gc",
@@ -344,17 +343,6 @@ describe("parseGroundControlYaml routing/telemetry knobs", () => {
     ].join("\n"));
     assert.equal(r1.ok, false);
     assert.ok(r1.errors.some((e) => /routing has unknown key 'fast_path'/.test(e)));
-
-    const r2 = parseGroundControlYaml([
-      "schema_version: 1",
-      "project: gc",
-      "telemetry:",
-      "  enabled: true",
-      "  log_dir: /tmp",
-      "",
-    ].join("\n"));
-    assert.equal(r2.ok, false);
-    assert.ok(r2.errors.some((e) => /telemetry has unknown key 'log_dir'/.test(e)));
   });
 
   it("rejects non-boolean enabled values", () => {
