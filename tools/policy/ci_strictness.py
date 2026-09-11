@@ -135,6 +135,23 @@ def _matches_any(branch: str, patterns: list[object]) -> bool:
     return any(fnmatch.fnmatch(branch, str(pattern)) for pattern in patterns)
 
 
+def _valid_branch_filter(trigger: dict[str, object], key: str) -> bool:
+    """Whether an optional branch filter is a list containing only strings."""
+    if key not in trigger:
+        return True
+    value = trigger[key]
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _branch_filters_cover(branch: str, trigger: dict[str, object]) -> bool:
+    """Whether valid allow/ignore branch filters select ``branch``."""
+    ignored = trigger.get("branches-ignore", [])
+    allowed = trigger.get("branches")
+    excluded = isinstance(ignored, list) and _matches_any(branch, ignored)
+    included = not isinstance(allowed, list) or _matches_any(branch, allowed)
+    return included and not excluded
+
+
 def _trigger_covers(branch: str, pull_request: object) -> bool:
     """Whether a `pull_request` trigger runs for pull requests into `branch`.
 
@@ -145,21 +162,16 @@ def _trigger_covers(branch: str, pull_request: object) -> bool:
         return True
     if not isinstance(pull_request, dict):
         return False
-    if "paths" in pull_request or "paths-ignore" in pull_request:
-        return False
-    ignore = pull_request.get("branches-ignore")
-    if "branches-ignore" in pull_request and (
-        not isinstance(ignore, list) or not all(isinstance(item, str) for item in ignore)
-    ):
-        return False
-    if isinstance(ignore, list) and _matches_any(branch, ignore):
-        return False
-    allowed = pull_request.get("branches")
-    if "branches" in pull_request and (
-        not isinstance(allowed, list) or not all(isinstance(item, str) for item in allowed)
-    ):
-        return False
-    return not isinstance(allowed, list) or _matches_any(branch, allowed)
+    has_path_filter = any(key in pull_request for key in ("paths", "paths-ignore"))
+    valid_branch_filters = all(
+        _valid_branch_filter(pull_request, key)
+        for key in ("branches", "branches-ignore")
+    )
+    return (
+        not has_path_filter
+        and valid_branch_filters
+        and _branch_filters_cover(branch, pull_request)
+    )
 
 
 def _load_workflow(path: Path) -> dict[str, object] | None:
@@ -382,29 +394,36 @@ def run_ci_required_context_contract(root: Path = REPO_ROOT) -> list[Violation]:
     return violations + ([unproduced] if unproduced else [])
 
 
+def _pr_title_contract_from_step(step: object) -> dict[str, object] | None:
+    """Extract the semantic-title inputs from one workflow step, if present."""
+    values = step.get("with") if isinstance(step, dict) else None
+    if not isinstance(values, dict) or "types" not in values:
+        return None
+    raw_types = values["types"]
+    types = (
+        [line.strip() for line in raw_types.splitlines() if line.strip()]
+        if isinstance(raw_types, str)
+        else raw_types
+    )
+    return {
+        "types": types,
+        "require_scope": values.get("requireScope", False),
+        "subject_pattern": values.get("subjectPattern"),
+    }
+
+
 def _pr_title_ci_contract(root: Path) -> dict[str, object] | None:
+    """Read the advisory PR-title Action's configured validation contract."""
     document = _load_workflow(root / PR_TITLE_WORKFLOW_PATH)
     jobs = document.get("jobs") if document else None
     job = jobs.get("lint-pr-title") if isinstance(jobs, dict) else None
     steps = job.get("steps") if isinstance(job, dict) else None
     if not isinstance(steps, list):
         return None
-    for step in steps:
-        values = step.get("with") if isinstance(step, dict) else None
-        if not isinstance(values, dict) or "types" not in values:
-            continue
-        raw_types = values["types"]
-        types = (
-            [line.strip() for line in raw_types.splitlines() if line.strip()]
-            if isinstance(raw_types, str)
-            else raw_types
-        )
-        return {
-            "types": types,
-            "require_scope": values.get("requireScope", False),
-            "subject_pattern": values.get("subjectPattern"),
-        }
-    return None
+    return next(
+        (contract for step in steps if (contract := _pr_title_contract_from_step(step))),
+        None,
+    )
 
 
 def run_pr_title_contract(root: Path = REPO_ROOT) -> list[Violation]:
