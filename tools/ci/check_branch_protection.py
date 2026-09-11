@@ -82,7 +82,9 @@ def build_protection_read_args(branch: str) -> list[str]:
     ]
 
 
-def collect_live_protection(branches=CI_STRICTNESS_BRANCHES) -> dict:
+def collect_live_protection(
+    branches: tuple[str, ...] = CI_STRICTNESS_BRANCHES,
+) -> dict[str, object]:
     """Fetch each protected branch's live protection document through `gh`.
 
     A branch whose protection cannot be read maps to an `Unevaluable` naming why,
@@ -133,6 +135,7 @@ def build_report() -> ProtectionReport:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """The parsed command line."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--json", action="store_true", help="emit the structured report instead of Markdown"
@@ -141,6 +144,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Print the comparison and return its three-valued exit code."""
     args = parse_args(argv)
     report = build_report()
     if args.json:

@@ -12,11 +12,13 @@ import json
 import unittest
 
 from tools.ci.branch_protection_compare import (
-    PROTECTION_FIELD_READERS,
-    PROTECTION_TOGGLE_SECTIONS,
     compare_protection,
     render_markdown,
     report_for_invalid_baseline,
+)
+from tools.ci.branch_protection_readers import (
+    PROTECTION_FIELD_READERS,
+    PROTECTION_TOGGLE_SECTIONS,
 )
 from tools.ci.check_branch_protection import (
     GH_TIMEOUT_SECONDS,

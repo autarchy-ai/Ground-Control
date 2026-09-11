@@ -14,6 +14,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
+from .branch_protection_readers import (
+    MISSING,
+    PROTECTION_FIELD_READERS,
+    live_required_checks,
+)
 from tools.policy.branch_protection_baseline import (
     BRANCH_PROTECTION_BASELINE_PATH,
     CI_STRICTNESS_BRANCHES,
@@ -25,11 +30,9 @@ from tools.policy.branch_protection_baseline import (
     is_declared_type,
 )
 
-MISSING = object()
-
 
 @dataclass(frozen=True)
-class Drift:
+class Drift(object):
     """One difference between the declared protection and the live protection."""
 
     branch: str
@@ -39,6 +42,7 @@ class Drift:
     note: str | None = dataclass_field(default=None)
 
     def render(self) -> str:
+        """This difference as one line, naming both values."""
         suffix = f" ({self.note})" if self.note else ""
         return (
             f"{self.branch}: {self.field} declared {self.declared!r}, "
@@ -47,7 +51,7 @@ class Drift:
 
 
 @dataclass(frozen=True)
-class Unevaluable:
+class Unevaluable(object):
     """One branch whose live protection could not be compared at all.
 
     `reason` is a stable key so a caller can branch on the kind of failure —
@@ -61,147 +65,28 @@ class Unevaluable:
     detail: str
 
     def render(self) -> str:
+        """This refusal as one line, naming its stable reason."""
         return f"{self.branch}: {self.reason} ({self.detail})"
 
 
 @dataclass(frozen=True)
-class ProtectionReport:
+class ProtectionReport(object):
+    """One comparison's outcome: what differs, and what could not be compared."""
+
     drifts: tuple[Drift, ...]
     unevaluable: tuple[Unevaluable, ...]
 
     @property
     def exit_code(self) -> int:
+        """0 when protection matches, 1 on drift, 2 when a branch was not compared."""
         if self.unevaluable:
             return 2
         return 1 if self.drifts else 0
 
 
-# Baseline field -> (live `{"enabled": bool}` section, whether its sense inverts).
-# Declared as data rather than buried in closures so the tests can drive one drift
-# case per entry: three of these sections report the same default value, so a reader
-# bound to the wrong section would produce identical results on every fixture and be
-# caught by nothing. `admin_bypass_allowed` is the one inverted entry, because
-# administrators bypassing protection is the *absence* of enforcement and the
-# baseline records the permission rather than the enforcement.
-PROTECTION_TOGGLE_SECTIONS = {
-    "admin_bypass_allowed": ("enforce_admins", True),
-    "conversation_resolution_required": ("required_conversation_resolution", False),
-    "deletions_allowed": ("allow_deletions", False),
-    "force_pushes_allowed": ("allow_force_pushes", False),
-}
-
-
-def _toggle(section: str, *, negated: bool = False):
-    """Read a `{"enabled": bool}` subsection, optionally inverting its sense.
-
-    An absent or non-boolean wrapper reads as MISSING rather than as `false`:
-    "GitHub did not report this" is not "GitHub reported it off".
-    """
-
-    def read(live: dict) -> object:
-        subsection = live.get(section)
-        if not isinstance(subsection, dict) or not isinstance(subsection.get("enabled"), bool):
-            return MISSING
-        return (not subsection["enabled"]) if negated else subsection["enabled"]
-
-    return read
-
-
-def _pull_request_required(live: dict) -> object:
-    """Whether changes must land through a pull request.
-
-    Classic branch protection expresses this as the presence of the
-    `required_pull_request_reviews` document; there is no separate boolean.
-    """
-    return isinstance(live.get("required_pull_request_reviews"), dict)
-
-
-def _required_status_checks(live: dict) -> object:
-    checks = live.get("required_status_checks")
-    return checks if isinstance(checks, dict) else MISSING
-
-
-def _review_policy(live: dict) -> object:
-    reviews = live.get("required_pull_request_reviews")
-    return reviews if isinstance(reviews, dict) else MISSING
-
-
-# Baseline field -> how to read the same fact out of GitHub's protection document.
-# A reader returning MISSING means live protection did not report the field, which
-# is drift rather than a match against a default.
-PROTECTION_FIELD_READERS = {
-    **{
-        field: _toggle(section, negated=negated)
-        for field, (section, negated) in PROTECTION_TOGGLE_SECTIONS.items()
-    },
-    "changes_land_via_pull_request": _pull_request_required,
-    "required_status_checks": _required_status_checks,
-    "review_policy": _review_policy,
-}
-
-
-def _legacy_context_names(entries: object) -> set[str] | None:
-    """The names in the deprecated flat `contexts` array, or None when malformed.
-
-    Returning None rather than coercing is the point: `{str(name) for name in ...}`
-    would turn a reported `123` into the context `"123"` and compare it against the
-    declaration as though GitHub had said so.
-    """
-    if not isinstance(entries, list):
-        return None
-    if not all(isinstance(entry, str) for entry in entries):
-        return None
-    return set(entries)
-
-
-def _check_bindings(entries: object) -> tuple[dict[str, object] | None, str | None]:
-    """Each required check's context name mapped to the App id bound to it.
-
-    The binding is part of the contract, not decoration: branch protection can
-    restrict a required check to one App, and without that restriction any actor
-    able to publish a commit status or check run can post a green `policy` on its own
-    commit and satisfy the gate without the workflow running. A context named twice
-    with different bindings leaves the real requirement undetermined.
-    """
-    if not isinstance(entries, list):
-        return None, "live_contexts_malformed"
-    bindings: dict[str, object] = {}
-    for entry in entries:
-        if not isinstance(entry, dict) or not isinstance(entry.get("context"), str):
-            return None, "live_contexts_malformed"
-        name = entry["context"]
-        app_id = entry.get("app_id")
-        if name in bindings and bindings[name] != app_id:
-            return None, "live_contexts_inconsistent"
-        bindings[name] = app_id
-    return bindings, None
-
-
-def live_required_checks(checks: dict) -> tuple[dict[str, object] | None, str | None]:
-    """The live required checks as context -> bound App id, or why they are not determinable.
-
-    GitHub reports the required set both as the legacy flat `contexts` array and as
-    `checks`, and is deprecating the former. Trusting one and ignoring the other
-    would accept a response whose two views disagree, so when both are present they
-    must agree on the names. The `checks` array is required, because it is the only
-    view that carries the provider binding: without it the binding cannot be
-    verified, which is not the same as a binding that is correct.
-    """
-    if "checks" not in checks:
-        return None, "live_check_providers_unavailable"
-    bindings, failure = _check_bindings(checks.get("checks"))
-    if failure:
-        return None, failure
-    if "contexts" in checks:
-        legacy = _legacy_context_names(checks.get("contexts"))
-        if legacy is None:
-            return None, "live_contexts_malformed"
-        if legacy != set(bindings):
-            return None, "live_contexts_inconsistent"
-    return bindings, None
-
-
-def _provider_drifts(branch: str, declared_contexts: set[str], bindings: dict) -> list:
+def _provider_drifts(
+    branch: str, declared_contexts: set[str], bindings: dict[str, object]
+) -> list[Drift]:
     """Required contexts whose live App binding is absent or not the declared provider."""
     drifts = []
     for name in sorted(declared_contexts & set(bindings)):
@@ -220,7 +105,9 @@ def _provider_drifts(branch: str, declared_contexts: set[str], bindings: dict) -
     return drifts
 
 
-def _status_check_drift(branch: str, declared: dict, live: dict) -> tuple[list, list]:
+def _status_check_drift(
+    branch: str, declared: dict[str, object], live: dict[str, object]
+) -> tuple[list[Drift], list[Unevaluable]]:
     """Strictness, the required-context set, and each context's provider binding."""
     drifts: list[Drift] = []
     declared_strict = declared["strict"]
@@ -294,7 +181,7 @@ def _live_principals(allowances: object, collection: str) -> set[str]:
     return identities
 
 
-def _bypass_drifts(branch: str, declared: object, live: object) -> list:
+def _bypass_drifts(branch: str, declared: object, live: object) -> list[Drift]:
     """Every bypass-principal collection whose live membership is not the declared one."""
     drifts = []
     for collection in sorted(CI_STRICTNESS_BYPASS_PRINCIPAL_FIELDS):
@@ -314,7 +201,9 @@ def _bypass_drifts(branch: str, declared: object, live: object) -> list:
     return drifts
 
 
-def _review_policy_drift(branch: str, declared: dict, live: dict) -> tuple[list, list]:
+def _review_policy_drift(
+    branch: str, declared: dict[str, object], live: dict[str, object]
+) -> tuple[list[Drift], list[Unevaluable]]:
     """Every governed review leaf, compared after its live value is typed.
 
     Iterating the declared keys alone would close only top-level coverage: a leaf
@@ -362,30 +251,63 @@ def _review_policy_drift(branch: str, declared: dict, live: dict) -> tuple[list,
     return drifts, []
 
 
-def _field_drift(branch: str, name: str, declared: object, live: dict) -> tuple[list, list]:
+# The two governed fields that are mappings rather than scalars, and the comparison
+# each needs. Dispatching through a table keeps `_field_drift` a single decision.
+_MAPPING_FIELD_COMPARISONS = {
+    "required_status_checks": _status_check_drift,
+    "review_policy": _review_policy_drift,
+}
+
+
+def _field_drift(
+    branch: str, name: str, declared: object, live: dict[str, object]
+) -> tuple[list[Drift], list[Unevaluable]]:
+    """One governed field's differences, and the reasons it could not be compared."""
     observed = PROTECTION_FIELD_READERS[name](live)
     if observed is MISSING:
         return [Drift(branch, name, declared, "missing", "live protection did not report it")], []
-    if name == "required_status_checks":
-        return _status_check_drift(branch, declared, observed)
-    if name == "review_policy":
-        return _review_policy_drift(branch, declared, observed)
+    compare = _MAPPING_FIELD_COMPARISONS.get(name)
+    if compare is not None:
+        return compare(branch, declared, observed)
     return ([] if declared == observed else [Drift(branch, name, declared, observed)]), []
 
 
-def compare_branch(branch: str, declared: object, live: object) -> tuple[list, list]:
+def compare_branch(
+    branch: str, declared: object, live: object
+) -> tuple[list[Drift], list[Unevaluable]]:
     """One branch's differences, and the reasons it could not be compared."""
-    if isinstance(live, Unevaluable):
-        return [], [live]
-    if not isinstance(live, dict):
-        # Unreadable and clean are different facts. Reporting the first as the
-        # second is how a gate passes because it never looked.
-        return [], [
-            Unevaluable(branch, "live_protection_unreadable", "no protection document was read")
-        ]
-    if not isinstance(declared, dict):
-        return [Drift(branch, "baseline entry", "declared", "missing")], []
+    refusal = _branch_refusal(branch, declared, live)
+    if refusal is not None:
+        return refusal
+    return _compare_declared_branch(branch, declared, live)
 
+
+def _branch_refusal(
+    branch: str, declared: object, live: object
+) -> tuple[list[Drift], list[Unevaluable]] | None:
+    """Why this branch cannot be compared at all, or None when it can be.
+
+    Unreadable and clean are different facts. Reporting the first as the second is
+    how a gate passes because it never looked, so an unreadable branch yields a
+    refusal rather than a comparison against an empty document.
+    """
+    refusal: tuple[list[Drift], list[Unevaluable]] | None = None
+    if isinstance(live, Unevaluable):
+        refusal = ([], [live])
+    elif not isinstance(live, dict):
+        refusal = (
+            [],
+            [Unevaluable(branch, "live_protection_unreadable", "no protection document was read")],
+        )
+    elif not isinstance(declared, dict):
+        refusal = ([Drift(branch, "baseline entry", "declared", "missing")], [])
+    return refusal
+
+
+def _compare_declared_branch(
+    branch: str, declared: dict[str, object], live: dict[str, object]
+) -> tuple[list[Drift], list[Unevaluable]]:
+    """Compare one branch whose declaration and live document are both readable."""
     drifts: list[Drift] = []
     unevaluable: list[Unevaluable] = []
     for name in sorted(declared):
@@ -403,7 +325,9 @@ def compare_branch(branch: str, declared: object, live: object) -> tuple[list, l
 
 
 def compare_protection(
-    baseline: dict, live_by_branch: dict, branches=CI_STRICTNESS_BRANCHES
+    baseline: dict[str, object],
+    live_by_branch: dict[str, object],
+    branches: tuple[str, ...] = CI_STRICTNESS_BRANCHES,
 ) -> ProtectionReport:
     """Compare every protected branch's declaration against its live protection."""
     declared_branches = baseline.get("branches")
@@ -424,6 +348,7 @@ def compare_protection(
 
 
 def render_markdown(report: ProtectionReport) -> str:
+    """The drift report as Markdown, with unevaluable branches called out first."""
     if not report.drifts and not report.unevaluable:
         declared = ", ".join(f"`{name}`" for name in sorted(CI_STRICTNESS_PROTECTION_FIELDS))
         return (

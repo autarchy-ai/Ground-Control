@@ -76,6 +76,7 @@ never looked is the failure mode `require_scanned` exists to prevent.
 
 - IMPLEMENTS → ADR `architecture/adrs/091-ci-verification-topology.md` (ADR-091: CI verification topology, amended for live-vs-versioned reconciliation)
 - IMPLEMENTS → CODE_FILE `tools/ci/branch_protection_compare.py` (the live-vs-versioned comparison, drift report, and three-valued outcome)
+- IMPLEMENTS → CODE_FILE `tools/ci/branch_protection_readers.py` (reads each declared fact out of GitHub's protection response without coercing it)
 - IMPLEMENTS → CODE_FILE `tools/ci/check_branch_protection.py` (the repository-bound, read-only GitHub adapter and CLI)
 - IMPLEMENTS → CODE_FILE `tools/policy/ci_strictness.py` (baseline shape, context-collection validation, and the unexpected-branch assertion)
 - IMPLEMENTS → CODE_FILE `tools/policy/branch_protection_baseline.py` (the declaration, its schema, and the single validating loader both halves read)

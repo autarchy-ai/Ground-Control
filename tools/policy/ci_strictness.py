@@ -230,27 +230,30 @@ def _load_baseline(root: Path) -> tuple[dict[str, object], Violation | None]:
     A gate that validated separately from the comparison is how the two come to
     disagree about what a declared value means.
     """
-    path = root / BRANCH_PROTECTION_BASELINE_PATH
-    if not path.exists():
-        return {}, Violation(
+    baseline: dict[str, object] = {}
+    blocked: Violation | None = None
+    if not (root / BRANCH_PROTECTION_BASELINE_PATH).exists():
+        blocked = Violation(
             code="ci-required-context-baseline-missing",
             message="The branch-protection baseline is required to verify the merge gate.",
             details=[f"expected at {BRANCH_PROTECTION_BASELINE_PATH.as_posix()}"],
         )
-    try:
-        return load_branch_protection_baseline(root), None
-    except BranchProtectionBaselineError as error:
-        return {}, Violation(
-            code="ci-required-context-baseline-malformed",
-            message="The branch-protection baseline does not satisfy its declared schema.",
-            details=error.details,
-        )
-    except OSError as error:
-        return {}, Violation(
-            code="ci-required-context-baseline-unreadable",
-            message="The branch-protection baseline could not be read.",
-            details=[f"{BRANCH_PROTECTION_BASELINE_PATH.as_posix()}: {error}"],
-        )
+    else:
+        try:
+            baseline = load_branch_protection_baseline(root)
+        except BranchProtectionBaselineError as error:
+            blocked = Violation(
+                code="ci-required-context-baseline-malformed",
+                message="The branch-protection baseline does not satisfy its declared schema.",
+                details=error.details,
+            )
+        except OSError as error:
+            blocked = Violation(
+                code="ci-required-context-baseline-unreadable",
+                message="The branch-protection baseline could not be read.",
+                details=[f"{BRANCH_PROTECTION_BASELINE_PATH.as_posix()}: {error}"],
+            )
+    return ({}, blocked) if blocked else (baseline, None)
 
 
 def _context_drift(branch: str, declared: set[str], expected: set[str]) -> Violation | None:

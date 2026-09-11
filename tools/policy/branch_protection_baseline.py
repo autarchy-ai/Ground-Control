@@ -23,6 +23,7 @@ being enforced without anything failing.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from .core import REPO_ROOT
@@ -142,11 +143,12 @@ class BranchProtectionBaselineError(Exception):
     """
 
     def __init__(self, details: list[str]) -> None:
+        """Record every reason the declaration is unusable, not just the first."""
         super().__init__("; ".join(details))
         self.details = details
 
 
-def is_declared_type(value: object, expected: type) -> bool:
+def is_declared_type(value: object, expected: type[object]) -> bool:
     """Whether `value` matches its declared type, refusing bool-as-int.
 
     Used for declared and live values alike, which is the point: the two sides must
@@ -157,7 +159,9 @@ def is_declared_type(value: object, expected: type) -> bool:
     return isinstance(value, expected)
 
 
-def _exact_keys(label: str, mapping: dict, governed: frozenset) -> list[str]:
+def _exact_keys(
+    label: str, mapping: dict[str, object], governed: frozenset[str]
+) -> list[str]:
     """Why one mapping level's key set is not exactly the governed set."""
     names = set(mapping)
     return [f"{label}: missing '{name}'" for name in sorted(governed - names)] + [
@@ -166,7 +170,10 @@ def _exact_keys(label: str, mapping: dict, governed: frozenset) -> list[str]:
     ]
 
 
-def _scalar_details(label: str, mapping: dict, governed: frozenset) -> list[str]:
+def _scalar_details(
+    label: str, mapping: dict[str, object], governed: frozenset[str]
+) -> list[str]:
+    """Which of one mapping level's governed scalars are not their declared type."""
     return [
         f"{label}.{name} is not the declared {CI_STRICTNESS_SCALAR_TYPES[name].__name__}"
         for name in sorted(governed)
@@ -210,38 +217,66 @@ def _bypass_details(label: str, declared: object) -> list[str]:
     return details
 
 
+def _status_check_leaves(label: str, checks: dict[str, object]) -> list[str]:
+    """The collection nested inside `required_status_checks`."""
+    if "contexts" not in checks:
+        return []
+    return _context_details(label, checks["contexts"])
+
+
+def _review_policy_leaves(label: str, review: dict[str, object]) -> list[str]:
+    """The principal collections nested inside `review_policy`."""
+    key = "bypass_pull_request_allowances"
+    if key not in review:
+        return []
+    return _bypass_details(f"{label}.{key}", review[key])
+
+
+def _nested_details(
+    label: str,
+    config: dict[str, object],
+    key: str,
+    governed: frozenset[str],
+    leaves: Callable[[str, dict[str, object]], list[str]],
+) -> list[str]:
+    """Schema failures in one nested mapping level the branch declares.
+
+    Both nested levels are validated the same way — exact keys, declared scalar
+    types, then whatever collection lives one level deeper — so they share this
+    shape rather than each growing its own branch in `_branch_details`.
+    """
+    if key not in config:
+        return []
+    nested = config[key]
+    if not isinstance(nested, dict):
+        return [f"{label}.{key} is not a mapping"]
+    nested_label = f"{label}.{key}"
+    details = _exact_keys(nested_label, nested, governed)
+    details += _scalar_details(nested_label, nested, governed)
+    return details + leaves(nested_label, nested)
+
+
 def _branch_details(branch: str, config: object) -> list[str]:
-    """Every schema failure in one branch's declaration."""
+    """Every schema failure in one branch's declaration, innermost level included."""
     label = f"branches.{branch}"
     if not isinstance(config, dict):
         return [f"{label} is not a mapping"]
     details = _exact_keys(label, config, CI_STRICTNESS_PROTECTION_FIELDS)
     details += _scalar_details(label, config, CI_STRICTNESS_PROTECTION_FIELDS)
-
-    checks = config.get("required_status_checks")
-    if "required_status_checks" in config:
-        if not isinstance(checks, dict):
-            details.append(f"{label}.required_status_checks is not a mapping")
-        else:
-            checks_label = f"{label}.required_status_checks"
-            details += _exact_keys(checks_label, checks, CI_STRICTNESS_STATUS_CHECK_FIELDS)
-            details += _scalar_details(checks_label, checks, CI_STRICTNESS_STATUS_CHECK_FIELDS)
-            if "contexts" in checks:
-                details += _context_details(checks_label, checks["contexts"])
-
-    review = config.get("review_policy")
-    if "review_policy" in config:
-        if not isinstance(review, dict):
-            details.append(f"{label}.review_policy is not a mapping")
-        else:
-            review_label = f"{label}.review_policy"
-            details += _exact_keys(review_label, review, CI_STRICTNESS_REVIEW_POLICY_FIELDS)
-            details += _scalar_details(review_label, review, CI_STRICTNESS_REVIEW_POLICY_FIELDS)
-            if "bypass_pull_request_allowances" in review:
-                details += _bypass_details(
-                    f"{review_label}.bypass_pull_request_allowances",
-                    review["bypass_pull_request_allowances"],
-                )
+    details += _nested_details(
+        label,
+        config,
+        "required_status_checks",
+        CI_STRICTNESS_STATUS_CHECK_FIELDS,
+        _status_check_leaves,
+    )
+    details += _nested_details(
+        label,
+        config,
+        "review_policy",
+        CI_STRICTNESS_REVIEW_POLICY_FIELDS,
+        _review_policy_leaves,
+    )
     return details
 
 
@@ -259,7 +294,7 @@ def validate_baseline(baseline: object) -> list[str]:
     return details
 
 
-def load_branch_protection_baseline(root: Path = REPO_ROOT) -> dict:
+def load_branch_protection_baseline(root: Path = REPO_ROOT) -> dict[str, object]:
     """The validated declaration, or `BranchProtectionBaselineError` naming every fault.
 
     Raises rather than returning a default: a loader that returned `{}` would turn

@@ -9,14 +9,22 @@ same concern: an administration-capable credential pointed somewhere else, or le
 hanging, is an authorization failure rather than a comparison bug.
 """
 
+import json
+import subprocess
 import unittest
+from unittest import mock
 
+from tools.ci import check_branch_protection as adapter
 from tools.ci.branch_protection_compare import compare_protection
 from tools.ci.check_branch_protection import (
     GH_TIMEOUT_SECONDS,
     TARGET_REPO,
     build_protection_read_args,
+    build_report,
+    collect_live_protection,
+    main,
 )
+from tools.policy.branch_protection_baseline import BranchProtectionBaselineError
 from tools.policy.branch_protection_baseline import (
     CI_STRICTNESS_BRANCHES,
     CI_STRICTNESS_CONTEXT_PROVIDERS,
@@ -136,6 +144,83 @@ class RepositoryIdentityTest(unittest.TestCase):
         self.assertIn("--hostname", argv)
         self.assertIn(f"repos/{CANONICAL_REPO_SLUG}/branches/main/protection", argv)
         self.assertGreater(GH_TIMEOUT_SECONDS, 0)
+
+
+class LiveReadFailureTest(unittest.TestCase):
+    """Every way the read can fail maps to a named refusal, never to a clean result.
+
+    These are the fail-closed paths the contract turns on: a credential without
+    `administration:read`, a hung request, a missing `gh`, or a response that is not
+    JSON all have to end as "this branch was not compared", because the alternative
+    is a gate that reports protection it never saw.
+    """
+
+    def _reasons(self, side_effect):
+        with mock.patch.object(adapter.subprocess, "run", side_effect=side_effect):
+            live = collect_live_protection()
+        return {branch: item.reason for branch, item in live.items()}
+
+    def test_a_successful_read_returns_the_parsed_document(self):
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps({"required_status_checks": {}})
+        )
+        with mock.patch.object(adapter.subprocess, "run", return_value=completed):
+            live = collect_live_protection()
+        for branch in CI_STRICTNESS_BRANCHES:
+            self.assertEqual(live[branch], {"required_status_checks": {}})
+
+    def test_an_unauthorized_read_is_named_rather_than_treated_as_absent(self):
+        # The usual cause is a token without administration:read, which is a
+        # different fact from "this branch has no protection".
+        error = subprocess.CalledProcessError(returncode=1, cmd=["gh"])
+        self.assertEqual(
+            set(self._reasons(error).values()), {"live_read_failed"}
+        )
+
+    def test_a_hung_read_times_out_rather_than_holding_the_gate_open(self):
+        error = subprocess.TimeoutExpired(cmd=["gh"], timeout=GH_TIMEOUT_SECONDS)
+        self.assertEqual(set(self._reasons(error).values()), {"live_read_timed_out"})
+
+    def test_a_missing_gh_executable_is_named(self):
+        self.assertEqual(set(self._reasons(FileNotFoundError()).values()), {"gh_unavailable"})
+
+    def test_a_non_json_response_is_named(self):
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="not json")
+        with mock.patch.object(adapter.subprocess, "run", return_value=completed):
+            live = collect_live_protection()
+        self.assertEqual(
+            {item.reason for item in live.values()}, {"live_response_malformed"}
+        )
+
+    def test_an_unusable_declaration_makes_every_branch_unevaluable(self):
+        with mock.patch.object(
+            adapter,
+            "load_branch_protection_baseline",
+            side_effect=BranchProtectionBaselineError(["branches.main is not a mapping"]),
+        ):
+            report = build_report()
+        self.assertEqual(report.exit_code, 2)
+        self.assertEqual({item.reason for item in report.unevaluable}, {"baseline_invalid"})
+
+    def test_an_unreadable_declaration_makes_every_branch_unevaluable(self):
+        with mock.patch.object(
+            adapter, "load_branch_protection_baseline", side_effect=OSError("gone")
+        ):
+            report = build_report()
+        self.assertEqual(report.exit_code, 2)
+        self.assertEqual({item.reason for item in report.unevaluable}, {"baseline_invalid"})
+
+    def test_the_command_reports_the_reports_exit_code(self):
+        for exit_code, drifts, unevaluable in ((0, (), ()), (1, ("drift",), ()), (2, (), ("u",))):
+            with self.subTest(exit_code=exit_code):
+                report = mock.Mock(drifts=drifts, unevaluable=unevaluable, exit_code=exit_code)
+                with mock.patch.object(adapter, "build_report", return_value=report):
+                    with mock.patch.object(adapter, "render_markdown", return_value="report"):
+                        self.assertEqual(main([]), exit_code)
+
+    def test_the_json_output_separates_drift_from_unevaluable_branches(self):
+        with mock.patch.object(adapter, "build_report", return_value=_report()):
+            self.assertEqual(main(["--json"]), 0)
 
 
 if __name__ == "__main__":
