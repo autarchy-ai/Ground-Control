@@ -138,6 +138,21 @@ Ground Control's value proposition depends on agents maintaining traceability an
 - DOCUMENTS → DOCUMENTATION `architecture/notes/merge-verified-requirement-state-preflight.md` (Issue #1541 codex architecture preflight binding-guardrails note)
 - DOCUMENTS → ADR `architecture/adrs/093-requirements-specs-as-code.md` (ADR-093 amendment: delivery + completion authority (#1541))
 - IMPLEMENTS → GITHUB_ISSUE `1541` (Issue #1541 — align specs-as-code requirement transitions with merged Phase E state)
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/issue-requirements-scope.js` (Shared Requirements-section parser and bounded section transformer (#1569))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/issue-requirements-writer.js` (gc_update_issue_requirements: repository-bound writer for an issue's in-scope UID list (#1569))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/requirement-files.js` (readRequirementIdentity: strict working-tree requirement identity for the scope write gate (#1569))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/issue-thread.js` (Targeted issue-thread cache invalidation after a body mutation (#1569))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/filesystem-lease.js` (Issue-scope read-modify-write lease serializing concurrent scope updates (#1569))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/tools/query.js` (Thin zod registration of gc_update_issue_requirements (#1569))
+- IMPLEMENTS → CODE_FILE `tools/policy/implement_scope_contract.py` (implement-scope-writer-tool policy anchor for Step 1 and Step 4 (#1569))
+- TESTS → TEST `mcp/ground-control/lib.issue-requirements-scope.test.js` (Section transformer: byte preservation, monotonic add, explicit remove, parser round-trip (#1569))
+- TESTS → TEST `mcp/ground-control/gc-update-issue-requirements.test.js` (Writer: bounded section rewrite, idempotence, requirement identity (#1569))
+- TESTS → TEST `mcp/ground-control/gc-update-issue-requirements.authorization.test.js` (Writer: repository binding, trusted removal authorization, public-text refusals, cache coherence, scope lease (#1569))
+- TESTS → TEST `mcp/ground-control/gc-update-issue-requirements.fixture.test.js` (Shared hermetic fixture and its gh-shim self-check (#1569))
+- TESTS → TEST `tools/tests/test_policy_issue_requirements_tool.py` (Policy test for the scope-writer prose anchor (#1569))
+- TESTS → TEST `mcp/ground-control/lib.requirement-identity.test.js` (Strict requirement identity: raw frontmatter id, symlinked-ancestor refusal (#1569))
+- DOCUMENTS → DOCUMENTATION `architecture/notes/issue-requirements-section-writer-preflight.md` (Issue #1569 codex architecture preflight binding-guardrails note)
+- IMPLEMENTS → GITHUB_ISSUE `1569` (Issue #1569 — an MCP tool that writes an issue's Requirements section)
 
 ## Historical traceability
 

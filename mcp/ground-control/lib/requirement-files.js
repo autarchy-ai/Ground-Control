@@ -26,8 +26,10 @@ function specDir(repoPath) {
   return join(repoPath, SPECS_SUBDIR);
 }
 
+const REQUIREMENT_FILENAME = "requirement.md";
+
 function requirementPath(repoPath, uid) {
-  return join(specDir(repoPath), uid, "requirement.md");
+  return join(specDir(repoPath), uid, REQUIREMENT_FILENAME);
 }
 
 // Parse the leading `---` YAML frontmatter block into a flat map plus the body lines that follow.
@@ -167,6 +169,90 @@ export async function readRequirementAtRevision(repoPath, uid, revision) {
     // Absent path at the revision, or an object not present locally: fail closed and
     // let the caller report a bounded reason. Git's stderr is intentionally dropped.
     return { found: false, malformed: false };
+  }
+  const parsed = parse(text);
+  if (!parsed) return { found: true, malformed: true };
+  return {
+    found: true,
+    malformed: false,
+    frontmatterId: parsed.frontmatter.id ?? null,
+    requirement: toRequirement(uid, parsed),
+  };
+}
+
+// Resolve the canonical path of the file a descriptor ACTUALLY holds.
+//
+// Validating the pathname after opening it is racy: an attacker who can mutate the
+// checkout points the UID path outside the repository while `open` runs, then restores
+// the in-repository file before the check, so containment passes while the open handle
+// still refers to the external file — and this privileged process publishes its title.
+// /proc/self/fd names the descriptor's own file and cannot be re-pointed after the open.
+//
+// There is deliberately NO pathname fallback. Resolving the pathname is precisely the
+// race this closes, so offering it where /proc is absent would reopen the hole on those
+// hosts instead of reporting that the check cannot be made. Callers fail closed instead.
+export async function canonicalPathOfOpenFile(handle) {
+  return fs.realpath(`/proc/self/fd/${handle.fd}`);
+}
+
+// Strict working-tree identity for a WRITE gate (issue #1569).
+//
+// readRequirementByUid above applies an `id || uid` compatibility fallback, so a file
+// with a missing or mismatched frontmatter `id` reads back as if it were fine. That is
+// tolerable for a read; it is not tolerable when the UID is about to be written into an
+// issue's authoritative scope section. This returns the RAW frontmatter id so the caller
+// can require `id === directory UID`, and refuses anything that is not a regular file at
+// the exact UID path (lstat, so a symlink out of the requirements tree is not a
+// requirement).
+//
+//   { found: false }                  — bad UID, absent path, or not a regular file
+//   { found: true, malformed: true }  — frontmatter missing or unterminated
+//   { found: true, malformed: false, frontmatterId, requirement }
+export async function readRequirementIdentity(repoPath, uid) {
+  if (typeof uid !== "string" || !EXACT_REQUIREMENT_UID_RE.test(uid)) {
+    return { found: false, malformed: false };
+  }
+  const path = requirementPath(repoPath, uid);
+  // A lexical prefix check, or an lstat of the leaf alone, only rejects a symlinked
+  // `requirement.md`; `docs`, `requirements`, or the UID directory could still be links
+  // to another checkout, and this privileged process would read that file and publish
+  // its title into a GitHub issue body. Canonicalize both sides, require the resolved
+  // candidate to be exactly the file inside the canonical UID directory, and read
+  // through the handle that was opened and validated rather than re-opening by path.
+  let handle;
+  try {
+    handle = await fs.open(path, "r");
+  } catch {
+    return { found: false, malformed: false };
+  }
+  let text;
+  try {
+    const stats = await handle.stat();
+    if (!stats.isFile()) return { found: false, malformed: false };
+    let canonicalPath;
+    try {
+      canonicalPath = await canonicalPathOfOpenFile(handle);
+    } catch {
+      // Descriptor canonicalization is unavailable on this host, so containment cannot
+      // be established at all. Reported distinctly: this is "cannot verify", not
+      // "requirement absent", and the caller refuses rather than proceeding.
+      return { found: false, malformed: false, unverifiable: true };
+    }
+    // Anchor containment to the canonical REPOSITORY root, never to a canonicalized
+    // `docs/requirements`: canonicalizing the requirements directory itself lets that
+    // directory become an external trust root, so replacing `docs` or `docs/requirements`
+    // with a link to another host-readable checkout would resolve both sides outside this
+    // repository and still compare equal. This privileged process would then publish that
+    // checkout's requirement title into the destination issue.
+    const canonicalRoot = await fs.realpath(repoPath);
+    if (canonicalPath !== join(canonicalRoot, SPECS_SUBDIR, uid, REQUIREMENT_FILENAME)) {
+      return { found: false, malformed: false };
+    }
+    text = await handle.readFile("utf8");
+  } catch {
+    return { found: false, malformed: false };
+  } finally {
+    await handle.close();
   }
   const parsed = parse(text);
   if (!parsed) return { found: true, malformed: true };

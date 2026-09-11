@@ -45,7 +45,16 @@ if they are absent, if their digest no longer matches, or if
    in scope; an absent or empty section means a requirement-free run. Resolve
    every UID by reading `docs/requirements/<UID>/requirement.md` and cache its
    title, statement, status, and wave. If the run started from a UID, ensure that UID appears in
-   the issue Requirements section.
+   the issue Requirements section: when it does not, call `gc_update_issue_requirements`
+   with `operation="add"` and that UID. That tool is the only supported writer for the
+   section — it validates each UID against its repo-local requirement file, preserves
+   every other byte of the body, is a no-op when the scope already matches, and keeps
+   the write on the MCP server's pinned repository identity (ADR-027). Do not edit the
+   issue body by hand or through any other command. A successful call changes the run's authoritative scope, so reconcile the cached scope
+   before continuing: re-read the thread with `gc_get_issue_thread`, replace the cached
+   `issue_thread_hash`, and replace `in_scope_requirements[]` with the UID set the tool
+   returned, resolving each newly added UID's requirement file for its title, statement,
+   status, and wave.
 
 6. Derive an informational `implementation_intent` from the issue labels and
    body already returned by `gc_implement_mechanical action="bootstrap"`:

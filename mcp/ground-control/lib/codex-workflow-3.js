@@ -4,7 +4,8 @@
 // (docs/CODING_STANDARDS.md, Sonar S104). It contained no mutual recursion, so it was
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
-import { extractInScopeRequirementUids, requestedRequirementUidAuthorization } from "./codex-workflow-2.js";
+import { requestedRequirementUidAuthorization } from "./codex-workflow-2.js";
+import { extractInScopeRequirementUids } from "./issue-requirements-scope.js";
 import { summarizeTraceabilityLinks } from "./codex-workflow.js";
 import { getOwnerRepo } from "./grc-legacy-compat-3.js";
 import { buildVocabularySection } from "./grc-legacy-compat-5.js";
