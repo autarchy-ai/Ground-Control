@@ -42,6 +42,47 @@ only exemptions from needing a local producer, and that allowlist is shrink-only
 Adding or removing a required check therefore means editing the declaration, the
 baseline, and the workflow together; the gate fails until they agree.
 
+That gate is offline: it compares files in this repository. The baseline also
+declares what GitHub should enforce, and `make branch-protection-check`
+(`tools/ci/check_branch_protection.py`, GC-P031) is what compares the two. It
+reads each protected branch's live protection and reports every difference by
+branch, field, declared value, and observed value, covering required contexts and
+strictness plus the pull-request, review, conversation-resolution, force-push,
+deletion, and admin-bypass policy. Two of those are authorization-bearing. Each
+required context is compared with the App bound to it, because an unbound required
+check can be satisfied by any actor able to post a status with that name, without
+the workflow running. And `review_policy` covers
+`bypass_pull_request_allowances` alongside `dismiss_stale_reviews`,
+`require_code_owner_reviews`, `require_last_push_approval`, and
+`required_approving_review_count`, because a principal in that allowance can land
+changes without the pull-request boundary while every scalar still matches.
+
+The correspondence is two-sided and closes over every mapping level (the baseline
+root, the branch set, the status checks, the review policy, and the bypass
+collections): a field the baseline declares that the comparison cannot read fails,
+and so does a field the comparison knows about that the baseline omits, so a
+declared setting cannot become decoration. The baseline is read through one
+validating loader, so neither gate can compare a value whose declared type was
+never checked.
+
+It exits 0 on a match, 1 on drift, and **2 when any branch could not be
+evaluated**, most often a credential without `administration:read`. A branch in
+that third state is reported separately and produces no drift findings, because
+naming a specific difference requires having read what is being compared.
+
+Run it after any branch-protection change. It detects drift **when invoked**, not
+continuously: reading branch protection needs repository administration
+permission, and `administration` is not a grantable GitHub Actions `permissions:`
+scope, so the CI `policy` job's token cannot perform the read. Wiring it into
+`make policy` would mean skipping silently whenever that read is unauthorized,
+which is the "passed because it never looked" failure mode the policy layer's
+scan floor exists to prevent, so it is a separate target that always enforces
+when run. The check is read-only; reconciling live protection is a
+repository-admin action on GitHub's narrow
+`PATCH .../protection/required_status_checks` endpoint or in the GitHub UI, never
+a full-document `PUT`, whose omitted fields can silently reset review,
+conversation, restriction, force-push, deletion, or admin policy.
+
 The `policy` job fetches PR comments in a token-bearing step and then runs
 PR-head policy code without `GH_TOKEN`, passing `--pr-comments-json` and
 `--pr-number` so the gate can read the PR-thread marker without exposing a token

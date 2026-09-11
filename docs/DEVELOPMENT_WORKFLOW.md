@@ -414,6 +414,42 @@ The guard is a pre-execution *lexical* policy control, not an OS sandbox. It pro
   predecessor (`tools/tests/test_ci_topology.py`) was deleted along with the
   jobs it described, which is how five dead contexts survived the #1500
   re-platform unnoticed. See `docs/ci/CI_PIPELINE.md`.
+- **Live branch-protection reconciliation** (`make branch-protection-check`,
+  issue #1155 / GC-P031 / ADR-091). The gate above compares two files in the
+  repository; this one compares the same baseline against the protection GitHub
+  actually enforces, which is a separate fact that had already diverged (live
+  `main` had strict status checks off while the baseline declared them on).
+  `.github/branch-protection-baseline.json` now declares each protected branch's
+  complete intended policy - required contexts and strictness plus the
+  pull-request, review, conversation-resolution, force-push, deletion, and
+  admin-bypass settings - and `bin/policy` asserts offline that every branch
+  declares exactly the governed fields at every mapping level - the baseline root,
+  the branch set, `required_status_checks`, `review_policy`, and the
+  bypass-principal collections - with their declared types
+  (`ci-required-context-baseline-malformed`), and that the two pinned values hold:
+  `strict` (`ci-required-context-not-strict`) and
+  `changes_land_via_pull_request` (`ci-required-context-pull-request-required`).
+  Only those two are pinned; flipping several of the others is a tightening, and a
+  gate that fails a tightening points the wrong way. The declaration, its schema,
+  and the single validating loader both halves read live in
+  `tools/policy/branch_protection_baseline.py`, so neither gate can compare a
+  value whose declared type was never checked; the pinned-value policy is in
+  `tools/policy/branch_protection_fields.py`. Value agreement against live state
+  is `tools/ci/branch_protection_compare.py`'s job behind the repository-bound,
+  read-only adapter in `tools/ci/check_branch_protection.py`, reported per branch
+  and field; it exits 0 on a match, 1 on drift, and 2 when a branch could not be
+  evaluated, and it never reports drift on a branch it could not read. Required
+  contexts are compared with the App bound to each one, and the review policy
+  includes the principals allowed to bypass a required pull request - both are
+  authorization-bearing, so comparing names and scalars alone would attest a
+  boundary that is not enforced.
+  It is **not** part of `make policy`: reading branch protection needs repository
+  administration permission, which is not a grantable GitHub Actions
+  `permissions:` scope, so in CI it could only skip silently - so it is an
+  explicitly invoked gate that always enforces when run. It is read-only;
+  reconciling live protection uses GitHub's narrow
+  `PATCH .../protection/required_status_checks` endpoint or the UI, never the
+  full-document `PUT`.
 - **Structured gate artifacts** (issue #1355, ADR-090 amendment). `bin/policy --json <path>`
   and `GC_VALE_JSON` make the policy and Vale child gates emit a structured artifact at their
   own boundary, so the `/implement` layer reads that artifact rather than re-running a gate or

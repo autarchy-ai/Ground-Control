@@ -68,6 +68,9 @@ devmain: ## Open the dev -> main promotion PR titled so the PR-title gate passes
 ci-timings: ## Measure CI wall clock and time-to-first-failure from recent runs (ADR-091)
 	python3 tools/ci/measure_ci_timings.py
 
+branch-protection-check: ## Compare live main/dev protection with the versioned baseline (GC-P031)
+	python3 -m tools.ci.check_branch_protection
+
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
