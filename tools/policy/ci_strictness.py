@@ -2,7 +2,14 @@
 
 Two contracts live here. The Sonar one pins the strict quality-gate ordering.
 The required-context one pins the correspondence between the branch-protection
-baseline and the jobs that actually produce those checks.
+baseline and the jobs that actually produce those checks, and the shape of the
+protection policy that baseline declares.
+
+The second contract is deliberately offline: it compares files in this
+repository. Comparing the same declaration against the protection GitHub
+actually enforces needs repository administration permission, which no CI token
+here holds, so that half lives in `tools/ci/check_branch_protection.py` behind
+`make branch-protection-check` (GC-P031).
 """
 
 import fnmatch
@@ -11,10 +18,15 @@ from pathlib import Path
 
 import yaml
 
-from .core import (
+from .branch_protection_fields import protection_policy_violations
+from .branch_protection_baseline import (
     BRANCH_PROTECTION_BASELINE_PATH,
     CI_STRICTNESS_BRANCHES,
     CI_STRICTNESS_REQUIRED_CONTEXTS,
+    BranchProtectionBaselineError,
+    load_branch_protection_baseline,
+)
+from .core import (
     REPO_ROOT,
     SONAR_NEW_ISSUE_GATE_PATH,
     Violation,
@@ -210,8 +222,15 @@ def _check_names_by_branch(root: Path) -> tuple[dict[str, set[str]], int]:
     return by_branch, scanned
 
 
-def _load_baseline(path: Path) -> tuple[dict[str, object], Violation | None]:
-    """The parsed branch-protection baseline, or the violation that blocks reading it."""
+def _load_baseline(root: Path) -> tuple[dict[str, object], Violation | None]:
+    """The validated baseline in this module's `Violation` envelope.
+
+    Parsing *and* schema validation live in `load_branch_protection_baseline`, so
+    this gate and the live comparison judge the declaration by one implementation.
+    A gate that validated separately from the comparison is how the two come to
+    disagree about what a declared value means.
+    """
+    path = root / BRANCH_PROTECTION_BASELINE_PATH
     if not path.exists():
         return {}, Violation(
             code="ci-required-context-baseline-missing",
@@ -219,11 +238,17 @@ def _load_baseline(path: Path) -> tuple[dict[str, object], Violation | None]:
             details=[f"expected at {BRANCH_PROTECTION_BASELINE_PATH.as_posix()}"],
         )
     try:
-        return json.loads(path.read_text(encoding="utf-8")), None
-    except json.JSONDecodeError as error:
+        return load_branch_protection_baseline(root), None
+    except BranchProtectionBaselineError as error:
+        return {}, Violation(
+            code="ci-required-context-baseline-malformed",
+            message="The branch-protection baseline does not satisfy its declared schema.",
+            details=error.details,
+        )
+    except OSError as error:
         return {}, Violation(
             code="ci-required-context-baseline-unreadable",
-            message="The branch-protection baseline is not valid JSON.",
+            message="The branch-protection baseline could not be read.",
             details=[f"{BRANCH_PROTECTION_BASELINE_PATH.as_posix()}: {error}"],
         )
 
@@ -247,32 +272,15 @@ def _context_drift(branch: str, declared: set[str], expected: set[str]) -> Viola
 def _baseline_violations(branches: dict[str, object], expected: set[str]) -> list[Violation]:
     """Per-branch baseline shape: the branch is declared, strict, and matches the contract."""
     violations: list[Violation] = []
+    # The loader has already closed the branch set and validated every declared
+    # shape and scalar type, so this compares values rather than re-parsing them.
     for branch in CI_STRICTNESS_BRANCHES:
-        config = branches.get(branch)
-        if not isinstance(config, dict):
-            violations.append(
-                Violation(
-                    code="ci-required-context-branch-missing",
-                    message="Every protected branch must declare its required status checks.",
-                    details=[
-                        f"{BRANCH_PROTECTION_BASELINE_PATH.as_posix()}: no entry for '{branch}'"
-                    ],
-                )
-            )
-            continue
-        checks = config.get("required_status_checks")
-        checks = checks if isinstance(checks, dict) else {}
-        if checks.get("strict") is not True:
-            violations.append(
-                Violation(
-                    code="ci-required-context-not-strict",
-                    message="Required status checks must stay strict on every protected branch.",
-                    details=[f"{branch}: expected strict=true"],
-                )
-            )
-        drift = _context_drift(branch, set(checks.get("contexts") or []), expected)
+        config = branches[branch]
+        checks = config["required_status_checks"]
+        drift = _context_drift(branch, set(checks["contexts"]), expected)
         if drift:
             violations.append(drift)
+        violations += protection_policy_violations(branch, config)
     return violations
 
 
@@ -308,14 +316,17 @@ def run_ci_required_context_contract(root: Path = REPO_ROOT) -> list[Violation]:
     inverse, a job that quietly stops being required, is the gate-weakening
     direction. Both are drift between two files nothing else compares, so the
     check is two-sided over `CI_STRICTNESS_REQUIRED_CONTEXTS` (GC-P030, ADR-091).
+
+    The declaration's schema is validated by the loader, so a malformed baseline
+    returns that single structured failure rather than a cascade of comparisons
+    against values whose types were never checked.
     """
-    baseline, blocked = _load_baseline(root / BRANCH_PROTECTION_BASELINE_PATH)
+    baseline, blocked = _load_baseline(root)
     if blocked:
         return [blocked]
 
-    branches = baseline.get("branches")
     expected = set(CI_STRICTNESS_REQUIRED_CONTEXTS)
-    violations = _baseline_violations(branches if isinstance(branches, dict) else {}, expected)
+    violations = _baseline_violations(baseline["branches"], expected)
 
     by_branch, scanned = _check_names_by_branch(root)
     guard = require_scanned("pull-request workflow inventory", scanned)
