@@ -41,9 +41,6 @@ vale-lint: vale-install ## Run Vale on .md docs changed vs BASE_REF, incl. uncom
 	  echo "vale-lint: Vale not installed at .tools/vale/current/vale; run 'make vale-install'" >&2; \
 	  exit 1; \
 	fi; \
-	if [ -n "$$GC_VALE_JSON" ]; then \
-	  .tools/vale/current/vale --config=.vale.ini --output=JSON $$CHANGED_DOCS > "$$GC_VALE_JSON" || true; \
-	fi; \
 	.tools/vale/current/vale --config=.vale.ini $$CHANGED_DOCS
 
 # --- Repo policy ---
@@ -53,7 +50,7 @@ policy-tests: ## Run unit tests for repo policy tooling
 
 policy: policy-tests mcp-lint vale-lint ## Run repo-native policy checks shared by Claude and Codex
 	@BASE_REF="$${BASE_REF:-origin/dev}"; \
-	python3 bin/policy --base "$$BASE_REF" --skip-pr-body $${GC_POLICY_JSON:+--json "$$GC_POLICY_JSON"}
+	python3 bin/policy --base "$$BASE_REF" --skip-pr-body
 
 # --- Repo workflow helpers ---
 

@@ -75,9 +75,10 @@ enforced by policy.
 
 - Target `dev`, not `main`.
 - **The PR title must be a Conventional Commit** (`type(optional-scope): lowercase
-  subject`), enforced by CI (`.github/workflows/pr-title.yml`). Release Please parses
-  merged commit history to compute the next version and changelog, so the title is
-  load-bearing, not cosmetic.
+  subject`), enforced by repository policy and the MCP PR boundary; the
+  `.github/workflows/pr-title.yml` job supplies advisory early feedback. Release
+  Please parses merged commit history to compute the next version and changelog,
+  so the title is load-bearing, not cosmetic.
 - CI must pass: the `node --test` suite, `make policy` (guardrails, MCP lint, Vale), and
   the SonarCloud gate.
 - Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md).

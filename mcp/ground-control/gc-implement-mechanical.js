@@ -28,8 +28,7 @@ import {
   writeImplementPublishJournal,
   removeImplementPublishJournal,
 } from "./lib.js";
-import { createWorkflowRunLifecycleEmitter } from "./workflow-run-lifecycle.js";
-import { MARKER_BY_ACTION, STATION_BY_ACTION, applyRunStateTransition, classifyStationResult, guardEmitter, resolveEmitter, runFinalize, runReadiness } from "./implement/completion.js";
+import { runFinalize, runReadiness } from "./implement/completion.js";
 import { completionShape, execFileAsync, requirementShape, runBootstrap } from "./implement/gate-helpers.js";
 import { runMonitor, runPublish } from "./implement/publish.js";
 import { runVerify } from "./implement/verify.js";
@@ -114,7 +113,6 @@ function asyncTransportFailure(action, error, message, nextAction) {
 }
 const defaultDeps = {
   execFile: execFileAsync,
-  createLifecycle: createWorkflowRunLifecycleEmitter,
   authorizeRepo: authorizeImplementMutationCheckout,
   runGit: runImplementGitCommand,
   preCommit: runImplementPreCommit,
@@ -176,50 +174,7 @@ export async function runImplementMechanical(args, overrides = {}) {
     deps.getTraceabilityByArtifact = (artifactType, artifactIdentifier) =>
       findTraceabilityByArtifact(args.repoPath, artifactType, artifactIdentifier);
   }
-  if (!IMPLEMENT_MECHANICAL_ACTIONS.includes(args.action)) {
-    return dispatch(args, deps);
-  }
-
-  // Lifecycle observation (issue #1435). A phase is never allowed to fail, change, or stall because
-  // recording it failed, so every emitter call goes through the guard above. The emitter timestamps
-  // each transition immediately and queues the transport, so none of the calls below waits on the
-  // backend — the awaits here settle on the next microtask regardless of how the network behaves.
-  const emitter = guardEmitter(await resolveEmitter(args, deps));
-  // Recorded as opening before dispatch, not after: a run that only becomes visible once it
-  // finishes is exactly the gap this closes.
-  await (args.action === "bootstrap" ? emitter.openRun() : emitter.ensureRun());
-
-  const station = STATION_BY_ACTION[args.action];
-  const instrumented = { ...deps, emitter };
-
-  let result;
-  if (station) {
-    // The emitter is handed an observation of the dispatch, not the dispatch envelope itself:
-    // the station verdict is measurement and must not become a field of the tool's public
-    // contract. The envelope escapes through the closure exactly as it is.
-    await emitter.station(station, async () => {
-      result = await dispatch(args, instrumented);
-      return {
-        ok: result.ok,
-        error: result.error,
-        stationResult: classifyStationResult(args.action, result),
-        ...(Array.isArray(result.measurement_findings) ? { findings: result.measurement_findings } : {}),
-      };
-    });
-  } else {
-    result = await dispatch(args, instrumented);
-  }
-
-  const marker = MARKER_BY_ACTION[args.action];
-  if (marker && result.ok) {
-    await emitter.markerTransition(marker);
-  }
-
-  if (args.action === "bootstrap" && result.ok) {
-    await emitter.recordRequirementUids(result.requirement_uids);
-  }
-  await applyRunStateTransition(args.action, result, emitter);
-  return result;
+  return dispatch(args, deps);
 }
 export async function gcImplementMechanicalToolHandler(args, overrides = {}) {
   const mechanicalArgs = {

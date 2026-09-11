@@ -8,6 +8,16 @@ accepted
 
 2026-05-23
 
+> **Sync note for issue #1303 (2026-09-11, surviving gate inventory):** The Python
+> documentation-outcome check moved from the mixed version-mirror module to
+> `tools/policy/documentation_coverage.py`; `tools/policy/checks.py` remains the compatibility
+> barrel and the command-line entry point imports the check from its focused owner. The move keeps
+> the fixture protocol, classifications, failure codes, and PR-body requirement unchanged while
+> bringing both policy modules below the 500-line limit. The same issue strengthens CI topology,
+> title-contract, action-pin, and version-mirror checks; those placements and their bypass models
+> are documented in `docs/architecture/SURVIVING_GATES.md`. The MCP classifier, outcome mapping,
+> Vale rules, installer, and `.vale.ini` are unchanged, and no documentation style rule is added.
+
 > **Sync note for issue #1562 (2026-09-06, launch-directory environment authority):** The MCP server
 > reads Ground Control's variables from `<launch directory>/.env` and nowhere else - no machine-level
 > or user-level file, and no fallback to the ambient environment. `mcp/ground-control/index.js` became

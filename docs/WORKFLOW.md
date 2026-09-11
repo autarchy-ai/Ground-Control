@@ -8,6 +8,7 @@ a contract is stated once and read in one place.
 |----------|-----------|
 | How do I run the gated `/implement` loop, and what does each phase gate? | [`docs/DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) |
 | What runs, and where is the trust boundary? | [`docs/architecture/ARCHITECTURE.md`](architecture/ARCHITECTURE.md) |
+| Which gates survived the MCP-only re-platform, where are they enforced, and which shadow checks were retired? | [`docs/architecture/SURVIVING_GATES.md`](architecture/SURVIVING_GATES.md) |
 | Which MCP tools exist, and how is the server set up? | [`mcp/ground-control/README.md`](../mcp/ground-control/README.md) |
 | Where does the MCP server read its configuration - the launch directory's `.env`, and nowhere else - and what happens when a gate cannot be evaluated? | [`mcp/ground-control/README.md`](../mcp/ground-control/README.md) and [`docs/DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) |
 | Why did the SonarCloud watcher stop before its window, and what is the difference between an analysis that has not arrived and one that will never exist? | [`docs/DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) § Step 11 and [`skills/implement/steps/step-11-sonarcloud.md`](../skills/implement/steps/step-11-sonarcloud.md) |

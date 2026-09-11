@@ -1,5 +1,12 @@
 # Documentation style
 
+> **Sync note for issue #1303 (2026-09-11, surviving gate inventory):** The Python
+> documentation-outcome check now lives in `tools/policy/documentation_coverage.py` instead of the
+> version-mirror module, with `tools/policy/checks.py` preserving the compatibility import surface.
+> The fixture protocol, classifications, outcome mapping, Vale rules, installer, `.vale.ini`, and
+> this file's style rules are unchanged. ADR-054 and
+> `docs/architecture/SURVIVING_GATES.md` record the placement decision.
+
 > **Sync note for issue #1562 (2026-09-06, launch-directory environment authority):** The MCP server
 > reads Ground Control's variables from `<launch directory>/.env` and nowhere else - no machine-level
 > or user-level file, and no fallback to the ambient environment. `mcp/ground-control/index.js` became

@@ -14,10 +14,14 @@ import json
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 from .file_size import run_file_size_limit_check
-from .ci_strictness import run_ci_required_context_contract, run_sonar_strictness_contract
+from .ci_strictness import (
+    run_ci_required_context_contract,
+    run_github_action_pin_contract,
+    run_pr_title_contract,
+    run_sonar_strictness_contract,
+)
 from .workflow_contracts import run_doc_coverage_anchor_contract, run_scan_floor_contract
 from .adr_guard import (
     read_changed_files,
@@ -42,12 +46,9 @@ from .workflow_routing import (
     parse_args,
     render_and_exit,
     run_workflow_routing_contract,
-    write_violations_json,
 )
-from .version_mirror import (
-    run_documentation_coverage_check,
-    run_version_mirror_consistency_check,
-)
+from .documentation_coverage import run_documentation_coverage_check
+from .version_mirror import run_version_mirror_consistency_check
 from .authz_matrix import (
     check_pr_body,
 )
@@ -61,7 +62,6 @@ from .repo_map import (
 
 def main(argv: list[str] | None = None) -> int:
     """Run all repository policy checks and render their violations."""
-    started = time.monotonic()
     args = parse_args(argv or sys.argv[1:])
     explicit_files = args.files if args.files is not None else args.paths
     if args.files and args.paths:
@@ -90,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
     violations.extend(run_doc_coverage_anchor_contract())
     violations.extend(run_sonar_strictness_contract())
     violations.extend(run_ci_required_context_contract())
+    violations.extend(run_pr_title_contract())
+    violations.extend(run_github_action_pin_contract())
     violations.extend(run_file_size_limit_check())
     violations.extend(run_requirement_specs_frontmatter_check())
     violations.extend(run_repository_map_freshness_check())
@@ -111,10 +113,6 @@ def main(argv: list[str] | None = None) -> int:
         else:
             violations.extend(run_documentation_coverage_check(changed_files, pr_body=None))
 
-    if args.json_out:
-        write_violations_json(
-            args.json_out, violations, int((time.monotonic() - started) * 1000)
-        )
     return render_and_exit(violations)
 
 

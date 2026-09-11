@@ -213,7 +213,6 @@ export async function getRepoGroundControlContext(repoPath) {
     requirements: parseResult.value.requirements,
     cross_cutting_concerns: parseResult.value.cross_cutting_concerns,
     routing: parseResult.value.routing,
-    telemetry: parseResult.value.telemetry,
     architecture: parseResult.value.architecture,
     errors: [],
   };

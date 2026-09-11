@@ -208,8 +208,18 @@ pooling producers across workflows would accept a repository where `main` requir
 a check only `dev` can produce. Contexts posted by a
 hosted app (`GitGuardian Security Checks`, `SonarCloud Code Analysis`) are exempt
 from needing a local producer through an explicit allowlist that is itself
-shrink-only: a test asserts every entry is still a required context, so an
-exemption cannot outlive the check it exempts.
+shrink-only: the policy contract must reject every allowlist entry that is no longer
+a required context, so an exemption cannot outlive the check it exempts. Unit
+tests exercise that refusal; they are evidence for the contract, not its only
+enforcement.
+
+A workflow counts as a local producer only when the tracked trigger shape proves
+that it will start for pull requests into the protected branch. Workflow-level
+`paths` and `paths-ignore` filters therefore cannot satisfy a required context:
+an unmatched pull request starts no workflow and leaves that context pending.
+Malformed or unsupported trigger/filter shapes are likewise not evidence of a
+producer. This is fail-closed producer discovery, not a second GitHub Actions
+schema or an attempt to evaluate arbitrary expressions.
 
 This narrows the earlier design in one respect and widens it in another. It drops
 the job-dependency, `docker`-gate, and fast-lane assertions, which described a
@@ -318,7 +328,9 @@ so the users, teams, and apps collections are declared and compared per branch.
 GitHub omits that mapping when nothing is allowed, so an absent mapping reads as
 three empty collections. That is the only safe default: assuming the opposite would
 report drift on every correctly configured branch and train the operator to ignore
-the check.
+the check. The executable declaration contract must also keep provider-map keys equal
+to the required-context set; a unit assertion alone must not be the only thing
+preventing an undeclared provider from being treated as acceptable.
 
 **"Could not be determined" is a third outcome, not a flavour of the other two.**
 The live check exits 0 on a match, 1 on drift, and 2 when any branch could not be
@@ -367,9 +379,34 @@ the only normalized semantic difference was `main`'s `strict`.
 administration capability would need its own authorization contract through a
 repository-bound MCP tool, not a write mode grown onto an operator script.
 
+## 2026-09-11 amendment: surviving gate placement (issue #1303)
+
+The post-#1500 inventory keeps the required `policy`, `sonar`, `trivy`, and
+`osv-scanner` jobs and the two hosted-app contexts. It closes two remaining
+offline declaration gaps: the external allowlist must be a subset of the
+runtime required-context declaration, and the provider map must cover that
+declaration exactly. These are production policy checks, not assertions that
+exist only in a unit test.
+
+The required `policy` job now runs `pre-commit run --all-files`, making the
+tracked hook configuration the single file-hygiene/security inventory instead
+of manually duplicating most hook commands in YAML. PR-title CI stays advisory,
+but `run_pr_title_contract` rejects vocabulary drift between its Action config
+and `.ground-control.yaml`. `run_github_action_pin_contract` rejects floating
+external Action references across every workflow. Required producers remain
+unfiltered at workflow level, and unsupported or malformed trigger/filter
+shapes remain non-producers.
+
+The live protection comparison remains a separate authenticated operator gate:
+CI cannot obtain `administration:read`, so treating an unauthorized read as a
+green `make policy` result would be fail-open. The repository baseline is intent;
+`make branch-protection-check` is evidence about GitHub's live state. The full
+inventory, including retired duplicate and backend-era checks, is in
+[`docs/architecture/SURVIVING_GATES.md`](../../docs/architecture/SURVIVING_GATES.md).
+
 ## Related Issues
 
-Issue #1461, issue #1468, issue #650, issue #1155.
+Issue #1461, issue #1468, issue #650, issue #1155, issue #1303.
 
 ## Related ADRs
 

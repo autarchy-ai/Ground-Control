@@ -1,9 +1,9 @@
 // Split from lib.test.js under issue #1467 for the 500-LOC limit
 // (docs/CODING_STANDARDS.md). Test bodies are unchanged.
 
-import { after, describe, it } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildUrl, formatIssueBody, parseErrorBody, toCamelCase, toSnakeCase } from "./lib.js";
+import { formatIssueBody, toCamelCase, toSnakeCase } from "./lib.js";
 
 // ---------------------------------------------------------------------------
 // toSnakeCase (backend response normalization)
@@ -181,131 +181,6 @@ describe("toSnakeCase opaque-value-key guard (GC-M011)", () => {
         allowAdditional: false,
       },
     });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// buildUrl
-// ---------------------------------------------------------------------------
-
-describe("buildUrl", () => {
-  const originalBaseUrl = process.env.GC_BASE_URL;
-
-  function withBaseUrl(baseUrl, fn) {
-    if (baseUrl === undefined) {
-      delete process.env.GC_BASE_URL;
-    } else {
-      process.env.GC_BASE_URL = baseUrl;
-    }
-    try {
-      fn();
-    } finally {
-      if (originalBaseUrl === undefined) {
-        delete process.env.GC_BASE_URL;
-      } else {
-        process.env.GC_BASE_URL = originalBaseUrl;
-      }
-    }
-  }
-
-  it("builds a simple path", () => {
-    withBaseUrl("http://gc-dev:8000", () => {
-      const url = buildUrl("/api/v1/requirements");
-      assert.ok(url.endsWith("/api/v1/requirements"));
-    });
-  });
-
-  it("appends query params", () => {
-    withBaseUrl("http://gc-dev:8000", () => {
-      const url = buildUrl("/api/v1/requirements", { status: "DRAFT", page: 0 });
-      const parsed = new URL(url);
-      assert.equal(parsed.searchParams.get("status"), "DRAFT");
-      assert.equal(parsed.searchParams.get("page"), "0");
-    });
-  });
-
-  it("skips undefined and null params", () => {
-    withBaseUrl("http://gc-dev:8000", () => {
-      const url = buildUrl("/api/v1/requirements", {
-        status: undefined,
-        type: null,
-        wave: "",
-        search: "hello",
-      });
-      const parsed = new URL(url);
-      assert.equal(parsed.searchParams.get("status"), null);
-      assert.equal(parsed.searchParams.get("type"), null);
-      assert.equal(parsed.searchParams.get("wave"), null);
-      assert.equal(parsed.searchParams.get("search"), "hello");
-    });
-  });
-
-  it("uses GC_BASE_URL from env", () => {
-    withBaseUrl("http://gc-dev:8000", () => {
-      const url = buildUrl("/api/v1/analysis/cycles");
-      assert.ok(url.startsWith("http://gc-dev:8000"));
-      assert.ok(url.includes("/api/v1/analysis/cycles"));
-    });
-  });
-
-  it("fails fast when GC_BASE_URL is unset", () => {
-    withBaseUrl(undefined, () => {
-      assert.throws(
-        () => buildUrl("/api/v1/analysis/cycles"),
-        /GC_BASE_URL must be set/,
-      );
-    });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// parseErrorBody
-// ---------------------------------------------------------------------------
-
-describe("parseErrorBody", () => {
-  it("extracts code, message, and detail from a Ground Control error envelope", () => {
-    const body = JSON.stringify({
-      error: {
-        code: "threat_model_referenced",
-        message: "Threat model TM-001 cannot be deleted while reverse links exist",
-        detail: {
-          threatModelUid: "TM-001",
-          assetUids: ["ASSET-001"],
-          scenarioUids: ["RS-001", "RS-002"],
-        },
-      },
-    });
-    const envelope = parseErrorBody(body);
-    assert.equal(envelope.code, "threat_model_referenced");
-    assert.match(envelope.message, /TM-001 cannot be deleted/);
-    assert.deepEqual(envelope.detail, {
-      threatModelUid: "TM-001",
-      assetUids: ["ASSET-001"],
-      scenarioUids: ["RS-001", "RS-002"],
-    });
-  });
-
-  it("returns null code/detail when the envelope only has a message", () => {
-    const body = JSON.stringify({ error: { code: "not_found", message: "Requirement not found" } });
-    const envelope = parseErrorBody(body);
-    assert.equal(envelope.code, "not_found");
-    assert.equal(envelope.message, "Requirement not found");
-    assert.equal(envelope.detail, null);
-  });
-
-  it("falls back to raw text for non-JSON", () => {
-    const envelope = parseErrorBody("Internal Server Error");
-    assert.equal(envelope.code, null);
-    assert.equal(envelope.message, "Internal Server Error");
-    assert.equal(envelope.detail, null);
-  });
-
-  it("falls back to raw text for unexpected JSON shape", () => {
-    const raw = JSON.stringify({ status: 500 });
-    const envelope = parseErrorBody(raw);
-    assert.equal(envelope.code, null);
-    assert.equal(envelope.message, raw);
-    assert.equal(envelope.detail, null);
   });
 });
 

@@ -2,11 +2,17 @@
 
 ## Status
 
-accepted
+Superseded (issue #1303)
 
 ## Date
 
 2026-06-24
+
+> **Supersession (2026-09-11):** The reporting backend, database, REST, and UI
+> were removed by #1500. Issue #1303 deletes the remaining workflow-run clients,
+> lifecycle emitters, and measurement projection adapters. The GitHub issue
+> thread remains the durable workflow record under ADR-029; it is not rebuilt as
+> a telemetry read model.
 
 ## Context
 

@@ -14,6 +14,7 @@ here holds, so that half lives in `tools/ci/check_branch_protection.py` behind
 
 import fnmatch
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -22,6 +23,7 @@ from .branch_protection_fields import protection_policy_violations
 from .branch_protection_baseline import (
     BRANCH_PROTECTION_BASELINE_PATH,
     CI_STRICTNESS_BRANCHES,
+    CI_STRICTNESS_CONTEXT_PROVIDERS,
     CI_STRICTNESS_REQUIRED_CONTEXTS,
     BranchProtectionBaselineError,
     load_branch_protection_baseline,
@@ -53,6 +55,10 @@ SONAR_WORKFLOW_PATH = Path(".github/workflows/sonarcloud.yml")
 SONAR_QUALITY_GATE_ANCHOR = "SonarSource/sonarqube-quality-gate-action@"
 SONAR_TOKEN_BINDING = "SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}"
 SONAR_ALWAYS_RUN_ANCHOR = "if: ${{ !cancelled() }}"
+PR_TITLE_WORKFLOW_PATH = Path(".github/workflows/pr-title.yml")
+GROUND_CONTROL_CONFIG_PATH = Path(".ground-control.yaml")
+ACTION_USES_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)", re.MULTILINE)
+IMMUTABLE_ACTION_RE = re.compile(r"^[^@\s]+@[0-9a-fA-F]{40}$")
 
 
 def run_sonar_strictness_contract(root: Path = REPO_ROOT) -> list[Violation]:
@@ -129,20 +135,43 @@ def _matches_any(branch: str, patterns: list[object]) -> bool:
     return any(fnmatch.fnmatch(branch, str(pattern)) for pattern in patterns)
 
 
+def _valid_branch_filter(trigger: dict[str, object], key: str) -> bool:
+    """Whether an optional branch filter is a list containing only strings."""
+    if key not in trigger:
+        return True
+    value = trigger[key]
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _branch_filters_cover(branch: str, trigger: dict[str, object]) -> bool:
+    """Whether valid allow/ignore branch filters select ``branch``."""
+    ignored = trigger.get("branches-ignore", [])
+    allowed = trigger.get("branches")
+    excluded = isinstance(ignored, list) and _matches_any(branch, ignored)
+    included = not isinstance(allowed, list) or _matches_any(branch, allowed)
+    return included and not excluded
+
+
 def _trigger_covers(branch: str, pull_request: object) -> bool:
     """Whether a `pull_request` trigger runs for pull requests into `branch`.
 
     An absent `branches` / `branches-ignore` filter matches every branch. Both
     filters accept glob patterns, which is why this matches rather than compares.
     """
-    if not isinstance(pull_request, dict):
-        # `pull_request:` with no body, or a list-form `on:`; no filter, so it runs.
+    if pull_request is None:
         return True
-    ignore = pull_request.get("branches-ignore")
-    if isinstance(ignore, list) and _matches_any(branch, ignore):
+    if not isinstance(pull_request, dict):
         return False
-    allowed = pull_request.get("branches")
-    return not isinstance(allowed, list) or _matches_any(branch, allowed)
+    has_path_filter = any(key in pull_request for key in ("paths", "paths-ignore"))
+    valid_branch_filters = all(
+        _valid_branch_filter(pull_request, key)
+        for key in ("branches", "branches-ignore")
+    )
+    return (
+        not has_path_filter
+        and valid_branch_filters
+        and _branch_filters_cover(branch, pull_request)
+    )
 
 
 def _load_workflow(path: Path) -> dict[str, object] | None:
@@ -331,6 +360,31 @@ def run_ci_required_context_contract(root: Path = REPO_ROOT) -> list[Violation]:
     expected = set(CI_STRICTNESS_REQUIRED_CONTEXTS)
     violations = _baseline_violations(baseline["branches"], expected)
 
+    stale_external = sorted(set(EXTERNALLY_POSTED_CONTEXTS) - expected)
+    if stale_external:
+        violations.append(
+            Violation(
+                code="ci-required-context-external-allowlist-drift",
+                message="The hosted-context exemption must be a subset of required contexts.",
+                details=[f"unexpected external exemption '{name}'" for name in stale_external],
+            )
+        )
+
+    provider_names = set(CI_STRICTNESS_CONTEXT_PROVIDERS)
+    missing_providers = sorted(expected - provider_names)
+    extra_providers = sorted(provider_names - expected)
+    if missing_providers or extra_providers:
+        violations.append(
+            Violation(
+                code="ci-required-context-provider-map-drift",
+                message="Every required context must have exactly one declared provider.",
+                details=(
+                    [f"missing provider for '{name}'" for name in missing_providers]
+                    + [f"provider declared for non-required context '{name}'" for name in extra_providers]
+                ),
+            )
+        )
+
     by_branch, scanned = _check_names_by_branch(root)
     guard = require_scanned("pull-request workflow inventory", scanned)
     if guard:
@@ -338,3 +392,97 @@ def run_ci_required_context_contract(root: Path = REPO_ROOT) -> list[Violation]:
 
     unproduced = _unproduced_violation(by_branch, expected)
     return violations + ([unproduced] if unproduced else [])
+
+
+def _pr_title_contract_from_step(step: object) -> dict[str, object] | None:
+    """Extract the semantic-title inputs from one workflow step, if present."""
+    values = step.get("with") if isinstance(step, dict) else None
+    if not isinstance(values, dict) or "types" not in values:
+        return None
+    raw_types = values["types"]
+    types = (
+        [line.strip() for line in raw_types.splitlines() if line.strip()]
+        if isinstance(raw_types, str)
+        else raw_types
+    )
+    return {
+        "types": types,
+        "require_scope": values.get("requireScope", False),
+        "subject_pattern": values.get("subjectPattern"),
+    }
+
+
+def _pr_title_ci_contract(root: Path) -> dict[str, object] | None:
+    """Read the advisory PR-title Action's configured validation contract."""
+    document = _load_workflow(root / PR_TITLE_WORKFLOW_PATH)
+    jobs = document.get("jobs") if document else None
+    job = jobs.get("lint-pr-title") if isinstance(jobs, dict) else None
+    steps = job.get("steps") if isinstance(job, dict) else None
+    if not isinstance(steps, list):
+        return None
+    return next(
+        (contract for step in steps if (contract := _pr_title_contract_from_step(step))),
+        None,
+    )
+
+
+def run_pr_title_contract(root: Path = REPO_ROOT) -> list[Violation]:
+    """Keep the advisory CI title check identical to the MCP creation gate."""
+    try:
+        config = yaml.safe_load((root / GROUND_CONTROL_CONFIG_PATH).read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        config = None
+    workflow = config.get("workflow") if isinstance(config, dict) else None
+    mcp_contract = workflow.get("pr_title") if isinstance(workflow, dict) else None
+    ci_contract = _pr_title_ci_contract(root)
+    if isinstance(mcp_contract, dict) and mcp_contract == ci_contract:
+        return []
+    return [
+        Violation(
+            code="pr-title-contract-drift",
+            message="CI and MCP PR-title validation must use one contract.",
+            details=[
+                f"MCP input: {GROUND_CONTROL_CONFIG_PATH.as_posix()}:workflow.pr_title",
+                f"CI input: {PR_TITLE_WORKFLOW_PATH.as_posix()}:jobs.lint-pr-title",
+            ],
+        )
+    ]
+
+
+def run_github_action_pin_contract(root: Path = REPO_ROOT) -> list[Violation]:
+    """Require immutable revisions for every external GitHub Action."""
+    workflows_dir = root / WORKFLOWS_DIR
+    paths = (
+        sorted(workflows_dir.glob("*.yml")) + sorted(workflows_dir.glob("*.yaml"))
+        if workflows_dir.is_dir()
+        else []
+    )
+    guard = require_scanned(
+        "GitHub Action workflow inventory", len(paths), code="github-action-pin-scan-empty"
+    )
+    if guard:
+        return guard
+    violations: list[Violation] = []
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as error:
+            violations.append(
+                Violation(
+                    code="github-action-workflow-unreadable",
+                    message="A GitHub Actions workflow could not be inspected.",
+                    details=[f"{path.relative_to(root).as_posix()}: {error}"],
+                )
+            )
+            continue
+        for reference in ACTION_USES_RE.findall(text):
+            if reference.startswith("./") or IMMUTABLE_ACTION_RE.fullmatch(reference):
+                continue
+            violations.append(
+                Violation(
+                    code="github-action-not-immutable",
+                    message="External GitHub Actions must be pinned to a full commit SHA.",
+                    details=[f"{path.relative_to(root).as_posix()}: {reference}"],
+                )
+            )
+    return violations

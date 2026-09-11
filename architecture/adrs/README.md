@@ -54,7 +54,7 @@ We use [MADR](https://adr.github.io/madr/) (Markdown Any Decision Records). Each
 | [033](033-authenticated-audit-actor-provenance.md) | Authenticated Audit Actor Provenance | Accepted |
 | [034](034-api-enum-contract-single-source.md) | API Enum Contract Single Source of Truth | Accepted (amended 2026-06-15, #1106) |
 | [035](035-mcp-tool-catalog-curation.md) | MCP Tool Catalog Curation | Accepted |
-| [036](036-per-step-routing-tool-surfaces-telemetry.md) | Per-Step Model Routing, Durable-Record Tool Surfaces, and Step Telemetry (amends ADR-021) | Accepted (amended 2026-05-26, GC-O011/#989; 2026-07-03, ADR-081; 2026-07-28, #1473; 2026-09-06, #946; 2026-09-06, #1562 supersedes the #946 environment-source decision) |
+| [036](036-per-step-routing-tool-surfaces-telemetry.md) | Per-Step Model Routing and Durable-Record Tool Surfaces (telemetry history retained) | Accepted (telemetry superseded 2026-09-11, #1303) |
 | [037](037-browser-session-access-control.md) | Browser Session Access Control | Accepted |
 | [038](038-finding-entity-boundary.md) | Finding Entity Boundary | Accepted |
 | [039](039-control-verification-subsystem.md) | Control Verification Subsystem (Tests + Effectiveness Assessments) | Accepted |
@@ -78,11 +78,11 @@ We use [MADR](https://adr.github.io/madr/) (Markdown Any Decision Records). Each
 | [056](056-research-project-type-and-intake.md) | Research Project Type and Intake Metadata | Accepted |
 | [057](057-per-run-grc-screening-gate.md) | Per-run GRC Screening Gate in /implement | Superseded by ADR-089 for active product and workflow behavior |
 | [058](058-derivation-first-continuous-grc.md) | Derivation-First Continuous GRC | Superseded by ADR-089 for active product and workflow behavior |
-| [059](059-mcp-usage-telemetry.md) | MCP Tool Usage Telemetry | Accepted |
+| [059](059-mcp-usage-telemetry.md) | MCP Tool Usage Telemetry | Superseded (issue #1303) |
 | [060](060-requirement-uid-identity.md) | Requirement UID identity | Accepted |
-| [061](061-workflow-run-telemetry-reporting.md) | Workflow-Run Telemetry & Economics Reporting Surface | Accepted (amended 2026-07-30, #1437) |
+| [061](061-workflow-run-telemetry-reporting.md) | Workflow-Run Telemetry & Economics Reporting Surface | Superseded (issue #1303) |
 | [062](062-age-graph-projection-snapshot-publication.md) | AGE Graph Projection Snapshot Publication | Accepted |
-| [063](063-release-deployment-model.md) | Release & Deployment Model | Accepted (amended 2026-07-15, GC-P027/#1399 Release Please ownership) |
+| [063](063-release-deployment-model.md) | Release & Deployment Model | Accepted (MCP-only release surface amendment 2026-09-11, #1303) |
 | [064](064-research-run-lifecycle-and-stage-gating.md) | Research Run Lifecycle and Stage Gating | Accepted |
 | [065](065-research-run-observability-snapshot.md) | Research Run Observability Snapshot | Accepted |
 | [066](066-research-review-comments-and-resolution-tracking.md) | Research Gate Decision Log and Review Comments | Accepted |
@@ -109,7 +109,7 @@ We use [MADR](https://adr.github.io/madr/) (Markdown Any Decision Records). Each
 | [087](087-contract-locked-development-methodology.md) | Contract-Locked Development Methodology | Withdrawn (2026-07-10, #1296) |
 | [088](088-temporal-human-gates.md) | Temporal Human Gates (Merge Observation and Authorized Operator Signals) | Superseded (issue #1359) |
 | [089](089-retire-grc-product-and-next-issue-recommendation.md) | Retire the GRC Product Surface and Next-Issue Recommendation | Accepted |
-| [090](090-production-line-measurement-model.md) | Production-Line Measurement Model | Accepted (amended 2026-07-28, #1355) |
+| [090](090-production-line-measurement-model.md) | Production-Line Measurement Model | Superseded (issue #1303) |
 | [091](091-ci-verification-topology.md) | CI Verification Topology | Accepted |
 | [092](092-file-size-limit-gate.md) | Enforce the 500-LOC File-Size Limit in Repo Policy | Accepted |
 | [093](093-requirements-specs-as-code.md) | Requirements as Specs-as-Code | Accepted |

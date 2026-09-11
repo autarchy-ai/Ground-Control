@@ -80,7 +80,8 @@ agent as ordinary working-tree changes and reviewed in the PR like any other dif
 
 ```
 mcp/ground-control/
-├── index.js              # server entry: registers the tool surface
+├── index.js              # environment bootstrap
+├── server-runtime.js     # server construction and tool registration
 ├── lib/                  # implementation modules (thin tools delegate here)
 │   ├── requirement-files.js   # repo-local requirement reader (ADR-093)
 │   ├── ...                     # git/GitHub mechanics, review, CI/Sonar, records
@@ -97,7 +98,7 @@ non-obvious rationale rather than restating the code.
 
 ## The tool surface
 
-The surviving tools (roughly 27, down from 215 before the re-platform) are exactly what
+The surviving 32 tools (down from 215 before the re-platform) are exactly what
 the `/implement` workflow needs, each operating over `gh` / `git` / files:
 
 - **Orchestration.** `gc_implement_mechanical` drives the mechanical bands (bootstrap,
@@ -112,6 +113,11 @@ the `/implement` workflow needs, each operating over `gh` / `git` / files:
   its own work.
 - **Durable records.** Plan, decision records, execution obligations, and the final
   report all post to the GitHub issue thread.
+
+The complete per-tool inventory and the placement doctrine for policy, hooks,
+CI, protection, skills, and retired surfaces is
+[`SURVIVING_GATES.md`](SURVIVING_GATES.md). File presence and historical ADR
+text do not establish a supported gate; that inventory names the current owner.
 
 ## The `/implement` workflow
 
@@ -128,7 +134,8 @@ There is no Gradle, JaCoCo, Testcontainers, or ArchUnit. Verification is:
 - `make policy` runs the repo-native Python guardrails (`tools/policy/`, `bin/policy`),
   the MCP ESLint gate, and Vale. It covers ADR synchronization, requirement-spec
   frontmatter, the `/implement` execution and workflow contracts, reviewer-separation
-  decision records, repo identity, version mirrors, the file-size limit, and the
+  decision records, repo identity, version mirrors, required-context topology,
+  PR-title parity, immutable Action pins, the file-size limit, and the
   repository-map freshness gate. See
   [ADR-091](../../architecture/adrs/091-ci-verification-topology.md) for the CI
   verification topology.

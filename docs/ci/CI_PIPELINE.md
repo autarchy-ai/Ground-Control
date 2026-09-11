@@ -19,7 +19,7 @@ required-status-check context name.
 
 | Job | Workflow | Required | What it verifies | Reproduce locally |
 |---|---|---|---|---|
-| `policy` | `ci.yml` | yes | Pre-commit file hygiene and the gitleaks secret scan, the Python policy tool tests, the MCP `node --test` suite, MCP ESLint, `bin/policy`, and Vale on changed docs | `make policy` and `make mcp-test` |
+| `policy` | `ci.yml` | yes | `pre-commit run --all-files`, the Python policy tool tests, the MCP `node --test` suite, MCP ESLint, `bin/policy`, and Vale on changed docs | `make policy`, `make mcp-test`, and `pre-commit run --all-files` |
 | `sonar` | `sonarcloud.yml` | yes | JavaScript coverage through `c8`, Python coverage through `coverage.py`, SonarCloud analysis, the hosted quality gate, and the zero-open-issues gate | `npx c8 --reporter=lcovonly npm test` in `mcp/ground-control`, then `python3 tools/sonar/assert_no_new_issues.py --project-key autarchy-ai_Ground-Control` with `SONAR_TOKEN` set |
 | `trivy` | `security.yml` | yes | Filesystem scan for CRITICAL and HIGH vulnerabilities and for secrets, failing the job on any fixable finding | `trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --ignore-unfixed .` |
 | `osv-scanner` | `security.yml` | yes | Known vulnerabilities in the Node and Python dependency manifests, configured by `osv-scanner.toml` | `osv-scanner scan source --recursive --config=osv-scanner.toml .` |
@@ -37,8 +37,12 @@ in `tools/policy/ci_strictness.py` (GC-P030, ADR-091) checks it two ways on ever
 pull-request-triggered workflow **that runs for that protected branch**, and the
 baseline's context set must match that declaration exactly in both directions.
 The branch half matters because a `pull_request` trigger filtered to one branch
-never runs for the other, so a check can exist and still never report on `main`. The two hosted-app contexts above are the
-only exemptions from needing a local producer, and that allowlist is shrink-only.
+never runs for the other, so a check can exist and still never report on `main`.
+Workflow-level `paths`/`paths-ignore` and malformed trigger or branch-filter
+shapes cannot prove production and fail closed. The two hosted-app contexts above
+are the only exemptions from needing a local producer; at runtime that allowlist
+must remain a subset of the required set, and the context-to-provider map must
+cover the required set exactly.
 Adding or removing a required check therefore means editing the declaration, the
 baseline, and the workflow together; the gate fails until they agree.
 
@@ -103,9 +107,12 @@ These are not verification gates and are not in the required-context set.
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `pr-title.yml` | pull request to `main` or `dev` | Enforces a Conventional Commit title with a single type, an optional scope, and a lowercase-leading subject. Release Please parses merged history, so the title is load-bearing. The `/implement` skill validates the same allow-list locally at Step 9. |
+| `pr-title.yml` | pull request to `main` or `dev` | Reports early Conventional Commit title feedback with a single type, optional scope, and lowercase-leading subject. It is advisory; `bin/policy` rejects drift from `.ground-control.yaml`, and the MCP PR-creation boundary enforces the title. |
 | `release-please.yml` | push to `main` | Maintains the `chore(main): release X.Y.Z` pull request, regenerates `CHANGELOG.md` from Conventional Commit history, and cuts the tag and GitHub Release when that pull request merges. There is no image to publish. |
-| `sync-main-to-dev.yml` | after a release lands on `main` | Opens the `main` to `dev` back-merge pull request from a dedicated automation branch. A human merges it. |
+| `sync-main-to-dev.yml` | after a release lands on `main` | Opens or updates the `main` to `dev` PR only from the `main` ref, only for the automation-owned branch/PR whose stored head OID matches, and with an exact force-with-lease. A human merges it. |
+
+See [the surviving gate inventory](../architecture/SURVIVING_GATES.md) for the
+complete keep/delete/placement record, including hooks and MCP tool boundaries.
 
 ## Measuring
 

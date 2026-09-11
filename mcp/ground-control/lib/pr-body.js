@@ -5,6 +5,8 @@
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
 import { collectPrBodyErrors, renderPrBodyLines } from "./pr-body-render.js";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { detectSensitiveBodyContent } from "./grc-legacy-compat-2.js";
 import { PR_BODY_MAX } from "./repo-vocabulary.js";
 import { checkPrBodyShape } from "./runtime-primitives.js";
@@ -50,6 +52,21 @@ export async function runRenderPrBody(input) {
       message: validation.errors.join("; "),
       issue_number: input?.issueNumber ?? null,
     };
+  }
+  if (typeof input.repoPath === "string" && input.repoPath.trim() !== "") {
+    const expectedMode = existsSync(path.join(input.repoPath, "release-please-config.json"))
+      ? "release-please"
+      : "fragments";
+    const actualMode = input.changelogMode ?? "fragments";
+    if (actualMode !== expectedMode) {
+      return {
+        ok: false,
+        error: "pr_body_changelog_mode_mismatch",
+        message: `changelogMode must be '${expectedMode}' for the target repository`,
+        issue_number: input.issueNumber,
+        next_action: "use_repository_changelog_mode_and_retry",
+      };
+    }
   }
   // NB: JS-side deferral detection is intentionally NOT applied here (codex
   // cycle-4 F1). The previous Tier-1 regex was a partial subset of the

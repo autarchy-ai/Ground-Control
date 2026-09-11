@@ -6,7 +6,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { classifySonarGateFailure, sonarGatePassed, sonarStationResult } from "./lib/sonar-gate.js";
+import { classifySonarGateFailure, sonarGatePassed } from "./lib/sonar-gate.js";
 
 const CLEAN = {
   ok: true,
@@ -31,31 +31,6 @@ describe("sonarGatePassed", () => {
 
   it("does not pass an envelope the watcher could not produce", () => {
     assert.equal(sonarGatePassed({ ok: false, error: "sonar_watch_token_missing" }), false);
-  });
-});
-
-describe("sonarStationResult", () => {
-  it("records a clean gate as a pass", () => {
-    assert.equal(sonarStationResult(CLEAN), "pass");
-  });
-
-  it("records a repo with no sonarcloud block as coverage, not a pass", () => {
-    assert.equal(sonarStationResult({ ok: true, skipped: true }), "skipped_station");
-  });
-
-  it("records open findings as a rejecting verdict", () => {
-    assert.equal(sonarStationResult({ ...CLEAN, issues_summary: { open_count: 3 } }), "fail");
-  });
-
-  it("records a missing host credential as not evaluable", () => {
-    assert.equal(sonarStationResult({ ok: false, error: "sonar_watch_token_missing" }), "not_evaluable");
-  });
-
-  it("records an analysis that never appeared as not evaluable, not a defect", () => {
-    assert.equal(
-      sonarStationResult({ ok: true, skipped: false, quality_gate: "NONE", timed_out: true }),
-      "not_evaluable",
-    );
   });
 });
 

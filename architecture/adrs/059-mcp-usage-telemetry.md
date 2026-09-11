@@ -2,11 +2,17 @@
 
 ## Status
 
-accepted
+Superseded (issue #1303)
 
 ## Date
 
 2026-06-14
+
+> **Supersession (2026-09-11):** The backend persistence and aggregation
+> authority was removed by #1500. Issue #1303 deletes the remaining MCP handler
+> wrapper and backend adapter instead of preserving a fail-open write with no
+> live owner. There is no replacement measurement surface, and no workflow gate
+> consumes this historical telemetry contract.
 
 ## Context
 

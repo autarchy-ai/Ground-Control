@@ -39,5 +39,5 @@
 ## Checklist
 
 - [ ] Code follows the project's coding standards
-- [ ] PR title is a Conventional Commit (`type(optional-scope): subject`, lowercase-leading subject) - enforced by CI (`.github/workflows/pr-title.yml`). Release Please owns `CHANGELOG.md` and the version bump from this history; do not hand-edit `CHANGELOG.md` or add a `changelog.d/` fragment.
+- [ ] PR title is a Conventional Commit (`type(optional-scope): subject`, lowercase-leading subject) - enforced by repository policy and the MCP PR boundary, with advisory CI feedback from `.github/workflows/pr-title.yml`. Release Please owns `CHANGELOG.md` and the version bump from this history; do not hand-edit `CHANGELOG.md` or add a `changelog.d/` fragment.
 - [ ] Architectural docs updated if stack, package structure, or key behaviors changed

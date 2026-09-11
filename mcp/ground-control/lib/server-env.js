@@ -51,14 +51,11 @@ import { join } from "node:path";
  */
 export const GROUND_CONTROL_ENV_VARS = Object.freeze([
   // Read by the server itself.
-  "GC_BASE_URL",
   "GC_CODEX_REVIEW_MAX_DIFF_BYTES",
   "GC_CODEX_REVIEW_PARALLEL",
   "GC_CODEX_TIMEOUT_MS",
   "GC_KNOWLEDGE_INGEST_ANTHROPIC_API_KEY",
   "GH_VERIFY_FINDING_AUTHORS",
-  "GROUND_CONTROL_API_TOKEN",
-  "GROUND_CONTROL_PACK_REGISTRY_ADMIN_TOKEN",
   "SONAR_TOKEN",
   // Forwarded to the `codex` child by codexEngineEnv. HOME and PATH are also on
   // that allowlist but are process state, not Ground Control configuration.

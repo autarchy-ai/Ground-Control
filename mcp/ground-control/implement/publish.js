@@ -3,9 +3,7 @@
 // The module had reached 1,231 lines against the repo's 500-LOC limit
 // (docs/CODING_STANDARDS.md). gc-implement-mechanical.js remains the tool entry point.
 
-import { ciGateFindings } from "../gate-finding-adapters.js";
-import { ciStationResult } from "../lib/ci-conclusion.js";
-import { classifySonarGateFailure, sonarGatePassed, sonarStationResult } from "../lib/sonar-gate.js";
+import { classifySonarGateFailure, sonarGatePassed } from "../lib/sonar-gate.js";
 import { commandFailure, failure, requireField, resolveIssueBranch } from "./gate-helpers.js";
 import { isSensitivePublishPath, readPublishPaths, validateCommitMessage } from "./verify.js";
 
@@ -355,27 +353,9 @@ export async function runMonitor(args, deps) {
     if (!resolved.ok) return resolved.failure;
     branchName = resolved.branchName;
   }
-  // CI and SonarCloud are two distinct gates with distinct rework profiles, so this action records
-  // two station attempts rather than one. The outer dispatcher leaves `monitor` un-instrumented for
-  // exactly this reason.
-  let ci;
-  await deps.emitter.station("ci", async () => {
-    ci = await deps.watchCi({
-      repoPath: args.repoPath,
-      branch: branchName,
-    });
-    const passed = ci.ok && ci.conclusion === "success";
-    const ciFindings = ci.ok ? ciGateFindings(ci) : null;
-    return {
-      ok: passed,
-      error: passed ? undefined : ci.error ?? `ci_${ci.conclusion ?? "unknown"}`,
-      // `ci.ok === false` means the watcher could not observe a run at all — no verdict exists to
-      // record. When a run did conclude, its conclusion is classified centrally: a timeout or a
-      // runner startup failure is an unobserved gate, not a rejected change, and must not enter
-      // rework as a defect.
-      stationResult: ci.ok ? ciStationResult(ci.conclusion) : "not_evaluable",
-      ...(ciFindings ? { findings: ciFindings.findings, findingsDropped: ciFindings.dropped } : {}),
-    };
+  const ci = await deps.watchCi({
+    repoPath: args.repoPath,
+    branch: branchName,
   });
   if (!ci.ok || ci.conclusion !== "success") {
     return failure(
@@ -386,23 +366,11 @@ export async function runMonitor(args, deps) {
       { failed_stage: "ci", ci },
     );
   }
-  let sonar;
-  let sonarPassed;
-  await deps.emitter.station("sonarcloud", async () => {
-    sonar = await deps.watchSonar({
-      repoPath: args.repoPath,
-      prNumber: args.prNumber,
-    });
-    sonarPassed = sonarGatePassed(sonar);
-    return {
-      ok: sonarPassed,
-      error: sonarPassed ? undefined : classifySonarGateFailure(sonar).error,
-      stationResult: sonarStationResult(sonar),
-      ...(Array.isArray(sonar.measurement_findings)
-        ? { findings: sonar.measurement_findings, findingsDropped: sonar.measurement_findings_dropped }
-        : {}),
-    };
+  const sonar = await deps.watchSonar({
+    repoPath: args.repoPath,
+    prNumber: args.prNumber,
   });
+  const sonarPassed = sonarGatePassed(sonar);
   if (!sonarPassed) {
     // An envelope Sonar never produced is an unevaluable gate, not a set of
     // findings, and the two need different repairs (issue #946).

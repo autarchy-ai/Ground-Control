@@ -6,59 +6,53 @@ type: CONSTRAINT
 priority: SHOULD
 wave: 2
 created_at: 2026-09-05T00:00:00Z
-updated_at: 2026-09-05T00:00:00Z
+updated_at: 2026-09-11T00:00:00Z
 ---
 
 # GC-P030 — Required Status Contexts Enforced in Repo Policy
 
 ## Statement
 
-The repository's required status checks shall be declared once, and the
-correspondence between that declaration and the jobs that actually produce those
-checks shall be enforced by a repo-native policy check rather than documented
-alone. The check shall be two-sided over the declared required-context set: a
-declared context that no pull-request-triggered job in `.github/workflows/`
-produces fails the build, AND a branch-protection baseline whose context set
-differs from the declaration in either direction also fails. The check shall
-additionally assert that every protected branch declares strict required status
-checks. Contexts posted by a hosted application rather than by a job in this
-repository shall be exempt from needing a local producer only through an explicit
-allowlist, and that allowlist shall itself fail when an entry is no longer a
-required context, so the exemption set is shrink-only.
+The repository's required status checks shall be declared once in policy, and a
+repository-native gate shall enforce the declaration against both the workflows
+that produce those contexts and the versioned branch-protection baseline.
+
+(a) Every locally produced required context shall map to a pull-request job, and
+every required branch shall have `strict: true`. A required producer workflow
+shall not use workflow-level `paths` or `paths-ignore`; malformed trigger or
+branch-filter shapes shall fail closed rather than be treated as coverage.
+
+(b) Hosted-application contexts shall bypass the local-producer requirement only
+through the explicit external allowlist. At runtime that allowlist shall be a
+subset of the required-context declaration, so exemptions can only shrink.
+
+(c) The context-to-provider map shall cover the required-context set exactly:
+no required context may lack a provider and no stale provider entry may survive.
+The versioned branch-protection baseline shall match the declaration in both
+directions.
+
+(d) The policy gate shall run in `make policy` and in the required CI `policy`
+job. Applying and reading live GitHub branch protection remains an authenticated
+operator check; a local baseline is evidence of intent, not proof of live state.
 
 ## Rationale
 
-Issue #650. A required status check with no job behind it never reports, so every
-pull request waits forever on a check that cannot arrive. This has now happened
-twice. Issue #1461 removed the CI `mutation` job but left its context declared,
-and `tools/tests/test_ci_topology.py` was written to stop that recurring. The
-#1500 re-platform then deleted the `build`, `frontend`, `integration`, `test`,
-and `verify` jobs and deleted those topology tests along with the CI surface they
-covered, so all five contexts stayed declared in
-`.github/branch-protection-baseline.json` and in
-`tools/policy/checks.py::CI_STRICTNESS_REQUIRED_CONTEXTS` with nothing left to
-produce them, and nothing detected it.
-
-The lesson is that the gate must not live inside the surface it guards. This
-check is anchored on the declaration and the workflow files rather than on any
-single CI topology, so deleting a job cannot delete the check that notices. It is
-the same class of failure the repository-map freshness gate (GC-P029, ADR-095)
-and the file-size limit gate (GC-P028, ADR-092) exist to prevent, and it takes
-the same shape of fix: a repo-native `make policy` and CI gate with two-sided,
-shrink-only enforcement.
-
-The two-sidedness matters in both directions. An unproduced context blocks all
-merges, which is loud but total. A context quietly dropped from the required set
-is the gate-weakening direction and is silent, which is worse.
+Issue #650 restored this gate after the #1500 re-platform deleted CI jobs and
+their topology tests while stale required contexts remained. Issue #1303 closes
+the remaining bypasses: a hosted exemption could drift at runtime, a provider
+map could become incomplete, and a path-filtered or malformed producer could be
+counted even though some PRs would never receive its context. The check lives in
+repository policy so deleting a workflow cannot also delete the check that
+notices.
 
 ## Traceability
 
-- IMPLEMENTS → ADR `architecture/adrs/091-ci-verification-topology.md` (ADR-091: CI verification topology, amended for the required-context gate)
-- IMPLEMENTS → CODE_FILE `tools/policy/ci_strictness.py` (run_ci_required_context_contract — two-sided baseline/producer check)
-- IMPLEMENTS → CODE_FILE `tools/policy/core.py` (CI_STRICTNESS_REQUIRED_CONTEXTS / CI_STRICTNESS_BRANCHES — the single declaration)
-- IMPLEMENTS → CODE_FILE `tools/policy/cli.py` (gate registration in the bin/policy run)
-- IMPLEMENTS → CONFIG `.github/branch-protection-baseline.json` (the versioned required-context baseline the gate compares)
-- TESTS → TEST `tools/tests/test_policy_ci_required_contexts.py` (unproduced context, baseline drift, non-strict branch, missing branch, shrink-only allowlist, scan floor)
-- DOCUMENTS → DOCUMENTATION `docs/ci/CI_PIPELINE.md` (required contexts and their producing jobs)
-- DOCUMENTS → DOCUMENTATION `docs/DEVELOPMENT_WORKFLOW.md` (repo-native policy layer)
-- IMPLEMENTS → GITHUB_ISSUE `650` (Reconcile or retire stale pre-#1500 documentation)
+- IMPLEMENTS → ADR `architecture/adrs/091-ci-verification-topology.md` (surviving CI topology and required-context contract)
+- IMPLEMENTS → CODE_FILE `tools/policy/ci_strictness.py` (two-sided baseline, producer, allowlist, provider, and trigger checks)
+- IMPLEMENTS → CODE_FILE `tools/policy/branch_protection_baseline.py` (single required-context, provider, external, and branch declaration)
+- IMPLEMENTS → CODE_FILE `tools/policy/cli.py` (policy gate registration)
+- IMPLEMENTS → CONFIG `.github/branch-protection-baseline.json` (versioned strict-protection baseline)
+- TESTS → TEST `tools/tests/test_policy_ci_required_contexts.py` (drift, coverage, strictness, provider, allowlist, and path-filter regressions)
+- DOCUMENTS → DOCUMENTATION `docs/ci/CI_PIPELINE.md` (required contexts and producers)
+- DOCUMENTS → DOCUMENTATION `docs/architecture/SURVIVING_GATES.md` (gate inventory and placement doctrine)
+- IMPLEMENTS → GITHUB_ISSUE `1303` (surviving gate inventory and placement reconciliation)
