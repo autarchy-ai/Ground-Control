@@ -21,6 +21,7 @@
 
 import { createHash } from "node:crypto";
 import { detectSensitiveBodyContent } from "./grc-legacy-compat-2.js";
+import { FAILURE_MESSAGE_MAX, boundFailureDiagnostics, boundFailureMessage } from "./command-failure-diagnostics.js";
 
 export const ASYNC_JOB_TTL_MS = 30 * 60 * 1000;
 export const ASYNC_JOB_CAPACITY = 128;
@@ -57,8 +58,20 @@ function _asyncJobNotFound() {
 function _safeAsyncJobError(error) {
   const raw = String(error?.message ?? error ?? "background job failed");
   if (detectSensitiveBodyContent(raw)) return "<redacted>";
-  const max = 600;
-  return raw.length <= max ? raw : `${raw.slice(0, max - 1)}…`;
+  // Head-and-tail, not head-only (issue #1568): the head names the failure and
+  // the tail carries the child-process state and output tails the failing tool
+  // appended after it. The former head-only slice discarded all of the latter.
+  return boundFailureMessage(raw, FAILURE_MESSAGE_MAX);
+}
+
+// Structured, bounded diagnostics a failing tool attached to its error. Subject
+// to the same sensitive-content scrub as the message: a snapshot that trips it
+// is dropped whole rather than partially redacted, because a diagnostics
+// snapshot is supplementary and the message already states the failure.
+function _safeAsyncJobDiagnostics(error) {
+  const bounded = boundFailureDiagnostics(error?.diagnostics);
+  if (bounded == null) return null;
+  return detectSensitiveBodyContent(JSON.stringify(bounded)) ? null : bounded;
 }
 
 const _ASYNC_JOB_PROGRESS_PHASES = new Set(["completion", "policy"]);
@@ -108,6 +121,7 @@ function _asyncJobEnvelope(job) {
     status: "failed",
     error: "job_failed",
     message: _safeAsyncJobError(job.error),
+    ...(job.diagnostics ? { diagnostics: job.diagnostics } : {}),
     ...base,
   };
 }
@@ -275,6 +289,7 @@ export function startAsyncJob(kind, runFn, options = {}) {
     fingerprint: validated.fingerprint,
     executionScope: validated.executionScope,
     progress: null,
+    diagnostics: null,
   };
   _asyncJobs.set(id, job);
   const reportProgress = (snapshot) => {
@@ -288,6 +303,7 @@ export function startAsyncJob(kind, runFn, options = {}) {
     })
     .catch((e) => {
       job.error = _safeAsyncJobError(e);
+      job.diagnostics = _safeAsyncJobDiagnostics(e);
       job.status = controller.signal.aborted ? "cancelled" : "failed";
     })
     .finally(() => {
