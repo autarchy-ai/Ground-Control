@@ -21,6 +21,7 @@ export * from "./lib/codex-workflow.js";
 export * from "./lib/codex-review.js";
 export * from "./lib/review-cap-disposition.js";
 export * from "./lib/repo-vocabulary.js";
+export * from "./lib/command-failure-diagnostics.js";
 export * from "./lib/runtime-primitives.js";
 export * from "./lib/grc-legacy-compat-3.js";
 export * from "./lib/grc-legacy-compat-4.js";

@@ -957,3 +957,35 @@ the retry backoffs, and the issue/hotspot pagination all ran outside the
 documented cap. One budget now spans the call: every sleep is clipped to what
 remains, and each loop consults it before spending another request. See
 `architecture/notes/sonar-scope-monitor-preflight.md`.
+
+**2026-09-12 (issue #1568, tail-anchored failed-job diagnostics).** The
+"stored unexpected errors are bounded and sensitive-content scrubbed" clause
+above held, but its bound was head-anchored: the first 600 characters of the
+error message survived and everything after was dropped. For a codex or claude
+worker killed at the wall cap that is exactly inverted. The characters that
+identify what the worker was doing are at the end of its output; the characters
+at the beginning are the engine's startup banner and its echo of the prompt, so
+a head-only cap was structurally guaranteed to retain only the least
+informative bytes a long run produced. Two consecutive 20-minute
+architecture-preflight kills returned banner text and nothing else.
+
+Three changes close it, none of them relaxing a bound. `formatCommandFailure`
+now reports the child's own terminal state (exit code, signal, killed) and a
+tail-anchored excerpt of *both* stdout and stderr rather than the untruncated
+first non-empty one - preferring stderr when present let a single unrelated
+warning line hide the whole stdout trace. The registry's message bound is
+head-and-tail preserving, so the sentence naming the failure and the
+diagnostics appended after it both survive. And a failing tool may attach a
+structured `diagnostics` object to its error, which a failed poll envelope
+carries through a closed whitelist of bounded scalars and bounded string lists
+- the same shape discipline the running-job `progress` snapshot has under issue
+#1497 - dropped whole if it trips the sensitive-content scrub.
+
+`gc_codex_architecture_preflight` is the first producer. It runs codex under
+`--sandbox workspace-write`, so a killed run has usually already written to the
+checkout; it now reports the paths it changed, against the pre-run baseline it
+already captured, in both the failure message and the structured diagnostics.
+A retry therefore cannot build silently on partial output from an attempt whose
+mechanical result was failure. The `preflight` phase marker is still not
+written on a failed run, and no gate is weakened: the run remains a failure
+that must be re-run, only now with the evidence to diagnose it.
