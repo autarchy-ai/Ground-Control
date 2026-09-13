@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { runAssertCompletion, runPostFinalReport } from "./lib.js";
+import { restPullRequest } from "./github-rest.test-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Helpers (mirrored from gc-grc-reconciled.test.js)
@@ -96,25 +97,17 @@ function makeCompletionShimRepo({
   const counterPath = join(binDir, "counter.json");
   writeFileSync(counterPath, JSON.stringify({ index: 0, ids: commentIdSeq }));
 
-  // The post_merge completion path (issue #963) resolves the linked PR via
-  // `gh api graphql` and gates on it being merged. Mock the issue→PR timeline
-  // lookup so the merge gate can be satisfied (prMerged=true) or exercised
-  // (prMerged=false → state OPEN, mergedAt null).
-  const prNode = {
-    __typename: "PullRequest",
+  // The post_merge completion path resolves the linked PR from the issue's REST timeline and the
+  // PR's REST record, and gates on it being merged (issues #963, #1584).
+  const restPull = restPullRequest({
     number: prNumber,
     state: prMerged ? "MERGED" : "OPEN",
     mergedAt: prMerged ? "2026-06-22T02:00:00Z" : null,
-    url: `https://github.com/fake/repo/pull/${prNumber}`,
-  };
-  const graphqlPayload = {
-    data: { repository: { issue: { timelineItems: { nodes: [
-      { __typename: "CrossReferencedEvent", source: prNode },
-    ] } } } },
-  };
+  });
 
   const configPath = join(binDir, "config.json");
   const ghHandler = {
+    restPull,
     routes: [
       {
         argv_prefix: ["api", "user", "--jq", ".login"],
@@ -123,10 +116,6 @@ function makeCompletionShimRepo({
       {
         argv_prefix: ["repo", "view", "--json", GH_NAME_WITH_OWNER],
         stdout: JSON.stringify({ nameWithOwner: "fake/repo" }),
-      },
-      {
-        argv_prefix: ["api", "graphql"],
-        stdout: JSON.stringify(graphqlPayload),
       },
       {
         // Phase markers are believed only from an author with repository permission.
@@ -157,6 +146,16 @@ if (argv[0] === "api" && argv[1] === "--method" && argv[2] === "POST") {
   counterData.index = idx + 1;
   fs.writeFileSync(${JSON.stringify(counterPath)}, JSON.stringify(counterData));
   process.stdout.write(JSON.stringify({ id, html_url: "https://github.com/fake/repo/issues/1103#issuecomment-" + id }));
+  process.exit(0);
+}
+// REST linked-PR resolution: the issue timeline cross-references the PR, then the PR's record.
+const restPath = argv.find((a) => typeof a === "string" && a.startsWith("/repos/fake/repo/")) || "";
+if (/\\/issues\\/\\d+\\/timeline/.test(restPath)) {
+  process.stdout.write(JSON.stringify([[{ event: "cross-referenced", source: { issue: { number: cfg.restPull.number, pull_request: {}, repository: { full_name: "fake/repo" } } } }]]));
+  process.exit(0);
+}
+if (/\\/pulls\\/\\d+$/.test(restPath)) {
+  process.stdout.write(JSON.stringify(cfg.restPull));
   process.exit(0);
 }
 const permissionEndpoint = argv.find((arg) => arg.includes("/collaborators/") && arg.endsWith("/permission"));

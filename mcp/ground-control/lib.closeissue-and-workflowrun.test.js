@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { restLinkedPullRequestRoutes } from "./github-rest.test-helpers.js";
 
 // ---------------------------------------------------------------------------
 // gc_assert_traceability_reconciled (issue #1058)
@@ -140,8 +141,8 @@ describe("runCloseIssueAfterMerge", () => {
       ghHandler: {
         routes: [
           { argv_prefix: ["repo", "view", "--json", "nameWithOwner"], stdout: JSON.stringify({ nameWithOwner: "fake/repo" }) },
-          // GraphQL timeline returns no PR cross-references.
-          { argv_prefix: ["api", "graphql"], stdout: JSON.stringify({ data: { repository: { issue: { timelineItems: { nodes: [] } } } } }) },
+          // The REST issue timeline carries no PR cross-references.
+          ...restLinkedPullRequestRoutes({ issueNumber: 1058, prs: [] }),
         ],
       },
     });
@@ -156,11 +157,9 @@ describe("runCloseIssueAfterMerge", () => {
       ghHandler: {
         routes: [
           { argv_prefix: ["repo", "view", "--json", "nameWithOwner"], stdout: JSON.stringify({ nameWithOwner: "fake/repo" }) },
-          { argv_prefix: ["api", "graphql"], stdout: JSON.stringify({
-            data: { repository: { issue: { timelineItems: { nodes: [
-              { __typename: "CrossReferencedEvent", source: { __typename: "PullRequest", number: 42, state: "OPEN", mergedAt: null, url: LINKED_PR_URL } },
-            ] } } } },
-          }) },
+          ...restLinkedPullRequestRoutes({ issueNumber: 1058, prs: [
+              { number: 42, state: "OPEN", mergedAt: null, url: LINKED_PR_URL },
+          ] }),
         ],
       },
     });
@@ -177,11 +176,9 @@ describe("runCloseIssueAfterMerge", () => {
       ghHandler: {
         routes: [
           { argv_prefix: ["repo", "view", "--json", "nameWithOwner"], stdout: JSON.stringify({ nameWithOwner: "fake/repo" }) },
-          { argv_prefix: ["api", "graphql"], stdout: JSON.stringify({
-            data: { repository: { issue: { timelineItems: { nodes: [
-              { __typename: "CrossReferencedEvent", source: { __typename: "PullRequest", number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL } },
-            ] } } } },
-          }) },
+          ...restLinkedPullRequestRoutes({ issueNumber: 1058, prs: [
+              { number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL },
+          ] }),
           // Issue lookup — current state=open.
           { argv_prefix: ["api", ISSUE_API_PATH], stdout: JSON.stringify({ number: 1058, state: "open" }) },
           // Trusted final-report marker gate (issue #1541).
@@ -212,11 +209,9 @@ describe("runCloseIssueAfterMerge", () => {
       ghHandler: {
         routes: [
           { argv_prefix: ["repo", "view", "--json", "nameWithOwner"], stdout: JSON.stringify({ nameWithOwner: "fake/repo" }) },
-          { argv_prefix: ["api", "graphql"], stdout: JSON.stringify({
-            data: { repository: { issue: { timelineItems: { nodes: [
-              { __typename: "CrossReferencedEvent", source: { __typename: "PullRequest", number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL } },
-            ] } } } },
-          }) },
+          ...restLinkedPullRequestRoutes({ issueNumber: 1058, prs: [
+              { number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL },
+          ] }),
           // Issue is already closed.
           { argv_prefix: ["api", ISSUE_API_PATH], stdout: JSON.stringify({ number: 1058, state: "closed" }) },
         ],
@@ -240,11 +235,9 @@ describe("runCloseIssueAfterMerge", () => {
         routes: [
           { argv_prefix: ["repo", "view", "--json", "nameWithOwner"], stdout: JSON.stringify({ nameWithOwner: "fake/repo" }) },
           // Issue 1058's timeline links PR 42 (merged).
-          { argv_prefix: ["api", "graphql"], stdout: JSON.stringify({
-            data: { repository: { issue: { timelineItems: { nodes: [
-              { __typename: "CrossReferencedEvent", source: { __typename: "PullRequest", number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL } },
-            ] } } } },
-          }) },
+          ...restLinkedPullRequestRoutes({ issueNumber: 1058, prs: [
+              { number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL },
+          ] }),
         ],
       },
     });
@@ -267,11 +260,9 @@ describe("runCloseIssueAfterMerge", () => {
       ghHandler: {
         routes: [
           { argv_prefix: ["repo", "view", "--json", "nameWithOwner"], stdout: JSON.stringify({ nameWithOwner: "fake/repo" }) },
-          { argv_prefix: ["api", "graphql"], stdout: JSON.stringify({
-            data: { repository: { issue: { timelineItems: { nodes: [
-              { __typename: "CrossReferencedEvent", source: { __typename: "PullRequest", number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL } },
-            ] } } } },
-          }) },
+          ...restLinkedPullRequestRoutes({ issueNumber: 1058, prs: [
+              { number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL },
+          ] }),
           { argv_prefix: ["api", ISSUE_API_PATH], stdout: JSON.stringify({ number: 1058, state: "open" }) },
           ...MARKER_TRUST_ROUTES,
           { argv_prefix: ["api", "--method", "PATCH"], stdout: JSON.stringify({ number: 1058, state: "closed" }) },
@@ -298,11 +289,9 @@ describe("runCloseIssueAfterMerge", () => {
       ghHandler: {
         routes: [
           { argv_prefix: ["repo", "view", "--json", "nameWithOwner"], stdout: JSON.stringify({ nameWithOwner: "fake/repo" }) },
-          { argv_prefix: ["api", "graphql"], stdout: JSON.stringify({
-            data: { repository: { issue: { timelineItems: { nodes: [
-              { __typename: "CrossReferencedEvent", source: { __typename: "PullRequest", number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL } },
-            ] } } } },
-          }) },
+          ...restLinkedPullRequestRoutes({ issueNumber: 1058, prs: [
+              { number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL },
+          ] }),
           { argv_prefix: ["api", ISSUE_API_PATH], stdout: JSON.stringify({ number: 1058, state: "open" }) },
           // No marker on the thread.
           { argv_prefix: ["api", "--method", "GET", "--paginate", "--slurp"], stdout: slurpComments([]) },
@@ -326,11 +315,9 @@ describe("runCloseIssueAfterMerge", () => {
       ghHandler: {
         routes: [
           { argv_prefix: ["repo", "view", "--json", "nameWithOwner"], stdout: JSON.stringify({ nameWithOwner: "fake/repo" }) },
-          { argv_prefix: ["api", "graphql"], stdout: JSON.stringify({
-            data: { repository: { issue: { timelineItems: { nodes: [
-              { __typename: "CrossReferencedEvent", source: { __typename: "PullRequest", number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL } },
-            ] } } } },
-          }) },
+          ...restLinkedPullRequestRoutes({ issueNumber: 1058, prs: [
+              { number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL },
+          ] }),
           { argv_prefix: ["api", ISSUE_API_PATH], stdout: JSON.stringify({ number: 1058, state: "open" }) },
           { argv_prefix: ["api", "--method", "GET", "--paginate", "--slurp"], stdout: slurpComments([forged]) },
           // Non-collaborator: both the marker-trust and override-trust permission lookups 404.
@@ -350,11 +337,9 @@ describe("runCloseIssueAfterMerge", () => {
       ghHandler: {
         routes: [
           { argv_prefix: ["repo", "view", "--json", "nameWithOwner"], stdout: JSON.stringify({ nameWithOwner: "fake/repo" }) },
-          { argv_prefix: ["api", "graphql"], stdout: JSON.stringify({
-            data: { repository: { issue: { timelineItems: { nodes: [
-              { __typename: "CrossReferencedEvent", source: { __typename: "PullRequest", number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL } },
-            ] } } } },
-          }) },
+          ...restLinkedPullRequestRoutes({ issueNumber: 1058, prs: [
+              { number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL },
+          ] }),
           { argv_prefix: ["api", ISSUE_API_PATH], stdout: JSON.stringify({ number: 1058, state: "open" }) },
           // Trusted override comment, no final-report marker.
           { argv_prefix: ["api", "--method", "GET", "--paginate", "--slurp"], stdout: slurpComments([overrideComment]) },
@@ -375,11 +360,9 @@ describe("runCloseIssueAfterMerge", () => {
       ghHandler: {
         routes: [
           { argv_prefix: ["repo", "view", "--json", "nameWithOwner"], stdout: JSON.stringify({ nameWithOwner: "fake/repo" }) },
-          { argv_prefix: ["api", "graphql"], stdout: JSON.stringify({
-            data: { repository: { issue: { timelineItems: { nodes: [
-              { __typename: "CrossReferencedEvent", source: { __typename: "PullRequest", number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL } },
-            ] } } } },
-          }) },
+          ...restLinkedPullRequestRoutes({ issueNumber: 1058, prs: [
+              { number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL },
+          ] }),
           { argv_prefix: ["api", ISSUE_API_PATH], stdout: JSON.stringify({ number: 1058, state: "open" }) },
           { argv_prefix: ["api", "--method", "GET", "--paginate", "--slurp"], stdout: slurpComments([overrideComment]) },
           { argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/collaborators/fake/permission"], stdout: "write\n" },
@@ -398,11 +381,9 @@ describe("runCloseIssueAfterMerge", () => {
       ghHandler: {
         routes: [
           { argv_prefix: ["repo", "view", "--json", "nameWithOwner"], stdout: JSON.stringify({ nameWithOwner: "fake/repo" }) },
-          { argv_prefix: ["api", "graphql"], stdout: JSON.stringify({
-            data: { repository: { issue: { timelineItems: { nodes: [
-              { __typename: "CrossReferencedEvent", source: { __typename: "PullRequest", number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL } },
-            ] } } } },
-          }) },
+          ...restLinkedPullRequestRoutes({ issueNumber: 1058, prs: [
+              { number: 42, state: "MERGED", mergedAt: PR_MERGED_AT, url: LINKED_PR_URL },
+          ] }),
           { argv_prefix: ["api", ISSUE_API_PATH], stdout: JSON.stringify({ number: 1058, state: "open" }) },
           { argv_prefix: ["api", "--method", "GET", "--paginate", "--slurp"], stdout: slurpComments([overrideComment]) },
           // Non-collaborator: permission lookup 404s.

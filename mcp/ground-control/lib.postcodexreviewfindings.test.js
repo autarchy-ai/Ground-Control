@@ -121,8 +121,8 @@ process.exit(2);
       ghHandler: {
         routes: [
           {
-            argv_prefix: ["pr", "view", "520", "--json", "headRefOid"],
-            stdout: JSON.stringify({ headRefOid: "deadbeef1234567890" }),
+            argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"],
+            stdout: JSON.stringify({ number: 520, head: { sha: "deadbeef1234567890" } }),
           },
           {
             argv_prefix: ["api", "--method", "POST"],
@@ -153,7 +153,8 @@ process.exit(2);
         const calls = shim.readCalls();
         // Expect 1 head-SHA fetch + 2 POST calls = 3 invocations.
         assert.equal(calls.length, 3);
-        assert.deepEqual(calls[0], ["pr", "view", "520", "--json", "headRefOid"]);
+        // The head sha comes from the REST pull request (issue #1584).
+        assert.deepEqual(calls[0], ["api", "--method", "GET", "/repos/fake/repo/pulls/520"]);
         for (const postCall of calls.slice(1)) {
           assert.equal(postCall[0], "api");
           assert.equal(postCall[1], "--method");
@@ -176,8 +177,8 @@ process.exit(2);
       ghHandler: {
         routes: [
           {
-            argv_prefix: ["pr", "view", "520", "--json", "headRefOid"],
-            stdout: JSON.stringify({ headRefOid: "abc1234" }),
+            argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"],
+            stdout: JSON.stringify({ number: 520, head: { sha: "abc1234" } }),
           },
           {
             argv_prefix: ["api", "--method", "POST"],
@@ -224,8 +225,8 @@ process.exit(2);
       ghHandler: {
         routes: [
           {
-            argv_prefix: ["pr", "view", "520", "--json", "headRefOid"],
-            stdout: JSON.stringify({ headRefOid: "abc1234" }),
+            argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"],
+            stdout: JSON.stringify({ number: 520, head: { sha: "abc1234" } }),
           },
           {
             argv_prefix: ["api", "--method", "POST"],
@@ -295,7 +296,7 @@ process.exit(2);
         routes: [
           {
             // Head-SHA fetch fails entirely.
-            argv_prefix: ["pr", "view", "520", "--json", "headRefOid"],
+            argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"],
             exit_code: 1,
             stderr: "HTTP 503: api.github.com unreachable\n",
           },
@@ -336,8 +337,8 @@ process.exit(2);
       ghHandler: {
         routes: [
           {
-            argv_prefix: ["pr", "view", "520", "--json", "headRefOid"],
-            stdout: JSON.stringify({ headRefOid: "abc1234" }),
+            argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"],
+            stdout: JSON.stringify({ number: 520, head: { sha: "abc1234" } }),
           },
           {
             argv_prefix: ["api", "--method", "POST"],
@@ -381,8 +382,8 @@ process.exit(2);
       ghHandler: {
         routes: [
           {
-            argv_prefix: ["pr", "view", "520", "--json", "headRefOid"],
-            stdout: JSON.stringify({ headRefOid: "abc1234" }),
+            argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"],
+            stdout: JSON.stringify({ number: 520, head: { sha: "abc1234" } }),
           },
           {
             // Response is JSON but missing the `id` field entirely.
@@ -416,8 +417,8 @@ process.exit(2);
       ghHandler: {
         routes: [
           {
-            argv_prefix: ["pr", "view", "520", "--json", "headRefOid"],
-            stdout: JSON.stringify({ headRefOid: "abc1234" }),
+            argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"],
+            stdout: JSON.stringify({ number: 520, head: { sha: "abc1234" } }),
           },
           {
             argv_prefix: ["api", "--method", "POST"],
@@ -454,8 +455,8 @@ process.exit(2);
       ghHandler: {
         routes: [
           {
-            argv_prefix: ["pr", "view", "520", "--json", "headRefOid"],
-            stdout: JSON.stringify({ headRefOid: "abc1234" }),
+            argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"],
+            stdout: JSON.stringify({ number: 520, head: { sha: "abc1234" } }),
           },
           {
             argv_prefix: ["api", "--method", "POST"],

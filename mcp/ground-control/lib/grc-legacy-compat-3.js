@@ -8,6 +8,7 @@ import { buildExecutionObligationMarker, isExactWontfixAuthorizationCommand, par
 import { EXECUTION_OBLIGATION_WRITE_PERMISSIONS, detectSensitiveBodyContent, extractGhErrorMessage, formatFindingClassificationNote, parseOwnerRepoFromRemoteUrl } from "./grc-legacy-compat-2.js";
 import { buildPhaseMarker, collectDevStartBlockerFailures, devStartFieldValue, devStartGateFailure, devStartGateSuccess, isConcreteDevStartValue, missingDevStartRequiredFields, readDevStartRiskTotal } from "./grc-legacy-compat.js";
 import { DEV_START_GATE_SECURITY_DECISIONS } from "./repo-context.js";
+import { fetchPullRequest, parseClosingIssueReferences } from "./github-rest.js";
 import { execFile } from "./runtime-primitives.js";
 
 function invalidDevStartSecurityDecision(fields) {
@@ -65,7 +66,7 @@ export async function postCodexReviewFindings({
   // flagged in #793 review cycle 3).
   let headSha;
   try {
-    headSha = await getPullRequestHeadSha(repoRoot, prNumber);
+    headSha = await getPullRequestHeadSha(repoRoot, owner, name, prNumber);
   } catch (error) {
     const headFailureMsg = `headRefOid fetch failed: ${extractGhErrorMessage(error)}`;
     return findings.map((finding) => ({ ok: false, finding, error: headFailureMsg }));
@@ -121,17 +122,13 @@ export async function postCodexReviewFindings({
   }
   return results;
 }
-async function getPullRequestHeadSha(repoRoot, prNumber) {
-  const { stdout } = await execFile(
-    "gh",
-    ["pr", "view", String(prNumber), "--json", "headRefOid"],
-    { cwd: repoRoot },
-  );
-  const data = JSON.parse(stdout);
-  if (typeof data?.headRefOid !== "string" || data.headRefOid.trim() === "") {
-    throw new Error(`gh pr view ${prNumber} returned no headRefOid`);
+async function getPullRequestHeadSha(repoRoot, owner, name, prNumber) {
+  // REST pull-request read; `gh pr view` spends the shared GraphQL budget (issue #1584).
+  const pr = await fetchPullRequest(repoRoot, owner, name, prNumber);
+  if (typeof pr?.headRefOid !== "string" || pr.headRefOid.trim() === "") {
+    throw new Error(`GitHub REST pull request #${prNumber} returned no head sha`);
   }
-  return data.headRefOid;
+  return pr.headRefOid;
 }
 /**
  * Render the exact comment body that will be published.
@@ -229,46 +226,26 @@ export async function getOwnerRepo(repoRoot, { allowGhFallback = false } = {}) {
   // vulnerable to env hijack. It is now reached only when a caller opted in explicitly, and only
   // when the git-remote path already failed. Real repos always have a github.com origin, so it is
   // exercised by tests and pathological states. Documented in the issue #934 follow-up.
+  // `gh api` resolves `{owner}/{repo}` the same way `gh repo view` does, over REST (issue #1584).
   const { stdout } = await execFile(
     "gh",
-    ["repo", "view", "--json", "nameWithOwner"],
+    ["api", "repos/{owner}/{repo}", "--jq", ".full_name"],
     { cwd: repoRoot },
   );
-  const data = JSON.parse(stdout);
-  const [owner, name] = String(data.nameWithOwner).split("/");
+  const [owner, name] = String(stdout).trim().split("/");
   if (!owner || !name) {
-    throw new Error(`Unable to parse owner/repo from gh repo view output: ${stdout}`);
+    throw new Error(`Unable to parse owner/repo from the GitHub REST repository read: ${stdout}`);
   }
   return { owner, name };
 }
 export async function getPullRequestClosingIssues(repoRoot, prNumber) {
-  // Pin --repo to the git-remote-derived slug so a rogue GH_REPO on the
-  // MCP host can't redirect this lookup at the wrong repo (which would
-  // silently return wrong "closes" issue numbers and corrupt the
-  // issue-thread cycle counter resolution). --repo is placed at the
-  // end of argv (gh accepts flags in any order) so the hermetic-shim
-  // test fixtures' strict argv-prefix matches still work.
+  // The repository comes from the git remote (GH_REPO cannot retarget it), and the PR body is read
+  // over REST: GitHub closing keywords in the body are the closing references. `gh pr view --json
+  // closingIssuesReferences` spent the shared GraphQL budget (issue #1584).
   try {
     const { owner, name } = await getOwnerRepo(repoRoot);
-    const { stdout } = await execFile(
-      "gh",
-      [
-        "pr",
-        "view",
-        String(prNumber),
-        "--json",
-        "closingIssuesReferences",
-        "--repo",
-        `${owner}/${name}`,
-      ],
-      { cwd: repoRoot },
-    );
-    const data = JSON.parse(stdout);
-    const refs = data?.closingIssuesReferences;
-    if (!Array.isArray(refs)) return [];
-    return refs
-      .map((r) => Number.parseInt(r?.number, 10))
-      .filter((n) => Number.isInteger(n) && n > 0);
+    const pr = await fetchPullRequest(repoRoot, owner, name, prNumber);
+    return parseClosingIssueReferences(pr?.body, owner, name);
   } catch {
     return [];
   }

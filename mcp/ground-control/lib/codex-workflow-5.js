@@ -12,6 +12,7 @@ import { validateExistingSynchronizedImplementPr, validateImplementBranchName, v
 import { runGetIssueThread } from "./issue-thread.js";
 import { detectSensitiveBodyContent, extractGhErrorMessage } from "./grc-legacy-compat-2.js";
 import { assertSafeImplementCheckoutConfiguration, authorizeImplementRepoRoot, ensureGitRepo, resolveMcpLaunchWorkspaceAuthorization } from "./grc-legacy-compat-4.js";
+import { ghRestJson, listPullRequestsForHead } from "./github-rest.js";
 import { readTrustedImplementSyncRecord } from "./knowledge-capture.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { rejectReservedMarkerSequence } from "./repo-vocabulary.js";
@@ -60,22 +61,13 @@ async function findExistingSynchronizedImplementPr({
 }) {
   const repoSlug = `${repoAuthorization.owner}/${repoAuthorization.name}`;
   try {
-    const { stdout } = await commandRunner(
-      "gh",
-      [
-        "pr", "list",
-        "--repo", repoSlug,
-        "--state", "open",
-        // Same-repository PR lookup takes a branch, not owner:branch. The
-        // repository remains pinned by --repo and the identity check below.
-        "--head", input.branchName,
-        "--json",
-        "number,url,baseRefName,headRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository,title,body",
-        "--limit", "2",
-      ],
-      { cwd: repoRoot },
+    // REST, not `gh pr list`: the GraphQL budget is shared by every agent on the token and runs out
+    // while REST still answers (issue #1584). The repository stays pinned by the path and the
+    // identity check below; `head` is owner-qualified, as the REST filter requires.
+    const existing = await listPullRequestsForHead(
+      repoRoot, repoAuthorization.owner, repoAuthorization.name, input.branchName,
+      { execFile: commandRunner },
     );
-    const existing = JSON.parse(stdout);
     if (!Array.isArray(existing) || existing.length > 1) {
       return {
         ok: false,
@@ -182,19 +174,16 @@ async function createSynchronizedImplementPr({
   localSha,
   commandRunner,
 }) {
-  const { stdout } = await commandRunner(
-    "gh",
-    [
-      "pr", "create",
-      "--repo", repoSlug,
-      "--base", baseBranch,
-      "--head", input.branchName,
-      "--title", input.title,
-      "--body", input.body,
-    ],
-    { cwd: repoRoot },
+  const created = await ghRestJson(
+    repoRoot,
+    `/repos/${repoAuthorization.owner}/${repoAuthorization.name}/pulls`,
+    {
+      method: "POST",
+      fields: { base: baseBranch, head: input.branchName, title: input.title, body: input.body },
+      execFile: commandRunner,
+    },
   );
-  const prUrl = stdout.trim();
+  const prUrl = typeof created?.html_url === "string" ? created.html_url : "";
   const expectedUrlPrefix =
     `https://github.com/${repoAuthorization.owner}/${repoAuthorization.name}/pull/`.toLowerCase();
   if (!prUrl.toLowerCase().startsWith(expectedUrlPrefix)) {
@@ -205,11 +194,10 @@ async function createSynchronizedImplementPr({
       next_action: "inspect_the_repository_scoped_pr_write",
     };
   }
-  const numberMatch = /\/pull\/(\d+)(?:\D|$)/.exec(prUrl);
   return {
     ok: true,
     already_exists: false,
-    pr_number: numberMatch == null ? null : Number.parseInt(numberMatch[1], 10),
+    pr_number: Number.isInteger(created?.number) ? created.number : null,
     pr_url: prUrl,
     synchronization_record_id: record.recordId,
     fetched_base_sha: fetchedBaseSha,

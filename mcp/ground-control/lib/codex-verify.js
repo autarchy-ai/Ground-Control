@@ -18,7 +18,8 @@ import { enrichCommentsWithThreadIds, ensureGitRepo, fetchReviewCommentById } fr
 import { buildCodexVerifyPrompt, getRuntimeAllowedAuthors, parseCodexVerifyTail, postReviewCommentReply, resolveReviewThread } from "./issue-thread.js";
 import { listWorkingTreeChanges } from "./knowledge-capture.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
-import { getDefaultCodexTimeoutMs, execFile, execFileWithInput, formatCommandFailure } from "./runtime-primitives.js";
+import { getDefaultCodexTimeoutMs, execFileWithInput, formatCommandFailure } from "./runtime-primitives.js";
+import { fetchPullRequest } from "./github-rest.js";
 
 // Enough paths to identify what a failed run touched without turning the
 // failure message into a directory listing; the full count travels alongside.
@@ -234,12 +235,8 @@ async function fetchAuthorizedReviewComment({ repoRoot, owner, name, prNumber, c
   const allowed = getRuntimeAllowedAuthors();
   let prAuthorLogin = null;
   try {
-    const { stdout } = await execFile(
-      "gh",
-      ["pr", "view", String(prNumber), "--json", "author"],
-      { cwd: repoRoot },
-    );
-    prAuthorLogin = JSON.parse(stdout)?.author?.login || null;
+    // REST pull-request read; `gh pr view` spent the shared GraphQL budget (issue #1584).
+    prAuthorLogin = (await fetchPullRequest(repoRoot, owner, name, prNumber))?.author?.login || null;
   } catch {
     prAuthorLogin = null;
   }

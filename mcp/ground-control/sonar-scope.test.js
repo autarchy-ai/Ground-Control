@@ -148,21 +148,36 @@ describe("buildSonarScopeEvidence", () => {
 });
 
 describe("fetchSonarProducerEvidence", () => {
-  it("pins --repo ahead of the pull-request read so a rogue GH_REPO cannot retarget it", async () => {
-    let observed = null;
+  it("reads the head, check runs, status contexts, and workflow names over REST on a pinned path (issue #1584)", async () => {
+    const calls = [];
+    const responses = {
+      "/repos/autarchy-ai/Ground-Control/pulls/42": { number: 42, head: { sha: "deadbeef" } },
+      "/repos/autarchy-ai/Ground-Control/commits/deadbeef/check-runs?per_page=100": [{
+        check_runs: [{
+          name: "SonarCloud", status: "completed", conclusion: "skipped", completed_at: "2026-09-06T15:59:10Z",
+          details_url: "https://github.com/autarchy-ai/Ground-Control/actions/runs/777/job/1",
+        }],
+      }],
+      "/repos/autarchy-ai/Ground-Control/commits/deadbeef/status": { statuses: [{ context: "SonarCloud Code Analysis", state: "pending" }] },
+      "/repos/autarchy-ai/Ground-Control/actions/runs/777": { name: "Quality" },
+    };
     const result = await fetchSonarProducerEvidence({
       repoRoot: "/repo",
       repoSlug: "autarchy-ai/Ground-Control",
       prNumber: 42,
       execFile: async (bin, args) => {
-        observed = { bin, args };
-        return { stdout: JSON.stringify({ headRefOid: "deadbeef", statusCheckRollup: [checkRun("sonar", "SKIPPED")] }) };
+        calls.push({ bin, args });
+        const path = args.find((arg) => arg.startsWith("/repos/"));
+        return { stdout: JSON.stringify(responses[path]) };
       },
     });
-    assert.equal(observed.bin, "gh");
-    assert.deepEqual(observed.args.slice(0, 2), ["--repo", "autarchy-ai/Ground-Control"]);
+    assert.ok(calls.every(({ bin, args }) => bin === "gh" && args[0] === "api" && !args.includes("graphql")));
+    assert.ok(calls.every(({ args }) => args.find((arg) => arg.startsWith("/repos/")).startsWith("/repos/autarchy-ai/Ground-Control/")));
     assert.equal(result.headSha, "deadbeef");
-    assert.equal(result.entries.length, 1);
+    assert.deepEqual(result.entries, [
+      { name: "SonarCloud", workflow_name: "Quality", status: "completed", conclusion: "skipped", completed_at: "2026-09-06T15:59:10Z" },
+      { name: "SonarCloud Code Analysis", workflow_name: null, status: "pending", conclusion: null, completed_at: null },
+    ]);
   });
 
   it("returns null rather than failing the watch when the read is unavailable", async () => {

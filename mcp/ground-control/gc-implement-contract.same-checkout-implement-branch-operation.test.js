@@ -3,10 +3,11 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFile as execFileCallback, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
 import { runPrepareImplementBranch, validateImplementBranchName } from "./lib.js";
 
 function initRepo() {
@@ -40,22 +41,27 @@ function authorizationForRepo(repo) {
   };
 }
 
-function installGhDevelopShim(bin, logPath) {
-  const body = `#!/usr/bin/env node
-const fs = require("node:fs");
-const cp = require("node:child_process");
-const argv = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(argv) + "\\n");
-const nameAt = argv.indexOf("--name");
-if (argv[0] !== "issue" || argv[1] !== "develop" || nameAt < 0) process.exit(2);
-const branch = argv[nameAt + 1];
-let result = cp.spawnSync("/usr/bin/git", ["-C", process.cwd(), "switch", branch], {stdio:"ignore"});
-if (result.status !== 0) {
-  result = cp.spawnSync("/usr/bin/git", ["-C", process.cwd(), "switch", "-c", branch], {stdio:"inherit"});
-}
-process.exit(result.status ?? 1);
-`;
-  writeFileSync(join(bin, "gh"), body, { mode: 0o755 });
+const execFileAsync = promisify(execFileCallback);
+
+// Branch preparation runs git only (issue #1584): no `gh issue develop`, so no GitHub GraphQL. The
+// runner logs every git invocation, answers `fetch` from a local stand-in for origin (the base branch
+// at HEAD, optionally an existing remote issue branch), and runs every other git command for real.
+function offlineGitRunner(repo, logPath, { remoteBranches = [] } = {}) {
+  return async (command, args, options) => {
+    appendFileSync(logPath, `${command} ${JSON.stringify(args)}\n`);
+    if (command !== "git") throw new Error(`unexpected command: ${command}`);
+    const op = args.slice(args.indexOf("-C") + 2);
+    if (op[0] === "fetch") {
+      const [, destination] = op[op.length - 1].replace(/^\+/, "").split(":");
+      const branch = destination.replace("refs/remotes/origin/", "");
+      if (branch !== "dev" && !remoteBranches.includes(branch)) {
+        throw Object.assign(new Error(`couldn't find remote ref refs/heads/${branch}`), { code: 128 });
+      }
+      execFileSync("git", ["-C", repo, "update-ref", destination, "HEAD"]);
+      return { stdout: "", stderr: "" };
+    }
+    return execFileAsync(command, args, options);
+  };
 }
 
 async function withPath(bin, fn) {
@@ -74,7 +80,6 @@ describe("same-checkout /implement branch operation", () => {
     const bin = mkdtempSync(join(tmpdir(), "gc-implement-bin-"));
     const log = join(bin, "gh.log");
     writeFileSync(log, "");
-    installGhDevelopShim(bin, log);
     try {
       const result = await withPath(bin, () =>
         runPrepareImplementBranch({
@@ -84,7 +89,10 @@ describe("same-checkout /implement branch operation", () => {
           branchName: "1416-implement-principles",
           baseBranch: "dev",
           checkoutMode: "same_checkout",
-        }, { workspaceAuthorizationResolver: async () => authorizationForRepo(repo) }),
+        }, {
+          workspaceAuthorizationResolver: async () => authorizationForRepo(repo),
+          commandRunner: offlineGitRunner(repo, log),
+        }),
       );
       assert.equal(result.ok, true, JSON.stringify(result));
       assert.equal(result.repo_path, realpathSync(repo));
@@ -106,7 +114,6 @@ describe("same-checkout /implement branch operation", () => {
     const bin = mkdtempSync(join(tmpdir(), "gc-implement-bin-"));
     const log = join(bin, "gh.log");
     writeFileSync(log, "");
-    installGhDevelopShim(bin, log);
     try {
       // A concurrent /implement in a sibling linked worktree (or an MCP relaunch) can
       // shift the captured per-worktree --absolute-git-dir while the shared repository
@@ -124,7 +131,7 @@ describe("same-checkout /implement branch operation", () => {
           branchName: "1502-worktree-identity-guard",
           baseBranch: "dev",
           checkoutMode: "same_checkout",
-        }, { workspaceAuthorizationResolver: async () => authorization }),
+        }, { workspaceAuthorizationResolver: async () => authorization, commandRunner: offlineGitRunner(repo, log) }),
       );
       assert.equal(result.ok, true, JSON.stringify(result));
       assert.equal(result.branch, "1502-worktree-identity-guard");
@@ -160,7 +167,6 @@ describe("same-checkout /implement branch operation", () => {
     const log = join(bin, "gh.log");
     const hookResult = join(bin, "hook-ran");
     writeFileSync(log, "");
-    installGhDevelopShim(bin, log);
     const hooks = join(repo, ".git", "hooks");
     mkdirSync(hooks, { recursive: true });
     writeFileSync(
@@ -177,10 +183,10 @@ describe("same-checkout /implement branch operation", () => {
           issueNumber: 1416,
           branchName: "1416-implement-principles",
           checkoutMode: "same_checkout",
-        }, { workspaceAuthorizationResolver: async () => authorization }),
+        }, { workspaceAuthorizationResolver: async () => authorization, commandRunner: offlineGitRunner(repo, log) }),
       );
       assert.equal(result.ok, true, JSON.stringify(result));
-      assert.equal(readFileSync(log, "utf8").includes("issue"), true);
+      assert.match(readFileSync(log, "utf8"), /"switch"/);
       assert.throws(() => readFileSync(hookResult));
     } finally {
       rmSync(repo, { recursive: true, force: true });
@@ -220,6 +226,51 @@ describe("same-checkout /implement branch operation", () => {
       });
       assert.equal(result.ok, false);
       assert.equal(result.error, "implement_repo_not_authorized");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("prepares the branch from the fetched integration branch without invoking gh (issue #1584)", async () => {
+    const repo = initRepo();
+    const bin = mkdtempSync(join(tmpdir(), "gc-implement-bin-"));
+    const log = join(bin, "git.log");
+    writeFileSync(log, "");
+    // A gh on PATH that fails the test if branch preparation reaches GitHub at all.
+    writeFileSync(join(bin, "gh"), "#!/bin/sh\necho 'gh must not run' >&2\nexit 3\n", { mode: 0o755 });
+    try {
+      execFileSync("git", ["-C", repo, "commit", "-q", "--allow-empty", "-m", "origin tip"]);
+      const originTip = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+      const result = await withPath(bin, () =>
+        runPrepareImplementBranch({
+          repoPath: repo, invocationRoot: repo, issueNumber: 1584, branchName: "1584-rest-first", baseBranch: "dev",
+        }, { workspaceAuthorizationResolver: async () => authorizationForRepo(repo), commandRunner: offlineGitRunner(repo, log) }),
+      );
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.equal(result.branch, "1584-rest-first");
+      assert.equal(execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), originTip);
+      assert.doesNotMatch(readFileSync(log, "utf8"), /^gh /m);
+      assert.match(readFileSync(log, "utf8"), /\+refs\/heads\/dev:refs\/remotes\/origin\/dev/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(bin, { recursive: true, force: true });
+    }
+  });
+
+  it("tracks the issue branch from origin when it already exists there", async () => {
+    const repo = initRepo();
+    const log = join(mkdtempSync(join(tmpdir(), "gc-implement-log-")), "git.log");
+    writeFileSync(log, "");
+    try {
+      const result = await runPrepareImplementBranch({
+        repoPath: repo, invocationRoot: repo, issueNumber: 1584, branchName: "1584-rest-first", baseBranch: "dev",
+      }, {
+        workspaceAuthorizationResolver: async () => authorizationForRepo(repo),
+        commandRunner: offlineGitRunner(repo, log, { remoteBranches: ["1584-rest-first"] }),
+      });
+      assert.equal(result.ok, true, JSON.stringify(result));
+      const upstream = execFileSync("git", ["-C", repo, "rev-parse", "--abbrev-ref", "@{upstream}"], { encoding: "utf8" }).trim();
+      assert.equal(upstream, "origin/1584-rest-first");
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

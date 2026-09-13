@@ -11,6 +11,7 @@ import { MCP_LAUNCH_CWD, evaluateExecutionObligations, isDefaultImplementHooksPa
 import { ENRICH_THREAD_PAGE_CAP } from "./grc-legacy-compat-2.js";
 import { getAuthenticatedGitHubLogin, getOwnerRepo, hasVerifiedStructuredWontfixAuthorization, readIssueCommentsWithAuthors, resolveExecutionObligationTrust } from "./grc-legacy-compat-3.js";
 import { STATION_OBSERVATION_DISPOSITION, hasVerifiedStationReobservation } from "./execution-obligation-v2.js";
+import { listPullRequestsForHead } from "./github-rest.js";
 import { execFile, formatCommandFailure } from "./runtime-primitives.js";
 export * from "./grc-legacy-compat-7.js";
 
@@ -343,16 +344,14 @@ export async function autoDetectPrNumber(repoRoot) {
   // MCP host can't redirect this lookup at a different repo. --repo is
   // placed at the end of argv (gh accepts flags in any order) so the
   // hermetic-shim test fixtures' strict argv-prefix matches still work.
+  // The current branch's open PR, over REST: `gh pr view` spent the shared GraphQL budget
+  // (issue #1584). Ambiguity (no PR, or several) resolves to null, as before.
   try {
     const { owner, name } = await getOwnerRepo(repoRoot);
-    const { stdout } = await execFile(
-      "gh",
-      ["pr", "view", "--json", "number", "--repo", `${owner}/${name}`],
-      { cwd: repoRoot },
-    );
-    const data = JSON.parse(stdout);
-    const n = Number.parseInt(data.number, 10);
-    return Number.isInteger(n) && n > 0 ? n : null;
+    const branch = await getCurrentBranchName(repoRoot);
+    if (branch == null) return null;
+    const prs = await listPullRequestsForHead(repoRoot, owner, name, branch);
+    return prs.length === 1 ? prs[0].number : null;
   } catch {
     return null;
   }

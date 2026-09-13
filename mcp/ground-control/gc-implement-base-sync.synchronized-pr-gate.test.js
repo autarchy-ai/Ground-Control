@@ -81,6 +81,25 @@ function requirementsThreadReader(body = "## Requirements\n- DSL-437\n") {
   return async () => ({ ok: true, body });
 }
 
+// PR lookup and creation go through GitHub REST (issue #1584): `gh api --method <M> <path> ...`.
+function ghRestCall(args) {
+  return { method: args[args.indexOf("--method") + 1], path: args.find((arg) => arg.startsWith("/repos/")) ?? "" };
+}
+
+function restPr({ number, baseRef = "dev", body = renderedPrBody() }) {
+  const repo = { name: "Ground-Control", full_name: "autarchy-ai/Ground-Control", owner: { login: "autarchy-ai" } };
+  return {
+    number,
+    html_url: `https://github.com/autarchy-ai/Ground-Control/pull/${number}`,
+    state: "open",
+    merged_at: null,
+    title: "feat: require synchronized implement PRs",
+    body,
+    base: { ref: baseRef, repo },
+    head: { ref: BRANCH, sha: RESULT, repo },
+  };
+}
+
 function gitOperation(args) {
   const marker = args.indexOf("-C");
   return args.slice(marker + 2);
@@ -200,9 +219,10 @@ describe("synchronized PR gate", () => {
     const runner = async (command, args) => {
       calls.push([command, args]);
       if (command === "gh") {
-        if (args[1] === "list") return { stdout: "[]\n" };
-        if (args[1] === "create") {
-          return { stdout: "https://github.com/autarchy-ai/Ground-Control/pull/200\n" };
+        const { method, path } = ghRestCall(args);
+        if (method === "GET" && path.includes("/pulls?")) return { stdout: "[]\n" };
+        if (method === "POST" && path.endsWith("/pulls")) {
+          return { stdout: JSON.stringify({ number: 200, html_url: "https://github.com/autarchy-ai/Ground-Control/pull/200" }) };
         }
       }
       const op = gitOperation(args);
@@ -250,11 +270,9 @@ describe("synchronized PR gate", () => {
     const ghCalls = calls.filter(([command]) => command === "gh");
     assert.equal(ghCalls.length, 2);
     for (const [, args] of ghCalls) {
-      assert.deepEqual(args.slice(args.indexOf("--repo"), args.indexOf("--repo") + 2), [
-        "--repo",
-        "autarchy-ai/ground-control",
-      ]);
+      assert.ok(ghRestCall(args).path.startsWith("/repos/autarchy-ai/ground-control/pulls"), args.join(" "));
     }
+    assert.equal(result.pr_number, 200);
   });
 
   it("finds an existing same-repository PR with the branch syntax gh actually accepts", async () => {
@@ -263,26 +281,14 @@ describe("synchronized PR gate", () => {
     const runner = async (command, args) => {
       calls.push([command, args]);
       if (command === "gh") {
-        if (args[1] === "create") {
+        const { method, path } = ghRestCall(args);
+        if (method === "POST") {
           createCalled = true;
           throw new Error("duplicate PR creation attempted");
         }
-        const head = args[args.indexOf("--head") + 1];
-        if (head !== BRANCH) return { stdout: "[]\n" };
-        return {
-          stdout: JSON.stringify([{
-            number: 201,
-            url: "https://github.com/autarchy-ai/Ground-Control/pull/201",
-            baseRefName: "dev",
-            headRefName: BRANCH,
-            headRefOid: RESULT,
-            headRepository: { name: "Ground-Control" },
-            headRepositoryOwner: { login: "autarchy-ai" },
-            isCrossRepository: false,
-            title: "feat: require synchronized implement PRs",
-            body: renderedPrBody(),
-          }]),
-        };
+        const head = new URL(`https://api.github.com${path}`).searchParams.get("head");
+        if (head !== `autarchy-ai:${BRANCH}`) return { stdout: "[]\n" };
+        return { stdout: JSON.stringify([restPr({ number: 201 })]) };
       }
       const op = gitOperation(args);
       if (op[0] === "symbolic-ref") return { stdout: `${BRANCH}\n` };
@@ -329,29 +335,17 @@ describe("synchronized PR gate", () => {
     assert.equal(result.already_exists, true);
     assert.equal(result.pr_number, 201);
     assert.equal(createCalled, false);
-    const listCall = calls.find(([command, args]) => command === "gh" && args[1] === "list");
-    assert.equal(listCall[1][listCall[1].indexOf("--head") + 1], BRANCH);
+    const listCall = calls.find(([command, args]) => command === "gh" && ghRestCall(args).method === "GET");
+    // The REST head filter is owner-qualified; a bare branch name would match nothing.
+    assert.equal(new URL(`https://api.github.com${ghRestCall(listCall[1]).path}`).searchParams.get("head"), `autarchy-ai:${BRANCH}`);
   });
 
   it("refuses an existing PR whose base or rendered content does not match", async () => {
     let createCalled = false;
     const runner = async (command, args) => {
       if (command === "gh") {
-        if (args[1] === "create") createCalled = true;
-        return {
-          stdout: JSON.stringify([{
-            number: 201,
-            url: "https://github.com/autarchy-ai/Ground-Control/pull/201",
-            baseRefName: "main",
-            headRefName: BRANCH,
-            headRefOid: RESULT,
-            headRepository: { name: "Ground-Control" },
-            headRepositoryOwner: { login: "autarchy-ai" },
-            isCrossRepository: false,
-            title: "feat: require synchronized implement PRs",
-            body: "attacker-controlled body",
-          }]),
-        };
+        if (ghRestCall(args).method === "POST") createCalled = true;
+        return { stdout: JSON.stringify([restPr({ number: 201, baseRef: "main", body: "attacker-controlled body" })]) };
       }
       const op = gitOperation(args);
       if (op[0] === "symbolic-ref") return { stdout: `${BRANCH}\n` };

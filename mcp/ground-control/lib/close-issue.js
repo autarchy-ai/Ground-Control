@@ -6,6 +6,7 @@
 
 import { TO_CAMEL } from "./field-mapping.js";
 import { extractGhErrorMessage } from "./grc-legacy-compat-2.js";
+import { fetchPullRequest, listIssueCrossReferencedPullNumbers } from "./github-rest.js";
 import { getOwnerRepo, readIssueCommentBodies, readIssueCommentsWithAuthors, resolveExecutionObligationTrust, validateSourceDevStartGate } from "./grc-legacy-compat-3.js";
 import { ensureGitRepo } from "./grc-legacy-compat-4.js";
 import { devStartGateConfigFailure, devStartGateFailure, readDevStartPlanFields, readSourceBearingDecision, validateNonSourceDevStartGate } from "./grc-legacy-compat.js";
@@ -133,60 +134,26 @@ export async function postCodexReviewCycleMarker(repoRoot, owner, name, prNumber
   );
 }
 async function findPrForIssue(repoRoot, owner, name, issueNumber) {
-  // Look up linked PRs via GraphQL — REST's /issues endpoint doesn't expose
-  // the issue→PR link directly. We restrict to merged or open PRs since a
-  // closed-but-not-merged PR can't satisfy the gate.
-  const query = `
-    query($owner: String!, $name: String!, $number: Int!) {
-      repository(owner: $owner, name: $name) {
-        issue(number: $number) {
-          timelineItems(first: 50, itemTypes: [CROSS_REFERENCED_EVENT, CONNECTED_EVENT, MARKED_AS_DUPLICATE_EVENT]) {
-            nodes {
-              __typename
-              ... on CrossReferencedEvent {
-                source { __typename ... on PullRequest { number state mergedAt url baseRefName mergeCommit { oid } } }
-              }
-              ... on ConnectedEvent {
-                subject { __typename ... on PullRequest { number state mergedAt url baseRefName mergeCommit { oid } } }
-              }
-            }
-          }
-        }
-      }
-    }
-  `;
-  let stdout;
+  // Linked PRs come from the issue's REST timeline (cross-referenced events), then each PR's own
+  // REST record for state, merged_at, base ref, and merge commit. REST only: the GraphQL timeline
+  // query failed closed whenever the shared token's GraphQL budget ran out, blocking every Phase E
+  // even though REST could answer it (issue #1584).
+  let numbers;
   try {
-    ({ stdout } = await execFile(
-      "gh",
-      [
-        "api", "graphql",
-        "-f", `query=${query}`,
-        "-F", `owner=${owner}`,
-        "-F", `name=${name}`,
-        "-F", `number=${issueNumber}`,
-      ],
-      { cwd: repoRoot },
-    ));
+    numbers = await listIssueCrossReferencedPullNumbers(repoRoot, owner, name, issueNumber);
   } catch (error) {
-    throw new Error(`gh api graphql failed: ${extractGhErrorMessage(error)}`);
+    throw new Error(`GitHub REST issue timeline lookup failed: ${extractGhErrorMessage(error)}`);
   }
-  let payload;
-  try {
-    payload = JSON.parse(stdout);
-  } catch {
-    return [];
+  const prs = [];
+  for (const number of numbers) {
+    try {
+      const pr = await fetchPullRequest(repoRoot, owner, name, number);
+      if (pr) prs.push(pr);
+    } catch (error) {
+      throw new Error(`GitHub REST pull request #${number} lookup failed: ${extractGhErrorMessage(error)}`);
+    }
   }
-  const nodes = payload?.data?.repository?.issue?.timelineItems?.nodes ?? [];
-  const prs = new Map();
-  for (const node of nodes) {
-    let pr = null;
-    if (node?.__typename === "CrossReferencedEvent" && node?.source?.__typename === "PullRequest") pr = node.source;
-    if (node?.__typename === "ConnectedEvent" && node?.subject?.__typename === "PullRequest") pr = node.subject;
-    if (!pr || typeof pr.number !== "number") continue;
-    if (!prs.has(pr.number)) prs.set(pr.number, pr);
-  }
-  return [...prs.values()];
+  return prs;
 }
 export async function resolvePrForClose({ repoRoot, owner, name, issueNumber, prNumber }) {
   if (prNumber == null) {
