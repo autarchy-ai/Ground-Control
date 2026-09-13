@@ -107,7 +107,7 @@ export async function createGitHubIssue({ title, body, labels, repo, repoRoot })
   const { stdout } = await execFile("gh", args);
   const created = JSON.parse(stdout);
   if (!Number.isInteger(created?.number) || typeof created?.html_url !== "string") {
-    throw new Error(`GitHub REST issue creation returned no issue number: ${stdout.slice(0, 200)}`);
+    throw new TypeError(`GitHub REST issue creation returned no issue number: ${stdout.slice(0, 200)}`);
   }
   return { url: created.html_url, number: created.number };
 }

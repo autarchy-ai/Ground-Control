@@ -18,7 +18,7 @@ import { enrichCommentsWithThreadIds, ensureGitRepo, fetchReviewCommentById } fr
 import { buildCodexVerifyPrompt, getRuntimeAllowedAuthors, parseCodexVerifyTail, postReviewCommentReply, resolveReviewThread } from "./issue-thread.js";
 import { listWorkingTreeChanges } from "./knowledge-capture.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
-import { getDefaultCodexTimeoutMs, execFile, execFileWithInput, formatCommandFailure } from "./runtime-primitives.js";
+import { getDefaultCodexTimeoutMs, execFileWithInput, formatCommandFailure } from "./runtime-primitives.js";
 import { fetchPullRequest } from "./github-rest.js";
 
 // Enough paths to identify what a failed run touched without turning the

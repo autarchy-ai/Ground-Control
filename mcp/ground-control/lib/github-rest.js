@@ -99,18 +99,20 @@ export async function listIssueCrossReferencedPullNumbers(repoRoot, owner, name,
   return numbers;
 }
 
-// GitHub's closing keywords, immediately before a same-repository issue reference.
-const CLOSING_REFERENCE_RE =
-  /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[:\s]+(?:([A-Za-z0-9][A-Za-z0-9-]*)\/([A-Za-z0-9._-]+))?#(\d+)\b/gi;
+// GitHub's closing keywords, each followed by a `#N` or `owner/name#N` reference. The reference is
+// parsed as plain text below, which keeps the pattern itself small.
+const CLOSING_REFERENCE_RE = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[:\s]+([\w./-]*#\d+)\b/gi;
 
 /** Issue numbers a pull request body closes with GitHub's closing keywords, in this repository. */
 export function parseClosingIssueReferences(body, owner, name) {
+  const thisRepo = `${owner}/${name}`.toLowerCase();
   const numbers = [];
   for (const match of String(body ?? "").matchAll(CLOSING_REFERENCE_RE)) {
-    const sameRepo = match[1] == null
-      || (match[1].toLowerCase() === owner.toLowerCase() && match[2].toLowerCase() === name.toLowerCase());
-    const number = Number.parseInt(match[3], 10);
-    if (sameRepo && number > 0 && !numbers.includes(number)) numbers.push(number);
+    const [repoPart, digits] = match[1].split("#");
+    const number = Number.parseInt(digits, 10);
+    if ((repoPart === "" || repoPart.toLowerCase() === thisRepo) && number > 0 && !numbers.includes(number)) {
+      numbers.push(number);
+    }
   }
   return numbers;
 }
