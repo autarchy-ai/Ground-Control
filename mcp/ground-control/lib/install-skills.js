@@ -33,6 +33,20 @@ export function isManagedTarget(source, target) {
 }
 
 /**
+ * What installing `source` at `target` should do: "installed" (nothing there), "replaced" (a
+ * checkout symlink, or a differing copy under --force), "current" (an identical copy), or
+ * "skipped" (a differing copy without --force).
+ */
+export function planSkillTarget(source, target, force) {
+  const existing = lstatSync(target, { throwIfNoEntry: false });
+  if (!existing) return "installed";
+  // A symlink is the old checkout install: always ours to replace with a real copy.
+  if (existing.isSymbolicLink()) return "replaced";
+  if (isManagedTarget(source, target)) return "current";
+  return force ? "replaced" : "skipped";
+}
+
+/**
  * Install every packaged skill into each target root. Returns one result per skill and root:
  * `{ root, skill, action: "installed" | "current" | "replaced" | "skipped" }`.
  */
@@ -43,21 +57,9 @@ export function installSkills({ skillsDir = PACKAGED_SKILLS_DIR, roots, force = 
     for (const skill of skills) {
       const source = join(skillsDir, skill);
       const target = join(root, skill);
-      const existing = lstatSync(target, { throwIfNoEntry: false });
-      let action = "installed";
-      if (existing) {
-        // A symlink is the old checkout install: always ours to replace with a real copy.
-        if (!existing.isSymbolicLink() && isManagedTarget(source, target)) {
-          results.push({ root, skill, action: "current" });
-          continue;
-        }
-        if (!existing.isSymbolicLink() && !force) {
-          results.push({ root, skill, action: "skipped" });
-          continue;
-        }
-        action = "replaced";
-      }
-      if (!dryRun) {
+      const action = planSkillTarget(source, target, force);
+      const writes = action === "installed" || action === "replaced";
+      if (writes && !dryRun) {
         mkdirSync(root, { recursive: true });
         rmSync(target, { recursive: true, force: true });
         cpSync(source, target, { recursive: true });
