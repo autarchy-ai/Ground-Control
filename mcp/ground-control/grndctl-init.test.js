@@ -188,6 +188,19 @@ describe("runInit", () => {
     }
   });
 
+  it("prints every non-interactive flag for --help without prompting or writing", async () => {
+    const dir = repo();
+    try {
+      const messages = [];
+      const code = await runInit(["--help"], { cwd: dir, print: (m) => messages.push(m), interactive: true });
+      assert.equal(code, 0);
+      for (const field of INIT_FIELDS) assert.match(messages[0], new RegExp(field.flag));
+      assert.equal(existsSync(join(dir, ".mcp.json")), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("writes nothing on a dry run", async () => {
     const dir = repo();
     try {

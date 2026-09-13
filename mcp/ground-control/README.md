@@ -41,59 +41,24 @@ is unrelated to this version.
 
 ## Setup
 
-Install the released package, which carries the server and the workflow skills:
+Install and set up repositories with the `grndctl` package; see the
+[documentation](../../docs/public/index.md):
 
 ```bash
 npm install -g grndctl
-grndctl install-skills      # copies /implement, /quickfix, /integrate, /review into the agent skill dirs
+grndctl install-skills
+grndctl init      # in each repository: confirm settings, review changes, then write
+grndctl doctor
 ```
 
-Upgrade with `npm update -g grndctl` (then re-run `grndctl install-skills` and
-restart your agent sessions). `grndctl --version` prints the installed version.
+The server always runs from the installed package (`grndctl mcp`), never from a
+checkout. To run unreleased code deliberately, `npm link` from `mcp/ground-control`
+in a clone.
 
-Then set up each repository from its root:
-
-```bash
-grndctl init      # confirm each detected value, review the file changes, then write
-grndctl doctor    # check the host and this repository, with the fix for anything wrong
-```
-
-`grndctl init` touches only the repository it runs in. It proposes values
-detected from the checkout (project, GitHub repository from `origin`, base
-branch, test/completion/lint/format commands from Makefile targets or
-`package.json` scripts, SonarCloud keys from `sonar-project.properties`, ADR
-directory) and shows where each came from; you accept or edit every one, and
-nothing is written until you confirm the previewed changes. It creates
-`.ground-control.yaml` (never rewriting an existing one), adds or updates only
-the `ground-control` entry in `.mcp.json`, creates `.env` from the template when
-it is missing (never changing existing values), and makes sure `.env` is
-gitignored. For scripts, `grndctl init --non-interactive` requires every value as
-an explicit flag and never falls back to a detected value; `--dry-run` previews
-without writing.
-
-`grndctl init` writes this MCP client config for you; the equivalent by hand
-(`.claude/settings.json`, project `.mcp.json`, or your driver's config) is:
-
-```json
-{
-  "mcpServers": {
-    "ground-control": {
-      "command": "grndctl",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-The server runs from the installed package, never from a checkout: switching
-branches in a Ground Control clone does not change what agents run. To run
-unreleased code deliberately, `npm link` from `mcp/ground-control` in a clone.
-
-That is the whole required configuration. The server needs no environment
-variables and no reachable service to start. Most tools work with none of the
-variables below set; the ones that need a credential refuse and name it, so
-provisioning is a decision you make per repository rather than an inheritance
-you get by accident.
+The server needs no environment variables and no reachable service to start.
+Most tools work with none of the variables below set; the ones that need a
+credential refuse and name it, so provisioning is a decision you make per
+repository rather than an inheritance you get by accident.
 
 For development in a clone, install dependencies with `make ground-control-mcp-install`
 (`npm ci` in `mcp/ground-control`). The Codex-backed tools additionally require the Codex CLI

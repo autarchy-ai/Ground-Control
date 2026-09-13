@@ -215,7 +215,21 @@ export function renderPlan(changes) {
   return lines.join("\n");
 }
 
+export function initUsage() {
+  return [
+    "usage: grndctl init [--dry-run] [--non-interactive <flags>]",
+    "",
+    "Proposes each setting, asks you to confirm or edit it, previews the file changes, then writes.",
+    "--non-interactive needs every flag below (pass --flag= to leave an optional one empty):",
+    ...INIT_FIELDS.map((field) => `  ${field.flag.padEnd(22)} ${field.label}${field.required ? " (required)" : ""}`),
+  ].join("\n");
+}
+
 export async function runInit(args, { cwd = process.cwd(), ask, print = console.log, interactive }) {
+  if (args.includes("--help") || args.includes("-h")) {
+    print(initUsage());
+    return 0;
+  }
   const nonInteractive = args.includes("--non-interactive");
   if (!nonInteractive && !interactive) {
     print("grndctl init confirms every value, so it needs a terminal. For scripts, pass every value as a flag with --non-interactive.");
