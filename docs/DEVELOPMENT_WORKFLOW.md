@@ -501,9 +501,9 @@ the mechanics below.
   maintains a `chore(main): release X.Y.Z` PR that regenerates `CHANGELOG.md`
   from the Conventional Commit history and bumps any product-version mirrors
   declared in `release-please-config.json`'s `extra-files` to match
-  `.release-please-manifest.json`. That list is currently empty: the Gradle and
-  npm manifests it once named went with the re-platform, and the MCP server,
-  citation, and dependency versions are independent, not product mirrors. A
+  `.release-please-manifest.json`. The mirrors are the `grndctl` package version in
+  `mcp/ground-control/package.json` and `package-lock.json` (issue #1587); citation
+  and dependency versions are independent, not product mirrors. A
   human merges that PR the same way any
   other PR is merged - releases are cut by merging it, never by hand-tagging
   or hand-editing `CHANGELOG.md`.
@@ -514,10 +514,16 @@ the mechanics below.
 - **`main` to `dev` stays in sync.** `.github/workflows/sync-main-to-dev.yml`
   opens a back-merge PR after the release PR merges (main is ahead of dev by
   exactly the release commit); a human merges that too.
-- **Merging the release PR only cuts a release.** It tags `vX.Y.Z` and publishes
-  the GitHub Release. There is nothing to deploy: Ground Control ships as the MCP
-  server that a driver launches from the consuming checkout, so there is no image,
-  host, or running service behind a release.
+- **Merging the release PR cuts and publishes a release.** It tags `vX.Y.Z`,
+  publishes the GitHub Release, and the `publish-npm` job publishes the MCP server
+  and the workflow skills to npm as `grndctl` (issue #1587) with provenance, using
+  npm trusted publishing. Hosts install with `npm install -g grndctl`, point their
+  MCP config at `grndctl mcp`, and run `grndctl install-skills`; upgrading is
+  `npm update -g grndctl`. Agents therefore run a released version, never whatever
+  branch a Ground Control checkout happens to have checked out. The `NPM_TOKEN`
+  repository secret only bootstraps the first publish (npm cannot configure a
+  trusted publisher before the package exists); delete it once trusted publishing
+  is configured.
 
 See ADR-063 ("2026-07-15 Amendment: Release Please Ownership") for the full
 decision record.
