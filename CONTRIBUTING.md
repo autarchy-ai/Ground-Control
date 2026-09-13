@@ -79,7 +79,7 @@ enforced by policy.
 
 - Target `dev`, not `main`.
 - **The PR title must be a Conventional Commit** (`type(optional-scope): lowercase
-  subject`), enforced by repository policy and the MCP PR boundary; the
+  subject`, with `!` before the colon for a breaking change), enforced by repository policy and the MCP PR boundary; the
   `.github/workflows/pr-title.yml` job supplies advisory early feedback. Release
   Please parses merged commit history to compute the next version and changelog,
   so the title is load-bearing, not cosmetic.

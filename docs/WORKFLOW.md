@@ -17,6 +17,7 @@ a contract is stated once and read in one place.
 | How does a requirement introduced mid-run become in-scope for the run that introduced it? | [`docs/DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) and [ADR-029](../architecture/adrs/029-issue-thread-gate-model.md) - `gc_update_issue_requirements` is the only supported writer for an issue's `## Requirements` section |
 | Why is a decision the way it is? | [`architecture/adrs/`](../architecture/adrs/) |
 | What does CI verify? | [`docs/ci/CI_PIPELINE.md`](ci/CI_PIPELINE.md) |
+| What pull request title shape do the Step 9 check and the synchronized PR-creation boundary accept, including the breaking-change `!`? | [`skills/implement/steps/step-09-pr-body.md`](../skills/implement/steps/step-09-pr-body.md) and [`docs/DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) § Release model |
 | How do I set up a clone and open a pull request? | [`CONTRIBUTING.md`](../CONTRIBUTING.md) |
 | What are the style and testing rules? | [`docs/CODING_STANDARDS.md`](CODING_STANDARDS.md) and [`docs/DOC_STYLE.md`](DOC_STYLE.md) |
 

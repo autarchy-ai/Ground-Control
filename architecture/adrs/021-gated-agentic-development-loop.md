@@ -268,3 +268,13 @@ manufacturing work. The phase structure A-E, the single human touchpoint at PR
 merge, the zero-deferral rule, cycle caps, and post-merge reconciliation are
 unchanged. Enforced by the `implement-phase-e-noop-contract` policy check
 (`tools/policy/implement_scope_contract.py`) against `skills/implement/steps/step-17-completion.md`.
+
+**2026-09-14 (issue #1593, breaking-change title marker).** The PR-title rule
+from the issue #901 amendment accepts the Conventional Commits breaking-change
+marker: `<type>(<optional-scope>)!: <subject>`, for example `feat!:` or
+`feat(api)!:`. Release Please reads that `!` from the squash-merge title to cut
+a major release, so the MCP PR-creation boundary (`validateImplementPrTitle`)
+must let it through rather than force a retitle outside the tool. At most one
+`!` is allowed, and only between the type or scope and the colon. The configured
+`workflow.pr_title.types`, `subject_pattern`, and `require_scope` rules apply
+unchanged.
