@@ -8,12 +8,13 @@ analysis. It is not an implementation plan.
 
 ## Primary Sources
 
-- The Open Group Standard, Risk Taxonomy (O-RT), Version 3.0.1:
-  [C20B](../../docs/reference/fair/c20b.pdf).
-- The Open Group Standard, Risk Analysis (O-RA), Version 2.0.1:
-  [C20A](../../docs/reference/fair/c20a.pdf).
+- The Open Group Standard, Risk Taxonomy (O-RT), Version 3.0.1 (document C20B).
+- The Open Group Standard, Risk Analysis (O-RA), Version 2.0.1 (document C20A).
 - The Open Group Guide, The Mathematics of the Open FAIR Methodology, Version
-  1.1: [G262](../../docs/reference/fair/g262.pdf).
+  1.1 (document G262).
+
+These are The Open Group's published documents, available from The Open Group
+library; they are cited here, not redistributed in this repository (issue #1589).
 
 ## Boundary
 
