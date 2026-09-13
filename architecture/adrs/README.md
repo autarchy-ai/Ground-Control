@@ -82,7 +82,7 @@ We use [MADR](https://adr.github.io/madr/) (Markdown Any Decision Records). Each
 | [060](060-requirement-uid-identity.md) | Requirement UID identity | Accepted |
 | [061](061-workflow-run-telemetry-reporting.md) | Workflow-Run Telemetry & Economics Reporting Surface | Superseded (issue #1303) |
 | [062](062-age-graph-projection-snapshot-publication.md) | AGE Graph Projection Snapshot Publication | Accepted |
-| [063](063-release-deployment-model.md) | Release & Deployment Model | Accepted (MCP-only release surface amendment 2026-09-11, #1303) |
+| [063](063-release-deployment-model.md) | Release & Deployment Model | Accepted (MCP-only release surface amendment 2026-09-11, #1303; npm distribution as grndctl amendment 2026-09-13, #1587) |
 | [064](064-research-run-lifecycle-and-stage-gating.md) | Research Run Lifecycle and Stage Gating | Accepted |
 | [065](065-research-run-observability-snapshot.md) | Research Run Observability Snapshot | Accepted |
 | [066](066-research-review-comments-and-resolution-tracking.md) | Research Gate Decision Log and Review Comments | Accepted |
