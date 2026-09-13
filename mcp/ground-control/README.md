@@ -23,17 +23,15 @@ package it is talking to. `server-version.test.js` spawns the server and
 asserts the handshake matches the package, which keeps the two from drifting.
 
 This version covers the published tool surface: tool names, input schemas, and
-result envelopes. It is independent of the repo product version that Release
-Please owns (GC-P027), and it is not a mirror of any other version in the repo.
+result envelopes. It is the `grndctl` npm package version, which Release Please
+owns (GC-P027, issue #1587): it is derived from Conventional Commit history, so
+the change's commit type sets the bump.
 
-Bump `mcp/ground-control/package.json` in the same pull request as the change
-it describes, and commit the matching `package-lock.json` update:
-
-| Change to the tool surface | Bump |
-| --- | --- |
-| Remove or rename a tool, remove or narrow an input field, make an optional input required, or remove a result field or change its type | MAJOR |
-| Add a tool, add an optional input field, or add a result field | MINOR |
-| Fix a defect, or reword a description, without changing the contract | PATCH |
+| Change to the tool surface | Conventional Commit | Bump |
+| --- | --- | --- |
+| Remove or rename a tool, remove or narrow an input field, make an optional input required, or remove a result field or change its type | `feat!:` / `fix!:` or a `BREAKING CHANGE:` footer | MAJOR |
+| Add a tool, add an optional input field, or add a result field | `feat:` | MINOR |
+| Fix a defect, or reword a description, without changing the contract | `fix:` | PATCH |
 
 Clients read `serverInfo.version` after `initialize` and gate on the major
 component: a client written against major version *N* keeps working across
@@ -43,6 +41,16 @@ is unrelated to this version.
 
 ## Setup
 
+Install the released package, which carries the server and the workflow skills:
+
+```bash
+npm install -g grndctl
+grndctl install-skills      # copies /implement, /quickfix, /integrate, /review into the agent skill dirs
+```
+
+Upgrade with `npm update -g grndctl` (then re-run `grndctl install-skills` and
+restart your agent sessions). `grndctl --version` prints the installed version.
+
 Add to your MCP client config (`.claude/settings.json`, project `.mcp.json`, or
 the equivalent for your driver):
 
@@ -50,12 +58,16 @@ the equivalent for your driver):
 {
   "mcpServers": {
     "ground-control": {
-      "command": "node",
-      "args": ["/path/to/Ground-Control/mcp/ground-control/index.js"]
+      "command": "grndctl",
+      "args": ["mcp"]
     }
   }
 }
 ```
+
+The server runs from the installed package, never from a checkout: switching
+branches in a Ground Control clone does not change what agents run. To run
+unreleased code deliberately, `npm link` from `mcp/ground-control` in a clone.
 
 That is the whole required configuration. The server needs no environment
 variables and no reachable service to start. Most tools work with none of the
@@ -63,8 +75,8 @@ variables below set; the ones that need a credential refuse and name it, so
 provisioning is a decision you make per repository rather than an inheritance
 you get by accident.
 
-Install dependencies once with `make ground-control-mcp-install` (`npm ci` in
-`mcp/ground-control`). The Codex-backed tools additionally require the Codex CLI
+For development in a clone, install dependencies with `make ground-control-mcp-install`
+(`npm ci` in `mcp/ground-control`). The Codex-backed tools additionally require the Codex CLI
 on `PATH`, and the GitHub-writing tools require an authenticated `gh`.
 
 ### Optional environment

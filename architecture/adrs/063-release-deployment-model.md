@@ -102,6 +102,25 @@ historical rationale for artifact identity, promotion, and rollback.
 The repo-wide guardrails and concept boundaries for this amendment are in
 [`architecture/notes/release-please-preflight.md`](../notes/release-please-preflight.md).
 
+## 2026-09-13 Amendment: npm Distribution as `grndctl` (issue #1587)
+
+Hosts ran the MCP server and symlinked skills straight out of a Ground Control
+checkout, so every agent ran whatever branch or uncommitted edits that checkout
+held when its server started. A release is now also the deployable artifact:
+merging the release PR publishes `mcp/ground-control` to npm as `grndctl`, with
+the repository's workflow skills bundled at pack time. Hosts install it with
+`npm install -g grndctl`, configure `grndctl mcp` as the MCP command, copy the
+skills with `grndctl install-skills`, and upgrade with `npm update -g grndctl`.
+Upgrading is the host operator's decision.
+
+Release Please owns the package version: `mcp/ground-control/package.json` and
+its lockfile are declared `extra-files` mirrors, so the independent MCP-server
+coordinate in the 2026-09-11 amendment is superseded. The `publish-npm` job
+publishes the exact release commit with provenance through npm trusted
+publishing (GitHub OIDC). A one-time `NPM_TOKEN` secret bootstraps the first
+publish only, because npm cannot configure a trusted publisher before the
+package exists; it is deleted once trusted publishing is configured.
+
 ## 2026-09-11 Amendment: MCP-only Release Surface (issue #1303)
 
 The #1500 re-platform removed the backend, frontend, container publication, and

@@ -21,5 +21,6 @@ Mandatory constraints the `/implement` skill applies during plan phase.
   `release-please-config.json`'s `extra-files` is updated mechanically by the
   release PR, and its consistency with `.release-please-manifest.json` is
   enforced by `run_version_mirror_consistency_check` (code
-  `version-mirror-drift`). That list is currently empty. MCP-server, citation,
-  and dependency versions are independent and are not product mirrors.
+  `version-mirror-drift`). The mirrors are the `grndctl` npm package version in
+  `mcp/ground-control/package.json` and its `package-lock.json` (issue #1587).
+  Citation and dependency versions are independent and are not product mirrors.
