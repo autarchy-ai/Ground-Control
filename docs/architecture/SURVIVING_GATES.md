@@ -135,6 +135,7 @@ an explicit recorded human override.
 | `gc_post_decision_record` | gate/support | Renders and posts fix/wontfix/not-applicable decisions with bounded rationale. `wontfix` is not self-authorizing. |
 | `gc_record_execution_obligation` | gate/support | Persists a real surfaced finding/repair obligation on the issue thread; it cannot be silently dropped between attempts. |
 | `gc_authorize_execution_obligation_wontfix` | gate/support | Converts an obligation only from explicit user authorization bound to that record. Missing/ambiguous authority refuses. |
+| `gc_waive_station_observation` | gate/support | Waives only open station-observation obligations, from an exact write-permission command naming the station and obligations. Replay re-verifies command, author, and ordering; the report and PR attestation state no verdict was produced. |
 | `gc_render_pr_body` | gate/evidence | Renders canonical sections and derives Release Please versus fragment mode from the target repo. Caller-selected mode mismatch refuses. |
 | `gc_synchronize_implement_branch` | gate/support | Merges the latest integration base into the feature branch and rechecks the tree under OID/lease bounds. Conflicts return to the agent. |
 | `gc_create_synchronized_implement_pr` | gate/support | Creates/updates only after synchronization evidence and title/body validation. No direct unsynchronized PR path. |

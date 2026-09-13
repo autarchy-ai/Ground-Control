@@ -44,6 +44,9 @@ const REQUIRED_FIELD_REGISTRY = {
   gc_authorize_execution_obligation_wontfix: [
     "repo_path", "issue_number", "obligation_id", "authorization_source_url",
   ],
+  gc_waive_station_observation: [
+    "repo_path", "issue_number", "station_id", "obligation_ids", "authorization_source_url",
+  ],
 };
 
 describe("MCP tool description parity (issue #1169)", { timeout: 30000 }, () => {

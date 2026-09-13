@@ -12,7 +12,9 @@ import { validateExistingSynchronizedImplementPr, validateImplementBranchName, v
 import { runGetIssueThread } from "./issue-thread.js";
 import { detectSensitiveBodyContent, extractGhErrorMessage } from "./grc-legacy-compat-2.js";
 import { assertSafeImplementCheckoutConfiguration, authorizeImplementRepoRoot, ensureGitRepo, resolveMcpLaunchWorkspaceAuthorization } from "./grc-legacy-compat-4.js";
+import { readFinalReportStationEvidence } from "./final-report-station-waivers.js";
 import { readTrustedImplementSyncRecord } from "./knowledge-capture.js";
+import { assertPrBodyReviewAttestationMatchesLedger } from "./pr-review-attestation.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { rejectReservedMarkerSequence } from "./repo-vocabulary.js";
 import { checkPrBodyShape, execFile, execFileWithInput, reviewEngineEnv } from "./runtime-primitives.js";
@@ -262,6 +264,7 @@ export async function runCreateSynchronizedImplementPr(input, {
   contextResolver = getRepoGroundControlContext,
   syncRecordReader = readTrustedImplementSyncRecord,
   issueThreadReader = runGetIssueThread,
+  stationEvidenceReader = null,
 } = {}) {
   const inputValidation = validateSynchronizedImplementPrInput(input);
   if (!inputValidation.ok) return inputValidation;
@@ -298,6 +301,15 @@ export async function runCreateSynchronizedImplementPr(input, {
   }
   const closingBinding = await assertPrBodyClosingKeywordBoundToIssueScope(input, issueThreadReader);
   if (!closingBinding.ok) return closingBinding;
+  const reviewAttestation = await assertPrBodyReviewAttestationMatchesLedger({
+    body: input.body,
+    issueNumber: input.issueNumber,
+    stationEvidenceReader: stationEvidenceReader ?? (({ issueNumber }) => readFinalReportStationEvidence({
+      repository: { ok: true, repoRoot, owner: repoAuthorization.owner, name: repoAuthorization.name },
+      issueNumber,
+    })),
+  });
+  if (!reviewAttestation.ok) return reviewAttestation;
   try {
     const synchronization = await validateImplementSynchronization({
       repoRoot,

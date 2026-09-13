@@ -6,7 +6,7 @@ type: FUNCTIONAL
 priority: MUST
 wave: 2
 created_at: 2026-04-05T18:56:23.312401Z
-updated_at: 2026-09-11T00:00:00Z
+updated_at: 2026-09-13T00:00:00Z
 ---
 
 # GC-O007 — Gated Agentic Development Loop
@@ -30,6 +30,8 @@ Within Phase A, the agent shall select one TDD path for every requirement clause
 The Codex review loop is a single pre-push pass (Step 6.5) hard-capped per issue at a configurable cycle count (default 1 per issue #906; configurable via `workflow.codex_review.pre_push_cap` in `.ground-control.yaml`; bounds [1, 10]). The counter is anchored to the GitHub issue thread; the branch is recorded in the marker for audit context but is not part of the cap key, so a branch rename on the same issue cannot reset the counter. Last-in-cap-cycle findings shall be fixed and self-verified; the cap forbids running an over-cap cycle as a verification pass — any concern remaining after fixing last-in-cap findings shall be escalated to the user as an issue-thread comment, not addressed in an over-cap cycle. The `override_cap=true` + `override_reason=<authorization quote>` escape lets the user authorize a single over-cap cycle on demand, regardless of the configured default. Every successful Codex review cycle posts a verbatim findings record to the resolved issue thread (durable per ADR-029); a failed findings post returns a structured review_comment_post_failed result so the cycle is not consumed and the run is retried after the underlying GitHub issue is resolved. The post-push tool entrypoint (gc_codex_review with a pr_number) remains as defense-in-depth for direct callers but the SKILL no longer drives a separate post-push review pass — merge-commit drift relative to the target branch is the responsibility of CI (compile/tests/integration) and SonarCloud (quality). Codex remains the reviewer of record regardless of whether Claude Code, Codex, or a future driver runs the workflow; review tools always route through gc_codex_review, gc_codex_verify_finding, and gc_codex_architecture_preflight.
 
 When `workflow.review_disposition.enabled` is true (default false; with it absent or false the cap behavior above is byte-for-byte unchanged, and the human `override_cap` escape remains the only over-cap path), the agent shall, after fixing and self-verifying the last-in-cap-cycle findings and re-staging, call the `gc_review_cap_disposition` MCP tool to obtain an automated disposition of the cap boundary in place of immediately escalating to the user. The tool scores the post-fix change deterministically (diff size, changed-surface class, finding shape, and prior auto-overrides) and returns one of `proceed`, `one_more_cycle`, or `escalate_to_human`; a gray-zone LLM judge may rank only the residual undecided band, never override the deterministic ceiling or fast paths. On `proceed` the agent advances to Phase C; on `escalate_to_human` it escalates to the user exactly as without the gate; on `one_more_cycle` it runs exactly one server-authorized over-cap cycle whose authority is a durable `gc:review-auto-disposition` marker the tool posts (schema `gc.implement.review-auto-disposition/v1`), not agent-supplied `override_reason` text — `gc_codex_review_cycle` / `gc_test_quality_review_cycle` verify that marker via an `auto_grant=true` parameter before honoring the over-cap cycle. A hard ceiling (`max_auto_overrides`, default 1), enforced in the scorer and re-clamped after any judge, bounds automated over-cap cycles so the auto path can never grant a second over-cap cycle; beyond it only the human `override_cap` escape proceeds. `mode: shadow` (default) posts the disposition for agreement-building but still escalates to the user; `mode: authoritative` lets the disposition drive control flow. This gate is enforced at the MCP layer (ADR-031 / ADR-029 amendments, issue #1245) and changes only the cap-boundary disposition; the one-human-touchpoint contract (PR merge), the per-issue cycle counter, the verbatim findings record, and the zero-deferral rule are unchanged.
+
+A pre-push review station that runs but renders no verdict shall hold both readiness and completion open as a station-observation obligation. The obligation shall close only on durable issue-thread evidence: a later validated verdict for that station, recorded after the obligation opened (including by a later invocation), or a repository writer's exact waiver command naming the station and obligation. A waived station shall be reported as having produced no verdict, and neither the final report nor the PR body shall attest it as a completed, clean, or passed review. A waiver dispositions no finding and relaxes no other gate (issue #1578).
 
 The workflow shall have exactly one human touchpoint: PR merge. Plan, review findings, and decisions on findings (fix / wontfix / not-applicable, each with a one-line rationale) shall be recorded as comments on the GitHub issue thread so the durable record survives PR merge/close. Agent silence on a finding is a process violation. `defer` is not a valid decision: all reviewer findings shall be fixed before the PR is presented; deferring a finding violates the workflow contract. All other gates are automated and enforced by the agent toolchain.
 
@@ -153,6 +155,26 @@ Ground Control's value proposition depends on agents maintaining traceability an
 - TESTS → TEST `mcp/ground-control/lib.requirement-identity.test.js` (Strict requirement identity: raw frontmatter id, symlinked-ancestor refusal (#1569))
 - DOCUMENTS → DOCUMENTATION `architecture/notes/issue-requirements-section-writer-preflight.md` (Issue #1569 codex architecture preflight binding-guardrails note)
 - IMPLEMENTS → GITHUB_ISSUE `1569` (Issue #1569 — an MCP tool that writes an issue's Requirements section)
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/station-observation-replay.js` (Replay verification of superseding and waived station resolutions (#1578))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/station-observation-evidence.js` (Verified station evidence: waivers and unobserved waived stations (#1578))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/station-observation-waiver.js` (gc_waive_station_observation: exact writer-command station waiver (#1578))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/tools/station-observation.js` (Thin zod registration of gc_waive_station_observation (#1578))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/final-report-station-waivers.js` (Final report: waived-station section, review-claim refusal, codex waiver exception (#1578))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/pr-review-attestation.js` (PR-body review attestation checked against the station ledger (#1578))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/pr-body-policy.js` (Waived-station pre-push review attestation line (#1578))
+- IMPLEMENTS → CODE_FILE `tools/policy/authz_matrix.py` (PR policy gate accepts the waived-station review attestation (#1578))
+- TESTS → TEST `mcp/ground-control/gc-implement-contract.station-waiver-replay.test.js` (Adversarial replay of waived and superseding station resolutions (#1578))
+- TESTS → TEST `mcp/ground-control/gc-assert-completion.station-waiver.test.js` (#378 regression: waived and superseded stations through completion (#1578))
+- TESTS → TEST `mcp/ground-control/lib.station-observation-recovery.test.js` (Durable cross-invocation recovery and verdict-stamped writer ordering (#1578))
+- TESTS → TEST `mcp/ground-control/lib.runcodexreview-station-verdict.test.js` (Codex pre-push runner stamps its verdict and resolves recovered obligations (#1578))
+- TESTS → TEST `mcp/ground-control/gc-implement-base-sync.pr-review-attestation.test.js` (PR review attestation against the station ledger (#1578))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/runtime-primitives.js` (gh execution primitive refuses to publish a Ground Control authorization command (#1578))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/authorized-issue-repository.js` (Launch-workspace-pinned repository for gate-clearing ledger reads and records (#1578))
+- TESTS → TEST `mcp/ground-control/lib.gh-authorization-command-guard.test.js` (Server never publishes a /ground-control command (#1578))
+- TESTS → TEST `tools/tests/test_policy_adr_guard_2.py` (Renderer-to-policy parity for the waived-station attestation (#1578))
+- DOCUMENTS → DOCUMENTATION `architecture/notes/waived-station-completion-preflight.md` (Issue #1578 codex architecture preflight binding-guardrails note)
+- DOCUMENTS → ADR `architecture/adrs/029-issue-thread-gate-model.md` (ADR-029 amendment: waived and superseded station observations (#1578))
+- IMPLEMENTS → GITHUB_ISSUE `1578` (Issue #1578 — reconcile waived and superseded reviewer stations during completion)
 
 ## Historical traceability
 

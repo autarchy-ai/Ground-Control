@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { runAssertCompletion } from "./lib.js";
+import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Helpers (mirrored from gc-grc-reconciled.test.js)
@@ -221,7 +222,7 @@ describe("runAssertCompletion — post_merge refuses when PR not merged", () => 
           sonarStatus: "skipped",
           plainEnglishOutcome: "Moves Phase D reconciliation post-merge.",
           // phase defaults to post_merge
-        }),
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) }),
       );
       assert.equal(r.ok, false);
       assert.equal(r.error, "completion_pr_not_merged");
@@ -260,7 +261,7 @@ describe("runAssertCompletion — pre_merge readiness report", () => {
           sonarStatus: "skipped",
           plainEnglishOutcome: "Ready for review; reconciliation runs on merge.",
           phase: "pre_merge",
-        }),
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) }),
       );
       assert.equal(r.ok, true, `expected ok:true; got: ${JSON.stringify(r)}`);
       assert.equal(r.phase, "pre_merge");
@@ -294,7 +295,7 @@ describe("runAssertCompletion — pre_merge enforces CI-green gate", () => {
           sonarStatus: "skipped",
           plainEnglishOutcome: "Ready for review; reconciliation runs on merge.",
           phase: "pre_merge",
-        }),
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) }),
       );
       assert.equal(r.ok, false);
       assert.equal(r.error, "final_report_ci_not_green");
@@ -356,7 +357,7 @@ describe("runAssertCompletion — open execution obligations block readiness", (
           sonarStatus: "skipped",
           plainEnglishOutcome: "Ready for review.",
           phase: "pre_merge",
-        }),
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) }),
       );
       assert.equal(result.ok, false);
       assert.equal(result.error, "completion_open_execution_obligations");

@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { runAssertCompletion, runPostFinalReport } from "./lib.js";
+import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Helpers (mirrored from gc-grc-reconciled.test.js)
@@ -226,7 +227,7 @@ describe("runAssertCompletion — stable execution-obligation authority", () => 
           sonarStatus: "skipped",
           plainEnglishOutcome: "Ready for review.",
           phase: "pre_merge",
-        }),
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) }),
       );
       assert.equal(result.ok, false);
       assert.equal(result.error, "completion_open_execution_obligations");
@@ -268,7 +269,7 @@ describe("runAssertCompletion — stable execution-obligation authority", () => 
           sonarStatus: "skipped",
           plainEnglishOutcome: "Ready for review.",
           phase: "pre_merge",
-        }),
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) }),
       );
       assert.equal(result.ok, false);
       assert.equal(result.error, "execution_obligation_authorization_unverifiable");
@@ -326,7 +327,7 @@ describe("runAssertCompletion — stable execution-obligation authority", () => 
           sonarStatus: "skipped",
           plainEnglishOutcome: "Ready for review.",
           phase: "pre_merge",
-        }),
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) }),
       );
       assert.equal(result.ok, true, JSON.stringify(result));
     } finally {
@@ -360,7 +361,7 @@ describe("runAssertCompletion — stable execution-obligation authority", () => 
           sonarStatus: "skipped",
           plainEnglishOutcome: "Ready for review.",
           phase: "pre_merge",
-        }),
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) }),
       );
       assert.equal(result.ok, false);
       assert.equal(result.error, "execution_obligation_provenance_unverifiable");

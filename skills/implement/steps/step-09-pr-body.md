@@ -19,7 +19,7 @@ tier: low
    - `test_notes` (optional): extra prose under the Test Plan section.
    - `dev_start_gate` (optional): full Markdown `## Dev-Start Gate` section when the repo's PR template or metadata policy requires it. Reuse the plan's gate fields, adjusted to describe the PR diff.
 
-   - `lane` / `pre_push_reviews` (optional): leave both unset. They default to `implement` / `completed`, which is the accurate attestation for this lane - Steps 6.5 and 6.6 run both pre-push reviewers before this step. `/implement` may not pass `pre_push_reviews: "not_run"`; the renderer refuses that combination rather than let a mandatory gate be attested away (issue #1551).
+   - `lane` / `pre_push_reviews` (optional): leave both unset. They default to `implement` / `completed`, which is the accurate attestation for this lane - Steps 6.5 and 6.6 run both pre-push reviewers before this step. `/implement` may not pass `pre_push_reviews: "not_run"`; the renderer refuses that combination rather than let a mandatory gate be attested away (issue #1551). The one exception to leaving them unset: when the issue thread records a verified `gc_waive_station_observation` waiver for a station that was never observed, pass `pre_push_reviews: "waived"`. `gc_create_synchronized_implement_pr` checks the attestation against the ledger and refuses `completed` while a waived station stands unobserved, or `waived` without a verified waiver (issue #1578).
 
    - `documentation_outcome` (optional): `{ outcome, rationale? }` where `outcome` ∈ `updated`, `verified_unchanged`, `not_updated_authorized`. Required when the diff touches a documented surface (per ADR-054's surface classes in `mcp/ground-control/lib/doc-coverage.js`). `not_updated_authorized` requires a non-empty `rationale`.
 

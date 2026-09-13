@@ -69,6 +69,12 @@ export * from "./lib/review-reattempt.js";
 export * from "./lib/execution-obligation-v2.js";
 export * from "./lib/station-observation-records.js";
 export * from "./lib/station-observation-seam.js";
+export * from "./lib/station-observation-replay.js";
+export * from "./lib/station-observation-evidence.js";
+export * from "./lib/station-observation-waiver.js";
+export * from "./lib/final-report-station-waivers.js";
+export * from "./lib/pr-review-attestation.js";
+export * from "./lib/authorized-issue-repository.js";
 export * from "./lib/review-cycle-seam.js";
 export * from "./lib/codex-verify.js";
 // Maintainer PR-review lane (issue #1535): read-only context + authorized remediation.

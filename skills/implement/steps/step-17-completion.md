@@ -46,7 +46,7 @@ Pass to `gc_assert_completion`:
 - `plain_english_outcome`: required; 1–3 short sentences explaining what the change lets product users, operators, or maintainers do now.
 - `requirements`: array of `{uid, title, status, note?}` - one entry per UID in `in_scope_requirements[]`
 - `files`: `{added, modified, renamed, deleted}` (any key may be omitted)
-- `reviews`: array of `{reviewer, summary}` - one per reviewer
+- `reviews`: array of `{reviewer, summary}` - one per reviewer that rendered a verdict. Omit a station waived through `gc_waive_station_observation` and never observed afterwards: the tool renders it under *Waived review stations* from the verified record and refuses a review entry for it (`final_report_waived_station_review_claimed`). A verified codex waiver is the only substitute for the codex entry (issue #1578).
 - `traceability`: `{added, updated, deleted, notes?}` - short strings describing reconciliation outcome
 - `ci_status`: `"green"` (never `"skipped"` for a real PR)
 - `sonar_status`: `"passed"`, `"failed"`, or `"skipped"` (when `cfg.sonarcloud` is null)

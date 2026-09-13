@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { randomBytes } from "node:crypto";
 import { isSafeGitRefName } from "./repo-context.js";
-import { STATION_OBSERVATION_DISPOSITION, canReobservationClose, parseExecutionObligationV2Markers } from "./execution-obligation-v2.js";
+import { canStationResolutionClose, parseExecutionObligationV2Markers } from "./execution-obligation-v2.js";
 
 const IMPLEMENT_BRANCH_RE = /^[a-z0-9-]+$/;
 const IMPLEMENT_BRANCH_MAX_LENGTH = 50;
@@ -369,6 +369,7 @@ export function parseExecutionObligationMarkers(commentBodies, issueNumber) {
         cycle: null,
         disposition: match[4] ?? null,
         observation_record_id: null,
+        observed_cycle: null,
         authorization_comment_id: match[5] == null ? null : Number(match[5]),
       });
     }
@@ -392,6 +393,7 @@ export function evaluateExecutionObligations(events) {
         kind: event.kind ?? null,
         station: event.station ?? null,
         cycle: event.cycle ?? null,
+        resolution: null,
       });
     } else if (event.event === "escalated" && current?.status === "open") {
       states.set(event.obligation_id, { ...current, status: "open", disposition: null });
@@ -404,16 +406,22 @@ export function evaluateExecutionObligations(events) {
         ...current,
         status: "resolved",
         disposition: event.disposition,
+        resolution: {
+          observation_record_id: event.observation_record_id ?? null,
+          observed_cycle: event.observed_cycle ?? null,
+          authorization_comment_id: event.authorization_comment_id ?? null,
+        },
       });
     }
   }
-  const open = [...states.entries()]
-    .filter(([, state]) => state.status === "open")
-    .map(([id]) => id)
-    .sort();
+  const obligations = [...states.entries()].map(([id, state]) => ({ obligation_id: id, ...state }));
+  const open = obligations.filter((o) => o.status === "open").map((o) => o.obligation_id).sort();
   return {
     open_obligation_ids: open,
     clear: open.length === 0,
+    // Terminal state per obligation, so completion can account for HOW an observation closed —
+    // a waived station must be reported as unobserved, never silently merged into "clear".
+    obligations,
   };
 }
 /**
@@ -422,19 +430,17 @@ export function evaluateExecutionObligations(events) {
  * The two obligation families are isolated in both directions, because replay is keyed on the
  * obligation id and that id is deterministic and therefore guessable:
  *
- * - A `station_observation` is closable ONLY by an attested `reobserved`. Admitting the legacy
+ * - A `station_observation` is closable ONLY by an attested `reobserved` or a user-authorized
+ *   `waived` (issue #1578), each verified at replay before it reaches here. Admitting the legacy
  *   `fix` / `wontfix` / `not-applicable` vocabulary here was a completion-gate bypass: a
  *   repository writer who is not the trusted MCP posting identity could copy the id, station, and
  *   cycle out of an opened marker and post `disposition="fix"`, clearing an unobserved gate with
  *   no verdict behind it (codex cycle-1 security finding).
  * - A problem obligation is closable only by that legacy vocabulary. `reobserved` attests that a
- *   gate was observed, which says nothing about whether a defect was repaired.
+ *   gate was observed and `waived` that it was not, neither of which says a defect was repaired.
  */
 function isTerminalObligationResolution(current, event) {
-  if (current.kind === "station_observation") {
-    return event.disposition === STATION_OBSERVATION_DISPOSITION
-      && canReobservationClose(current, event);
-  }
+  if (current.kind === "station_observation") return canStationResolutionClose(current, event);
   return EXECUTION_OBLIGATION_DISPOSITIONS.includes(event.disposition);
 }
 export function validateBoundedText(value, field, errors, { required = true, max = 1200 } = {}) {

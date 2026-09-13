@@ -33,6 +33,7 @@
 //                                   gc_mark_implement_issue_picked_up,
 //                                   gc_authorize_execution_obligation_wontfix,
 //                                   gc_resolve_workflow_route, gc_codex_verify_finding
+//   tools/station-observation.js — gc_waive_station_observation (#1578)
 //   tools/integrate.js           — gc_integration_manager (GC-O011)
 //   tools/pr-review.js           — gc_get_pr_review_context,
 //                                   gc_remediate_pull_request (maintainer /review lane, #1535)
@@ -44,6 +45,7 @@ import { registerPostDecisionRecord } from "./tools/post-decision-record.js";
 import { registerReviewCapDisposition } from "./tools/review-cap-disposition.js";
 import { registerPrReview } from "./tools/pr-review.js";
 import { registerIntegrate } from "./tools/integrate.js";
+import { registerStationObservation } from "./tools/station-observation.js";
 import pkg from "./package.json" with { type: "json" };
 
 // The version advertised to clients in the initialize handshake is sourced from
@@ -57,6 +59,7 @@ registerPostDecisionRecord(server);
 registerReviewCapDisposition(server);
 registerPrReview(server);
 registerIntegrate(server);
+registerStationObservation(server);
 
 // ============================================================================
 // Startup

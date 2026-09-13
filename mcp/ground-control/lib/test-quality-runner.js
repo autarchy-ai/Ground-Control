@@ -9,7 +9,8 @@ import { detectSensitiveBodyContent } from "./grc-legacy-compat-2.js";
 import { readIssueCommentBodies } from "./grc-legacy-compat-3.js";
 import { GITHUB_ISSUE_COMMENT_BODY_MAX } from "./repo-vocabulary.js";
 import { execFile } from "./runtime-primitives.js";
-import { postStationReobservation } from "./station-observation-records.js";
+import { buildStationVerdictMarker } from "./execution-obligation-v2.js";
+import { guardStationReobservation } from "./station-observation-records.js";
 
 export const TEST_QUALITY_REVIEW_HARD_CAP = 1;
 export class ReviewerCapConfigError extends Error {
@@ -300,25 +301,29 @@ export async function postFindingsRecordAndCycleMarker({
   // to the module constant for callers that don't pass it; issue #906 added
   // the cfg-resolved path through runTestQualityReview.
   hardCap = TEST_QUALITY_REVIEW_HARD_CAP,
-  // Set when an earlier attempt at this logical cycle rendered no verdict and left a
-  // station-observation obligation open (issue #1476). The resolution is written between the
-  // findings record and the cycle marker so the cap is never consumed while the obligation is
+  // Open station-observation obligations for this station (issues #1476, #1578). Each is resolved
+  // between the findings record and the cycle marker so the cap is never consumed while one is
   // still open — that combination is exactly the state that used to require a human to post an
   // authorization string for a defect nobody ever observed.
-  stationObservation = null,
+  stationObservations = [],
 }) {
+  // The station-owned writer is the only place a validated verdict is recorded, so it alone
+  // stamps the record with the verdict it evidences (issue #1578).
+  const verdictRecordBody = `${buildStationVerdictMarker({
+    issueNumber, stationId: "test_quality_review", logicalCycle: cycleNumber,
+  })}\n\n${recordBody}`;
   // Body-size guard. GitHub's REST issue-comment endpoint rejects bodies
   // over 65535 chars; refuse at the boundary so the cycle isn't
   // half-spent if a verbose Claude run overruns. Same cap as
   // gc_post_decision_record / gc_post_final_report.
-  if (recordBody.length > GITHUB_ISSUE_COMMENT_BODY_MAX) {
+  if (verdictRecordBody.length > GITHUB_ISSUE_COMMENT_BODY_MAX) {
     return {
       ok: false,
       envelope: {
         ok: false,
         error: "test_quality_review_record_too_large",
         message:
-          `rendered findings record is ${recordBody.length} bytes; GitHub issue-comment cap is ` +
+          `rendered findings record is ${verdictRecordBody.length} bytes; GitHub issue-comment cap is ` +
           `${GITHUB_ISSUE_COMMENT_BODY_MAX}. Reduce verbose finding fields or split.`,
         issue_number: issueNumber,
         branch: branchName,
@@ -328,7 +333,7 @@ export async function postFindingsRecordAndCycleMarker({
       },
     };
   }
-  const sensitiveError = detectSensitiveBodyContent(recordBody);
+  const sensitiveError = detectSensitiveBodyContent(verdictRecordBody);
   if (sensitiveError) {
     return {
       ok: false,
@@ -351,7 +356,7 @@ export async function postFindingsRecordAndCycleMarker({
       owner,
       name,
       issueNumber,
-      body: recordBody,
+      body: verdictRecordBody,
     });
   } catch (err) {
     return {
@@ -371,31 +376,26 @@ export async function postFindingsRecordAndCycleMarker({
 
   // Re-observation resolution, bound to the record just posted, BEFORE the cap marker. If this
   // post fails the cycle stays unconsumed, so a retry is free — the inverse order would spend the
-  // cap and leave the observation obligation open, which is the deadlock this issue removes.
-  if (stationObservation != null) {
-    const resolution = await postStationReobservation({
-      repoRoot, owner, name, issueNumber, recordUrl, stationObservation,
-    });
-    if (!resolution.ok) {
-      return {
+  // cap and leave the observation obligation open, which is the deadlock #1476 removed.
+  const failedReobservation = await guardStationReobservation({
+    stationObservations, observedCycle: cycleNumber, findingsCommentUrl: recordUrl, repoRoot,
+    issueNumber, owner, name,
+    buildFailure: (message) => ({
+      ok: false,
+      envelope: {
         ok: false,
-        envelope: {
-          ok: false,
-          error: "station_observation_resolution_post_failed",
-          message:
-            `the findings record posted at ${recordUrl} but the station-observation resolution ` +
-            `for '${stationObservation.obligationId}' did not: ${resolution.message}. No cycle ` +
-            `marker was written, so the cap is untouched and re-running is safe.`,
-          issue_number: issueNumber,
-          branch: branchName,
-          findings_comment_url: recordUrl,
-          next_action: "fix_github_posting_and_retry",
-          finding_count: findingCount,
-          findings,
-        },
-      };
-    }
-  }
+        error: "station_observation_resolution_post_failed",
+        message,
+        issue_number: issueNumber,
+        branch: branchName,
+        findings_comment_url: recordUrl,
+        next_action: "fix_github_posting_and_retry",
+        finding_count: findingCount,
+        findings,
+      },
+    }),
+  });
+  if (failedReobservation) return failedReobservation;
 
   // Marker write — failure here is harder to recover from cleanly: the
   // record is durable on the thread but the cap counter never observed

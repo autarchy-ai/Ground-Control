@@ -202,14 +202,14 @@ export async function runCodexReviewCycle({
     repoPath,
     issueNumber,
     signal,
-    invokeReview: ({ stationObservation }) => runCodexReview({
+    invokeReview: ({ stationObservations }) => runCodexReview({
       repoPath,
       baseBranch: baseBranch ?? "dev",
       uncommitted: true,
       issueNumber,
       overrideCap: effectiveOverrideCap,
       overrideReason: effectiveOverrideReason,
-      stationObservation,
+      stationObservations,
       signal,
     }),
   });
@@ -288,14 +288,14 @@ export async function runTestQualityReviewCycle({
     repoPath,
     issueNumber,
     signal,
-    invokeReview: ({ stationObservation }) => {
+    invokeReview: ({ stationObservations }) => {
       const reviewParams = {
         repoPath,
         baseBranch,
         issueNumber,
         overrideCap: effectiveOverrideCap,
         overrideReason: effectiveOverrideReason,
-        stationObservation,
+        stationObservations,
         signal,
       };
       if (model !== undefined) reviewParams.model = model;

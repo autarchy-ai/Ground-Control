@@ -359,7 +359,7 @@ export function validateFinalReportInput(input) {
   if (errors.length) return { ok: false, errors };
   return { ok: true };
 }
-export function buildQuickfixCloseComment({ issueNumber, prNumber, files, reviews, ciStatus, sonarStatus, planCommentUrl, summary }) {
+export function buildQuickfixCloseComment({ issueNumber, prNumber, files, reviews, ciStatus, sonarStatus, planCommentUrl, summary, waivedStationLines = [] }) {
   const lines = [];
   lines.push(buildFinalReportMarker({ issueNumber, prNumber }));
   lines.push("");
@@ -394,6 +394,7 @@ export function buildQuickfixCloseComment({ issueNumber, prNumber, files, review
     for (const r of reviews) lines.push(`- **${r.reviewer}:** ${r.summary}`);
     lines.push("");
   }
+  lines.push(...waivedStationLines);
   lines.push(`### Status`);
   lines.push("");
   lines.push(`- CI: ${renderCiStatus(ciStatus)}`);

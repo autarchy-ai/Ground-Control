@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import {
   PR_BODY_REVIEW_CHECK_LINE_COMPLETED,
   PR_BODY_REVIEW_CHECK_LINE_NOT_RUN,
+  PR_BODY_REVIEW_CHECK_LINE_WAIVED,
   buildPrBody,
   checkPrBodyShape,
   validatePrBodyInput,
@@ -64,7 +65,7 @@ describe("PR body pre-push review attestation (issue #1551)", () => {
   });
 
   it("accepts either attestation at the shape gate but demands one of them", () => {
-    for (const line of [PR_BODY_REVIEW_CHECK_LINE_COMPLETED, PR_BODY_REVIEW_CHECK_LINE_NOT_RUN]) {
+    for (const line of [PR_BODY_REVIEW_CHECK_LINE_COMPLETED, PR_BODY_REVIEW_CHECK_LINE_NOT_RUN, PR_BODY_REVIEW_CHECK_LINE_WAIVED]) {
       const body = buildPrBody({ ...BASE_INPUT }).replace(PR_BODY_REVIEW_CHECK_LINE_COMPLETED, line);
       assert.equal(checkPrBodyShape(body).ok, true, `shape gate rejected: ${line}`);
     }
@@ -72,5 +73,17 @@ describe("PR body pre-push review attestation (issue #1551)", () => {
     const shape = checkPrBodyShape(stripped);
     assert.equal(shape.ok, false);
     assert.ok(shape.errors.some((e) => e.includes("pre-push review attestation")));
+  });
+
+  // Issue #1578: a run whose station was waived did not complete that review, so neither of the
+  // #1551 lines is accurate for it. The waived line is legal in either lane; whether the thread
+  // actually carries a verified waiver is checked at PR creation, not by the renderer.
+  it("renders the waived attestation, distinct from the completed one, in either lane", () => {
+    for (const lane of [undefined, "implement", "quickfix"]) {
+      const body = buildPrBody({ ...BASE_INPUT, lane, prePushReviews: "waived" });
+      assert.ok(body.includes(PR_BODY_REVIEW_CHECK_LINE_WAIVED));
+      assert.ok(!body.includes(PR_BODY_REVIEW_CHECK_LINE_COMPLETED));
+      assert.equal(validatePrBodyInput({ ...BASE_INPUT, lane, prePushReviews: "waived" }).ok, true);
+    }
   });
 });

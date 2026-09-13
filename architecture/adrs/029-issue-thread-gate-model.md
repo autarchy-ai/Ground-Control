@@ -641,3 +641,99 @@ corrections are appended. Requirement-free runs, the single human merge touchpoi
 the issue-thread durable-record model are unchanged. This amendment supersedes the
 requirement-file mutation ordering in the 2026-06-22 issue #963 amendment; its separation
 between pre-merge readiness and post-merge authoritative completion remains in force.
+
+**2026-09-13 (issue #1578, waived and superseded station observations).** The
+2026-07-29 station-observation contract left two ways for a delivery to stay
+blocked after it was merged with every gate green. First, a later invocation
+that rendered a verdict resolved nothing: the seam carried a pending obligation
+only inside the invocation that opened it. Second, a station that could not be
+observed at all had no durable resolution. This amendment adds one of each. It
+does not change the vocabulary for findings.
+
+*Superseding observation.* Before a station's first attempt, its cycle wrapper
+reads the trusted ledger for open obligations on that station. After a verdict,
+it resolves each one against the new findings record, still between the record
+and the cycle marker. A validated pre-push findings record now starts with a
+server-written `gc:station-verdict` marker (schema
+`gc.implement.station-verdict/v1`) naming the issue, station, and cycle. Replay
+reads it from the first line only, so reviewer text later in the record cannot
+forge it. A `reobserved` resolution now carries `observed_cycle`. Replay accepts
+that form only when all of the following hold:
+
+- the resolution and the record were both posted by the trusted MCP identity;
+- the record comes after the obligation's latest opening and before the
+  resolution;
+- the record's verdict marker names the same issue and station, at
+  `observed_cycle`;
+- `observed_cycle` is not earlier than the obligation's cycle.
+
+A cycle marker, an `ok: true` envelope, or a decision summary is not a verdict.
+A legacy `reobserved` without `observed_cycle` keeps its original check. Legacy
+verdicts that carry no marker are never inferred, so such obligations stay open
+until a new observation or an explicit waiver.
+
+*Waiver.* A station obligation may also close as `waived`, backed by user
+authority. The authority is an issue comment that reads exactly
+`/ground-control waive-station <station_id> <OBLIGATION_ID>...`. Its author must
+have effective write permission, and it names the station and a finite set of
+obligations. `gc_waive_station_observation` checks that command and that each
+named obligation is an open `station_observation` for that station. It then
+posts one audit record carrying a v2 `resolved disposition="waived"` marker per
+obligation, with `authorization_comment_id` pointing at the source. The record
+states that no verdict was produced. It is posted by the same trusted identity
+as other station records, and success is reported only after the ledger is read
+back. Replay re-reads the source every time and requires the waiver record to
+come from the trusted MCP identity. The source must still be the exact command
+from a writer, naming that station and obligation, and must sit after the
+obligation's latest opening and before the waiver record. Obligation ids are
+reused when a station and cycle reopen, so this ordering keeps an old command
+from covering a later reopening. A waiver that fails any check is dropped, the
+obligation stays open, and both completion phases keep refusing. `fix`,
+`wontfix`, and `not-applicable` still cannot close a station obligation, and
+neither `reobserved` nor `waived` can close a problem obligation.
+
+*Command authority.* A `/ground-control` command is authority only because a
+human with write access typed it. The MCP server posts under an identity with
+write access, often the same account as that human, so author checks at replay
+cannot tell the two apart. The guarantee therefore lives at the boundary every
+server-side GitHub write passes through: the shared `gh` execution primitive
+refuses to spawn a call that would publish a body containing a line that
+starts with `/ground-control`, or a body loaded from a file it cannot inspect.
+The refusal covers every command family (`waive-station`, `authorize-wontfix`,
+`authorize-scope-removal`) and every tool that assembles a body, including
+caller-supplied remediation comments. No tool can post the server a command that
+would later satisfy a replay check.
+
+*Repository binding.* Every ledger read whose result can clear a gate is pinned
+to the MCP launch workspace, and so is the record that reports the result. That
+covers the station seam's open, escalate, and recovery ledger target; the waiver
+evidence read; `gc_post_final_report`'s evidence read and post; and
+`gc_assert_completion`'s obligation read. Each goes through
+`authorizeImplementRepoRoot`. A caller-selected checkout is refused
+(`final_report_repo_not_authorized`, `completion_repo_not_authorized`) before
+any read or write.
+
+*Wire compatibility.* The `waived`, `observed_cycle`, and
+`authorization_comment_id` attributes are additive to the v2 family. A reader
+built before this amendment does not match such a resolution, so it keeps the
+obligation open. An unknown resolution never confers clearance.
+
+*Reporting.* A waiver authorizes continuing without a verdict. It never claims
+one. The trusted ledger read now also returns station evidence: the verified
+waivers, and which waived stations have no later verified verdict. The direct
+`gc_post_final_report` call and the composed `gc_assert_completion` path read
+the same evidence:
+
+- The report renders a server-derived *Waived review stations* section.
+- It refuses a `reviews[]` entry for a waived station that was never observed
+  (`final_report_waived_station_review_claimed`).
+- A verified codex waiver with no later codex verdict is the only thing that
+  can stand in for the mandatory codex review entry.
+
+The PR body gains a third accurate pre-push review attestation, `waived`.
+`gc_create_synchronized_implement_pr` checks it against the same evidence. It
+refuses `completed`/`not_run` while a waived station stands unobserved, and
+refuses `waived` when the thread proves no waiver. CI, SonarCloud, the merge
+gate, merged requirement-state verification, the review caps, and the
+single-human-touchpoint contract are unchanged. See
+`architecture/notes/waived-station-completion-preflight.md`.

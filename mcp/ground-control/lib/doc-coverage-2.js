@@ -9,8 +9,9 @@ import { readAbsoluteTextFile } from "./api-requirements.js";
 import { parseGroundControlYaml } from "./ground-control-config.js";
 import { buildFinalReportMarker, renderCiStatus, renderDocumentationSection, renderSonarStatus } from "./doc-coverage.js";
 import { detectSensitiveBodyContent, extractGhErrorMessage } from "./grc-legacy-compat-2.js";
-import { getOwnerRepo } from "./grc-legacy-compat-3.js";
 import { ensureGitRepo } from "./grc-legacy-compat-4.js";
+import { resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
+import { checkMandatoryCodexReview, readFinalReportStationEvidence, refuseWaivedStationReviewClaims, renderWaivedStationsSection } from "./final-report-station-waivers.js";
 import { buildQuickfixCloseComment, validateFinalReportInput } from "./plan-posting.js";
 import { GITHUB_ISSUE_COMMENT_BODY_MAX, rejectReservedMarkerSequence } from "./repo-vocabulary.js";
 import { detectDeferralDisposition, execFile } from "./runtime-primitives.js";
@@ -106,7 +107,7 @@ export function buildFinalReport(input) {
   if (!validation.ok) {
     throw new Error(`buildFinalReport input invalid: ${validation.errors.join("; ")}`);
   }
-  const { issueNumber, prNumber, requirements, files = {}, reviews, traceability = {}, ciStatus, sonarStatus, planCommentUrl, summary, lane, plainEnglishOutcome, phase = "post_merge", mergeRevision = null, requirementStateOverrideReason = null } = input;
+  const { issueNumber, prNumber, requirements, files = {}, reviews, traceability = {}, ciStatus, sonarStatus, planCommentUrl, summary, lane, plainEnglishOutcome, phase = "post_merge", mergeRevision = null, requirementStateOverrideReason = null, stationEvidence = null } = input;
   // Slim quickfix renderer (issue #906 codex cycle-3 F2). When lane='quickfix'
   // the close comment is structurally smaller: no "In-scope requirements",
   // no "Traceability reconciliation", no "Reviews" section when empty.
@@ -115,6 +116,7 @@ export function buildFinalReport(input) {
   if (lane === "quickfix") {
     return buildQuickfixCloseComment({
       issueNumber, prNumber, files, reviews, ciStatus, sonarStatus, planCommentUrl, summary,
+      waivedStationLines: renderWaivedStationsSection(stationEvidence),
     });
   }
   // Phase D (pre_merge) renders a "ready for review" record carrying a
@@ -128,14 +130,17 @@ export function buildFinalReport(input) {
     ..._finalReportRequirementsSection({ requirements, isPreMerge, mergeRevision, requirementStateOverrideReason }),
     ..._finalReportFilesSection(files),
     ..._finalReportReviewsSection(reviews),
+    ...renderWaivedStationsSection(stationEvidence),
     ..._finalReportTraceabilitySection({ isPreMerge, traceability }),
     ..._finalReportStatusSection({ isPreMerge, ciStatus, sonarStatus, documentation_outcome: input.documentation_outcome }),
   ].join("\n");
 }
-export async function runPostFinalReport(input) {
+export async function runPostFinalReport(input, { workspaceAuthorizationResolver = undefined } = {}) {
   const { repoPath } = input;
   const rest = { ...input };
   delete rest.repoPath;
+  // Station evidence is read from the trusted ledger below, never accepted from a caller.
+  delete rest.stationEvidence;
   const validation = validateFinalReportInput(rest);
   if (!validation.ok) {
     return {
@@ -208,25 +213,11 @@ export async function runPostFinalReport(input) {
     };
   }
   if (!isQuickfixLane) {
-    if (!Array.isArray(rest.reviews) || rest.reviews.length === 0) {
-      return {
-        ok: false,
-        error: "final_report_no_reviews",
-        message: "reviews[] is empty — Step 19 requires at least the pre-push Codex review summary; pass a reviews entry like { reviewer: 'codex', summary: '<cycle history + outcome>' } (or pass lane='quickfix' for the /quickfix slim path where AI reviews are opt-in)",
-        issue_number: rest.issueNumber,
-        next_action: "collect_review_summaries_and_retry",
-      };
-    }
-    const hasCodexReview = rest.reviews.some((r) => r && typeof r === "object" && r.reviewer === "codex");
-    if (!hasCodexReview) {
-      return {
-        ok: false,
-        error: "final_report_codex_review_missing",
-        message: "reviews[] does not include a 'codex' entry — the pre-push Codex review is mandatory per ADR-029; add a reviews entry with reviewer:'codex' (or pass lane='quickfix' for the /quickfix slim path)",
-        issue_number: rest.issueNumber,
-        next_action: "add_codex_review_entry_and_retry",
-      };
-    }
+    // A verified, unsuperseded codex-station waiver is the only substitute (issue #1578).
+    const reviewsRefusal = await checkMandatoryCodexReview({
+      reviews: rest.reviews, repoPath, issueNumber: rest.issueNumber, workspaceAuthorizationResolver,
+    });
+    if (reviewsRefusal) return reviewsRefusal;
   }
   // If the caller claims sonarStatus='skipped', validate that the repo
   // actually has no sonarcloud config (codex cycle-4 F3). Otherwise a caller
@@ -360,8 +351,45 @@ export async function runPostFinalReport(input) {
       next_action: "trim_summary_or_reviews_and_retry",
     };
   }
-  const repoRoot = await ensureGitRepo(repoPath);
-  const { owner, name } = await getOwnerRepo(repoRoot);
+  // The report is posted to, and its waiver evidence read from, the launch-workspace-authorized
+  // repository only — never a checkout a caller named (issue #1578).
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    return {
+      ok: false,
+      error: "final_report_repo_not_authorized",
+      message: repository.message,
+      issue_number: rest.issueNumber,
+      next_action: "run_from_the_mcp_launch_workspace_and_retry",
+    };
+  }
+  const { repoRoot, owner, name } = repository;
+  // Waived stations are reported from the verified ledger, and a review entry for one is refused:
+  // a waiver authorizes continuing without a verdict, never claiming one (issue #1578).
+  const stationRead = await readFinalReportStationEvidence({ repository, issueNumber: rest.issueNumber });
+  if (!stationRead.ok) {
+    return {
+      ok: false,
+      error: "final_report_obligation_state_failed",
+      message: `the execution-obligation ledger could not be verified: ${stationRead.message}`,
+      issue_number: rest.issueNumber,
+      next_action: "repair_execution_obligation_record_and_retry",
+    };
+  }
+  const claimRefusal = refuseWaivedStationReviewClaims({
+    reviews: rest.reviews, evidence: stationRead.evidence, issueNumber: rest.issueNumber,
+  });
+  if (claimRefusal) return claimRefusal;
+  const postedBody = buildFinalReport({ ...rest, stationEvidence: stationRead.evidence });
+  if (Buffer.byteLength(postedBody, "utf8") > GITHUB_ISSUE_COMMENT_BODY_MAX) {
+    return {
+      ok: false,
+      error: "final_report_body_too_large",
+      message: `rendered body is ${Buffer.byteLength(postedBody, "utf8")} bytes; GitHub's issue-comment body cap is ${GITHUB_ISSUE_COMMENT_BODY_MAX} bytes`,
+      issue_number: rest.issueNumber,
+      next_action: "trim_summary_or_reviews_and_retry",
+    };
+  }
   // The traceability-reconciliation prerequisite (former issue #1058) is retired
   // with the backend (issue #1500): reconciliation is no longer a workflow phase,
   // so there is no `traceability_reconciled` marker to require. The report's real
@@ -379,7 +407,7 @@ export async function runPostFinalReport(input) {
         "POST",
         `/repos/${owner}/${name}/issues/${rest.issueNumber}/comments`,
         "-f",
-        `body=${body}`,
+        `body=${postedBody}`,
       ],
       { cwd: repoRoot },
     );

@@ -103,6 +103,32 @@ class AdrGuard2ChecksTest(PolicyChecksFixture):
             f"quickfix-lane body rejected by check_pr_body: {[v.code for v in violations]}",
         )
 
+    def test_pr_body_renderer_waived_attestation_passes_policy_gate(self):
+        """Issue #1578: the waived-station attestation is byte-identical in the renderer and the gate."""
+        body = self._render_pr_body_via_js({
+            "issueNumber": 1578,
+            "changeClass": "doc-only",
+            "requirementUids": [],
+            "adrRefs": ["ADR-029"],
+            "summary": "Run whose unobserved review station was waived.",
+            "changelogMode": "release-please",
+            "changes": ["Recorded the waived station"],
+            "traceability": {"implements": [], "tests": []},
+            "prePushReviews": "waived",
+        })
+        self.assertIn(
+            "- [x] Pre-push code review and test-quality review ran except review stations waived by "
+            "recorded user authorization; all rendered findings fixed or dispositioned",
+            body,
+            "renderer did not emit the waived-station review attestation",
+        )
+        violations = check_pr_body(body)
+        self.assertEqual(
+            violations,
+            [],
+            f"waived-station body rejected by check_pr_body: {[v.code for v in violations]}",
+        )
+
     def test_pr_body_missing_every_review_attestation_is_rejected(self):
         # The attestation is never optional. A body carrying the policy-command
         # line but neither review attestation must still fail the gate.

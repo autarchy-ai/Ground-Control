@@ -951,6 +951,46 @@ under `hard_external_dependency`, naming the station, the attempt count, and the
 stable failure classes. It never asks an operator to authorize a `wontfix` for a
 defect nobody observed. `wontfix` authorization is unchanged.
 
+**Later observations and waivers (issue #1578).** A verdict rendered in a later
+invocation also resolves the station's earlier open obligations. Before the
+first attempt, the cycle wrapper reads the trusted ledger. Once the station
+renders a verdict, it binds every open obligation for that station to the new
+findings record. Each validated pre-push findings record starts with a
+server-written `gc:station-verdict` marker. Replay accepts the superseding
+`reobserved` resolution only when that record comes after the obligation's
+latest opening, is posted by the trusted MCP identity, and names the same issue
+and station. A cycle marker alone is never a verdict. Legacy obligations without
+such a record stay open.
+
+When a station cannot be observed and a repository writer decides the run may
+continue without it, the writer comments exactly:
+
+```text
+/ground-control waive-station <station_id> <OBLIGATION_ID>...
+```
+
+The agent then passes that comment's URL to `gc_waive_station_observation`. The
+tool posts a `waived` resolution, bound to the command, for each named open
+obligation. Replay re-verifies the command's exact text, its author's write
+permission, and that it was posted after each obligation's latest opening. The
+waiver means *no verdict produced; continuation authorized*. It never means
+clean, completed, or passed, and it dispositions no finding.
+
+The final report lists waived stations from the verified record and refuses a
+`reviews[]` entry for a waived station that was never observed. A verified codex
+waiver is the only substitute for the mandatory codex review entry. Render the
+PR body with `pre_push_reviews: "waived"` in that case:
+`gc_create_synchronized_implement_pr` refuses `completed` while a waived station
+stands unobserved, and refuses `waived` without a verified waiver. CI,
+SonarCloud, and every other gate still apply.
+
+The server never posts a `/ground-control` command itself. The shared `gh`
+execution primitive refuses any body with a line that starts with
+`/ground-control`, so a command on the thread can only have come from a person
+(the waiver, `authorize-wontfix`, and `authorize-scope-removal` families alike).
+The waiver tool, the final report, completion, and the station seam read the
+ledger only from the MCP launch workspace.
+
 Measurement follows the same split: every real execution is one ADR-090 station
 attempt, `not_evaluable` for each non-verdict and `pass` or `fail` for the
 observed one. `not_evaluable` stays outside the first-pass-yield and
@@ -981,4 +1021,6 @@ structured two-step record: an authorized repository writer posts exactly
 `/ground-control authorize-wontfix <OBLIGATION_ID>`, then
 `gc_authorize_execution_obligation_wontfix` emits the durable authorization
 record referenced by the resolution. Posting and replay re-verify the exact
-source command, repository permission, and record binding.
+source command, repository permission, and record binding. A `station_observation`
+obligation is not a `wontfix` target: its only user-authorized resolution is
+`gc_waive_station_observation` (see *Unobserved review stations*).

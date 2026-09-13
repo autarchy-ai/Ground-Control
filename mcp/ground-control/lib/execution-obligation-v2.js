@@ -30,16 +30,39 @@ export const EXECUTION_OBLIGATION_KINDS = Object.freeze(["station_observation"])
  */
 export const STATION_OBSERVATION_DISPOSITION = "reobserved";
 
+/**
+ * The disposition that records an explicit user waiver of a missing observation (issue #1578).
+ *
+ * Station-only and tool-posted, like `reobserved`: it states that no verdict was produced and that
+ * a repository writer authorized continuing without one. It never means clean, passed, fixed, or
+ * reviewed, and it is not a finding disposition.
+ */
+export const STATION_WAIVER_DISPOSITION = "waived";
+
 /** Every disposition a v2 marker may carry, agent-selectable or tool-attested. */
 export const EXECUTION_OBLIGATION_V2_DISPOSITIONS = Object.freeze([
   "fix",
   "wontfix",
   "not-applicable",
   STATION_OBSERVATION_DISPOSITION,
+  STATION_WAIVER_DISPOSITION,
 ]);
 
+// Wire compatibility (issue #1578): `observed_cycle`, `authorization_comment_id`, and `waived` are
+// additive. A reader built before them does not match such a resolution at all, so it keeps the
+// obligation open and keeps blocking — an unknown resolution can never confer clearance.
 const V2_MARKER_RE =
-  /<!--\s*gc:execution-obligation\s+schema="gc\.implement\.execution-obligation\/v2"\s+issue="(\d+)"\s+id="([A-Z0-9][A-Z0-9._-]{0,63})"\s+event="(opened|escalated|resolved)"\s+kind="(station_observation)"\s+station="([a-z][a-z0-9_]{0,63})"\s+cycle="(\d+)"(?:\s+disposition="(fix|wontfix|not-applicable|reobserved)")?(?:\s+observation_record_id="(\d+)")?\s*-->/g;
+  /<!--\s*gc:execution-obligation\s+schema="gc\.implement\.execution-obligation\/v2"\s+issue="(\d+)"\s+id="([A-Z0-9][A-Z0-9._-]{0,63})"\s+event="(opened|escalated|resolved)"\s+kind="(station_observation)"\s+station="([a-z][a-z0-9_]{0,63})"\s+cycle="(\d+)"(?:\s+disposition="(fix|wontfix|not-applicable|reobserved|waived)")?(?:\s+observation_record_id="(\d+)")?(?:\s+observed_cycle="(\d+)")?(?:\s+authorization_comment_id="(\d+)")?\s*-->/g;
+
+export const STATION_VERDICT_SCHEMA = "gc.implement.station-verdict/v1";
+
+// Anchored to the start of the body: a findings record carries reviewer-authored text after its
+// first line, and only the server-written first line may name the verdict it records.
+const LEADING_STATION_VERDICT_RE =
+  /^<!--\s*gc:station-verdict\s+schema="gc\.implement\.station-verdict\/v1"\s+issue="(\d+)"\s+station="([a-z][a-z0-9_]{0,63})"\s+cycle="(\d+)"\s*-->/;
+
+const STATION_WAIVER_COMMAND_RE =
+  /^\/ground-control waive-station ([a-z][a-z0-9_]{0,63})((?: [A-Z0-9][A-Z0-9._-]{0,63}){1,10})$/;
 
 /**
  * Deterministic obligation id for one station's missing observation at one logical cycle.
@@ -62,16 +85,54 @@ export function buildExecutionObligationV2Marker({
   logicalCycle,
   disposition = null,
   observationRecordId = null,
+  observedCycle = null,
+  authorizationCommentId = null,
 }) {
-  const dispositionAttribute = disposition == null ? "" : ` disposition="${disposition}"`;
-  const recordAttribute = observationRecordId == null
-    ? ""
-    : ` observation_record_id="${observationRecordId}"`;
+  const attribute = (key, value) => (value == null ? "" : ` ${key}="${value}"`);
   return (
     `<!-- gc:execution-obligation schema="${EXECUTION_OBLIGATION_SCHEMA_V2}" ` +
     `issue="${issueNumber}" id="${obligationId}" event="${event}" kind="${kind}" ` +
-    `station="${stationId}" cycle="${logicalCycle}"${dispositionAttribute}${recordAttribute} -->`
+    `station="${stationId}" cycle="${logicalCycle}"` +
+    attribute("disposition", disposition) +
+    attribute("observation_record_id", observationRecordId) +
+    attribute("observed_cycle", observedCycle) +
+    attribute("authorization_comment_id", authorizationCommentId) +
+    " -->"
   );
+}
+
+/** First line of a station's validated findings record: the verdict it is evidence of. */
+export function buildStationVerdictMarker({ issueNumber, stationId, logicalCycle }) {
+  return (
+    `<!-- gc:station-verdict schema="${STATION_VERDICT_SCHEMA}" issue="${issueNumber}" ` +
+    `station="${stationId}" cycle="${logicalCycle}" -->`
+  );
+}
+
+/** The verdict a record's leading marker names, or null when the record carries none. */
+export function parseLeadingStationVerdictMarker(body) {
+  const match = typeof body === "string" ? body.match(LEADING_STATION_VERDICT_RE) : null;
+  if (match == null) return null;
+  return { issue_number: Number(match[1]), station: match[2], cycle: Number(match[3]) };
+}
+
+/** The exact user command that authorizes waiving named observations of one station. */
+export function buildStationWaiverCommand({ stationId, obligationIds }) {
+  return `/ground-control waive-station ${stationId} ${obligationIds.join(" ")}`;
+}
+
+/**
+ * Parse an exact waiver command, or null.
+ *
+ * The whole trimmed body must be the command: approval prose, quotations, questions, and reports
+ * of someone else's approval are never authority. Duplicate ids make the scope ambiguous and fail.
+ */
+export function parseStationWaiverCommand(body) {
+  const match = typeof body === "string" ? body.trim().match(STATION_WAIVER_COMMAND_RE) : null;
+  if (match == null) return null;
+  const obligationIds = match[2].trim().split(" ");
+  if (new Set(obligationIds).size !== obligationIds.length) return null;
+  return { station: match[1], obligation_ids: obligationIds };
 }
 
 /** Parse v2 events out of one comment body. Shape matches the v1 events, plus the v2 fields. */
@@ -90,7 +151,8 @@ export function parseExecutionObligationV2Markers(body, issueNumber) {
       cycle: Number(match[6]),
       disposition: match[7] ?? null,
       observation_record_id: match[8] == null ? null : Number(match[8]),
-      authorization_comment_id: null,
+      observed_cycle: match[9] == null ? null : Number(match[9]),
+      authorization_comment_id: match[10] == null ? null : Number(match[10]),
     });
   }
   return events;
@@ -130,12 +192,37 @@ export function hasVerifiedStationReobservation(event, markerComment, comments, 
  */
 export function canReobservationClose(current, event) {
   return (
+    bindsToStationObservation(current, event)
+    && Number.isInteger(event.observation_record_id)
+    && (event.observed_cycle == null || event.observed_cycle >= current.cycle)
+  );
+}
+
+/** Whether a `waived` resolution names the obligation it replays against and cites authority. */
+export function canStationWaiverClose(current, event) {
+  return (
+    bindsToStationObservation(current, event)
+    && event.observation_record_id == null
+    && Number.isInteger(event.authorization_comment_id)
+  );
+}
+
+/** The only resolutions that terminate a station-observation obligation. */
+export function canStationResolutionClose(current, event) {
+  if (event.disposition === STATION_OBSERVATION_DISPOSITION) {
+    return canReobservationClose(current, event);
+  }
+  if (event.disposition === STATION_WAIVER_DISPOSITION) return canStationWaiverClose(current, event);
+  return false;
+}
+
+function bindsToStationObservation(current, event) {
+  return (
     current?.kind === "station_observation"
     && current.schema_version === 2
     && event.schema_version === 2
     && event.kind === "station_observation"
     && event.station === current.station
     && event.cycle === current.cycle
-    && Number.isInteger(event.observation_record_id)
   );
 }

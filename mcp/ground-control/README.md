@@ -157,6 +157,7 @@ The complete keep/delete and placement record is in
 | `gc_review_cap_disposition` | Record a review-cap disposition |
 | `gc_record_execution_obligation` | Append to the execution-obligation ledger |
 | `gc_authorize_execution_obligation_wontfix` | Record the user's authorization to close an obligation unfixed |
+| `gc_waive_station_observation` | Record a writer's exact waiver of a review station that rendered no verdict; reported as no verdict, never as a completed review |
 | `gc_codex_job` | Poll or cancel any async review, preflight, or mechanical job |
 
 **Durable issue-thread records (`tools/post-decision-record.js`)**

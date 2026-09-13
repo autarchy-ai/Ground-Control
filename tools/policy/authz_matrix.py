@@ -88,14 +88,19 @@ def _check_adr_impact(body: str) -> Violation | None:
 # `gc_run_sweep` lines named tools removed with the #1500 teardown.
 PR_BODY_POLICY_CHECK_LINE = "- [x] Configured repository policy command passes"
 
-# The pre-push review attestation (Steps 6.5/6.6) has two accurate forms
-# (issue #1551): /implement runs both reviewers before the body is rendered,
-# while /quickfix leaves them off unless the user passes --review. A body must
-# carry exactly one of these; the attestation is never optional, only accurate.
+# The pre-push review attestation (Steps 6.5/6.6) has three accurate forms
+# (issues #1551, #1578): /implement runs both reviewers before the body is
+# rendered, /quickfix leaves them off unless the user passes --review, and a run
+# whose unobserved station was waived records that instead. A body must carry
+# exactly one of these; the attestation is never optional, only accurate.
 PR_BODY_REVIEW_CHECK_LINES = (
     "- [x] Pre-push code review and test-quality review completed; all findings fixed or dispositioned",
     "- [x] Pre-push code review and test-quality review not run for this lane; "
     "CI and repository policy gates enforced",
+    # Issue #1578: a run whose unobserved review station was waived by a recorded writer command.
+    # PR creation verifies the waiver against the issue-thread ledger before accepting this line.
+    "- [x] Pre-push code review and test-quality review ran except review stations waived by "
+    "recorded user authorization; all rendered findings fixed or dispositioned",
 )
 
 

@@ -22,7 +22,61 @@ export {
   parseCodexTimeoutMs,
 } from "./model-subprocess.js";
 
-export const execFile = promisify(execFileCb);
+const execFileUnguarded = promisify(execFileCb);
+
+// Ground Control authorization commands (`/ground-control waive-station`, `authorize-wontfix`,
+// `authorize-scope-removal`) are authority only because a human with write access typed them. The
+// server posts under a write-permitted identity that is often that same account, so replay cannot
+// tell the two apart by author (issue #1578). The guarantee lives here instead, on the boundary
+// every server-side GitHub write passes through: a `gh` call that would publish a body carrying a
+// command line is refused before it spawns, whatever tool assembled the body.
+const GROUND_CONTROL_COMMAND_LINE_RE = /^\s*\/ground-control\s/m;
+const GH_BODY_FIELD_FLAGS = new Set(["-f", "-F", "--field", "--raw-field"]);
+const GH_BODY_FLAGS = new Set(["-b", "--body"]);
+
+// `-F`/`--field` interpolate `@path` as a file's contents; `-f`/`--raw-field` publish it literally.
+const GH_INTERPOLATING_FIELD_FLAGS = new Set(["-F", "--field"]);
+
+/** The body a gh argv token publishes, as `{ body, interpolated }`, or null when it publishes none. */
+function publishedBodyAt(args, index) {
+  const arg = String(args[index]);
+  const next = String(args[index + 1] ?? "");
+  if (GH_BODY_FIELD_FLAGS.has(arg)) {
+    return next.startsWith("body=")
+      ? { body: next.slice("body=".length), interpolated: GH_INTERPOLATING_FIELD_FLAGS.has(arg) }
+      : null;
+  }
+  if (GH_BODY_FLAGS.has(arg)) return { body: next, interpolated: false };
+  const field = arg.match(/^(--field|--raw-field)=body=([^]*)$/);
+  if (field) return { body: field[2], interpolated: GH_INTERPOLATING_FIELD_FLAGS.has(field[1]) };
+  const body = arg.match(/^--body=([^]*)$/);
+  return body ? { body: body[1], interpolated: false } : null;
+}
+
+/** Refusal message when a gh argv would publish a Ground Control authorization command, else null. */
+export function findGroundControlCommandInGhArgv(args) {
+  for (let index = 0; index < (args?.length ?? 0); index += 1) {
+    const published = publishedBodyAt(args, index);
+    if (published == null) continue;
+    // An interpolated `body=@path` publishes a file this check cannot see; the server never needs it.
+    const fileSourced = published.interpolated && published.body.startsWith("@");
+    if (fileSourced || GROUND_CONTROL_COMMAND_LINE_RE.test(published.body)) {
+      return "refusing to publish a Ground Control authorization command under the MCP identity: " +
+        "only a human with write access may post a '/ground-control' command";
+    }
+  }
+  return null;
+}
+
+export function execFile(file, args, options) {
+  if (file === "gh") {
+    const refusal = findGroundControlCommandInGhArgv(args);
+    if (refusal) {
+      return Promise.reject(Object.assign(new Error(refusal), { code: "GC_AUTHORIZATION_COMMAND_REFUSED" }));
+    }
+  }
+  return execFileUnguarded(file, args, options);
+}
 export const GROUND_CONTROL_PROJECT_RE = /^[a-z0-9][a-z0-9-]*$/;
 // Shared with the .ground-control.yaml parser and the repo-identity resolver. It lives beside its
 // sibling rather than privately in whichever module happened to need it first: a second copy is how
@@ -392,6 +446,7 @@ export {
   PR_BODY_REVIEW_CHECK_LINES,
   PR_BODY_REVIEW_CHECK_LINE_COMPLETED,
   PR_BODY_REVIEW_CHECK_LINE_NOT_RUN,
+  PR_BODY_REVIEW_CHECK_LINE_WAIVED,
   checkPrBodyShape,
   extractRequirementUidTokensFromSection,
   prBodyGcCheckLines,

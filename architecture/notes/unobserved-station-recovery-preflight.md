@@ -6,6 +6,13 @@ Requirement: none
 This note records the architecture boundaries for recovering a workflow station
 that produced no verdict. It is not an implementation plan.
 
+Issue #1578's [completion preflight](waived-station-completion-preflight.md)
+defines the proposed station-only waiver and durable recovery extension to this
+contract. It also identifies retired backend and measurement guidance below;
+the current MCP-only architecture governs those boundaries. The extension
+shipped with issue #1578; ADR-029's 2026-09-13 amendment is the authoritative
+contract.
+
 ## Decisions
 
 ### Keep attempt, cycle, obligation, and finding state separate

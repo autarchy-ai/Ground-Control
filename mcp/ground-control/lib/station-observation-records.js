@@ -98,9 +98,11 @@ export async function postStationObservationOpened({
  *
  * `reobserved` states only that the gate was finally observed. A re-observed verdict that found
  * problems still leaves every one of those findings under the existing disposition rules.
+ * `observedCycle` is the cycle whose findings record is the evidence; it may be later than the
+ * obligation's own cycle when an earlier invocation left the obligation open (issue #1578).
  */
 export async function postStationReobservation({
-  repoRoot, owner, name, issueNumber, recordUrl, stationObservation,
+  repoRoot, owner, name, issueNumber, recordUrl, stationObservation, observedCycle,
 }) {
   const observationRecordId = commentIdFromUrl(recordUrl);
   if (!Number.isInteger(observationRecordId)) {
@@ -117,17 +119,18 @@ export async function postStationReobservation({
       logicalCycle,
       disposition: "reobserved",
       observationRecordId,
+      observedCycle,
     }),
     "",
     header(stationId, logicalCycle, "Re-observed"),
     "",
     "**Disposition:** reobserved  ",
-    `**Corrective action:** a bounded automatic re-attempt observed the station and it rendered a verdict.  `,
+    `**Corrective action:** the station was observed at cycle ${observedCycle} and rendered a verdict.  `,
     `**Evidence:** ${recordUrl}`,
     "",
     "### Verification",
     "",
-    "- The linked findings record is this station's validated verdict for this logical cycle.",
+    "- The linked findings record is this station's validated verdict, recorded after this obligation opened.",
     "- Re-observation closes only the missing-observation obligation. Any findings in that record",
     "  remain subject to the existing `fix` / `wontfix` / `not-applicable` rules.",
   ].join("\n");
@@ -135,26 +138,38 @@ export async function postStationReobservation({
 }
 
 /**
- * Resolve an open observation obligation for codex, between its findings record and cycle marker.
+ * Resolve every open observation obligation for a station, between its findings record and cycle
+ * marker.
  *
- * Returns null when there is nothing to do or the resolution landed, and the caller's structured
- * post-failure envelope otherwise. Keeping the guard here leaves the runner a single branch, and
- * leaves the write-ordering rule stated in one place for both stations.
+ * The obligations come from the durable ledger, not only the current invocation, so a verdict
+ * rendered after a restart still reconciles the outage that preceded it (issue #1578). An
+ * obligation whose cycle is later than the observed one cannot be evidenced by this record and is
+ * left for its own cycle.
+ *
+ * Returns null when there is nothing to do or every resolution landed, and the caller's structured
+ * post-failure envelope otherwise. Keeping the guard here leaves both runners a single branch, and
+ * leaves the write-ordering rule stated in one place.
  */
 export async function guardStationReobservation({
-  stationObservation, findingsCommentUrl, repoRoot, issueNumber, owner, name, buildFailure,
+  stationObservations, observedCycle, findingsCommentUrl, repoRoot, issueNumber, owner, name,
+  buildFailure,
 }) {
-  if (stationObservation == null || findingsCommentUrl == null) return null;
-  const resolution = await postStationReobservation({
-    repoRoot, owner, name, issueNumber, recordUrl: findingsCommentUrl, stationObservation,
-  });
-  if (resolution.ok) return null;
-  return buildFailure(
-    `the findings record posted but the open station-observation obligation ` +
-    `'${stationObservation.obligationId}' could not be resolved: ${resolution.message}. No cycle ` +
-    `marker has been written, so the cap is untouched and re-running is safe.`,
-    resolution.message,
-  );
+  if (findingsCommentUrl == null || !Number.isInteger(observedCycle)) return null;
+  const pending = (stationObservations || []).filter((o) => o.logicalCycle <= observedCycle);
+  for (const stationObservation of pending) {
+    const resolution = await postStationReobservation({
+      repoRoot, owner, name, issueNumber, recordUrl: findingsCommentUrl, stationObservation,
+      observedCycle,
+    });
+    if (resolution.ok) continue;
+    return buildFailure(
+      `the findings record posted but the open station-observation obligation ` +
+      `'${stationObservation.obligationId}' could not be resolved: ${resolution.message}. No cycle ` +
+      `marker has been written, so the cap is untouched and re-running is safe.`,
+      resolution.message,
+    );
+  }
+  return null;
 }
 
 /**

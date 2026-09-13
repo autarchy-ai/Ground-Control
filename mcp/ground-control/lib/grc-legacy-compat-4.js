@@ -10,7 +10,8 @@ import { parsePhaseMarkers } from "./codex-review.js";
 import { MCP_LAUNCH_CWD, evaluateExecutionObligations, isDefaultImplementHooksPath, parseExecutionObligationMarkers } from "./codex-workflow.js";
 import { ENRICH_THREAD_PAGE_CAP } from "./grc-legacy-compat-2.js";
 import { getAuthenticatedGitHubLogin, getOwnerRepo, hasVerifiedStructuredWontfixAuthorization, readIssueCommentsWithAuthors, resolveExecutionObligationTrust } from "./grc-legacy-compat-3.js";
-import { STATION_OBSERVATION_DISPOSITION, hasVerifiedStationReobservation } from "./execution-obligation-v2.js";
+import { EMPTY_STATION_EVIDENCE, deriveStationObservationEvidence } from "./station-observation-evidence.js";
+import { filterAttestedStationResolutions } from "./station-observation-replay.js";
 import { execFile, formatCommandFailure } from "./runtime-primitives.js";
 export * from "./grc-legacy-compat-7.js";
 
@@ -209,7 +210,7 @@ export async function readTrustedExecutionObligationState(repoRoot, owner, name,
     }))
     .filter(({ events }) => events.length > 0);
   if (markerComments.length === 0) {
-    return { ok: true, ...evaluateExecutionObligations([]) };
+    return { ok: true, ...evaluateExecutionObligations([]), station_evidence: EMPTY_STATION_EVIDENCE };
   }
   const trust = await resolveExecutionObligationTrust(
     repoRoot,
@@ -226,7 +227,15 @@ export async function readTrustedExecutionObligationState(repoRoot, owner, name,
         "An execution-obligation marker was authored outside the repository's authorized signer set",
     };
   }
-  const trustedEvents = await filterAttestedReobservations(repoRoot, markerComments, comments);
+  // `reobserved` and `waived` close an obligation without a fixed problem, so each must be proven
+  // by the thread itself; unproven ones are dropped and their obligations stay open (#1476, #1578).
+  const replay = await filterAttestedStationResolutions({
+    markerComments,
+    comments,
+    trust,
+    resolveTrustedLogin: () => getAuthenticatedGitHubLogin(repoRoot),
+  });
+  const trustedEvents = replay.events;
   for (const event of trustedEvents) {
     if (event.event !== "resolved" || event.disposition !== "wontfix") continue;
     const authorization = comments.find(
@@ -250,44 +259,20 @@ export async function readTrustedExecutionObligationState(repoRoot, owner, name,
       };
     }
   }
+  const evaluation = evaluateExecutionObligations(trustedEvents);
   return {
     ok: true,
-    ...evaluateExecutionObligations(trustedEvents),
+    ...evaluation,
+    station_evidence: deriveStationObservationEvidence({
+      obligations: evaluation.obligations,
+      openedIndex: replay.openedIndex,
+      comments,
+      issueNumber,
+      trustedLogin: replay.trustedLogin,
+      owner,
+      name,
+    }),
   };
-}
-/**
- * Drop `reobserved` resolutions that are not attested by the trusted MCP posting identity.
- *
- * Dropped rather than raised as an error: an unattested marker leaves its obligation open, which
- * keeps completion blocked and the problem visible. Failing the whole read instead would let
- * anyone who can comment on the issue wedge the run by pasting a marker-shaped record.
- *
- * The trusted login is resolved only when such a resolution is actually present, so the common
- * path keeps its current number of GitHub calls.
- */
-async function filterAttestedReobservations(repoRoot, markerComments, comments) {
-  const events = markerComments.flatMap(({ events: parsed }) => parsed);
-  const hasReobservation = events.some(
-    (event) => event.event === "resolved"
-      && event.disposition === STATION_OBSERVATION_DISPOSITION,
-  );
-  if (!hasReobservation) return events;
-  const trustedLogin = await getAuthenticatedGitHubLogin(repoRoot);
-  const attested = [];
-  for (const { comment, events: parsed } of markerComments) {
-    for (const event of parsed) {
-      const isReobservation = event.event === "resolved"
-        && event.disposition === STATION_OBSERVATION_DISPOSITION;
-      if (
-        isReobservation
-        && !hasVerifiedStationReobservation(event, comment, comments, trustedLogin)
-      ) {
-        continue;
-      }
-      attested.push(event);
-    }
-  }
-  return attested;
 }
 /**
  * Phases whose completion markers were authored by someone with repository permission.

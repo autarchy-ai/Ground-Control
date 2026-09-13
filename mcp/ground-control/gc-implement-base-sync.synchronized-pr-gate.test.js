@@ -75,6 +75,12 @@ function context(baseBranch = "dev", workflowOverrides = {}) {
   };
 }
 
+// The ledger read is the #1578 attestation check; these tests exercise the sync gate, so the
+// thread carries no station waiver and the default completed attestation is accurate.
+async function noStationWaivers() {
+  return { ok: true, evidence: { waivers: [], unobserved_waived_stations: [] } };
+}
+
 // The issue Requirements section is the server-side binding for a requested
 // requirement identity (issue #1434).
 function requirementsThreadReader(body = "## Requirements\n- DSL-437\n") {
@@ -114,6 +120,33 @@ describe("synchronized PR gate", () => {
     assert.equal(validateImplementPrTitle("fix/refactor: merge dev").ok, false);
   });
 
+  it("refuses a completed attestation while the thread records a waived station (#1578)", async () => {
+    const calls = [];
+    const result = await runCreateSynchronizedImplementPr({
+      repoPath: REPO_ROOT,
+      issueNumber: ISSUE,
+      branchName: BRANCH,
+      recordId: RECORD,
+      title: "feat: require synchronized implement PRs",
+      body: renderedPrBody(),
+    }, {
+      workspaceAuthorizationResolver: workspaceAuthorization,
+      stationEvidenceReader: async () => ({
+        ok: true,
+        evidence: { waivers: [], unobserved_waived_stations: ["test_quality_review"] },
+      }),
+      commandRunner: async (command, args) => {
+        calls.push([command, args]);
+        return { stdout: "" };
+      },
+      contextResolver: async () => context(),
+      issueThreadReader: requirementsThreadReader(),
+    });
+    assert.equal(result.error, "implement_pr_review_attestation_inaccurate");
+    // Refused before synchronization or any GitHub write.
+    assert.deepEqual(calls, []);
+  });
+
   it("refuses PR creation on an invalid repository context (#1429)", async () => {
     const calls = [];
     const result = await runCreateSynchronizedImplementPr({
@@ -125,6 +158,7 @@ describe("synchronized PR gate", () => {
       body: renderedPrBody(),
     }, {
       workspaceAuthorizationResolver: workspaceAuthorization,
+      stationEvidenceReader: noStationWaivers,
       commandRunner: async (command, args) => {
         calls.push([command, args]);
         return { stdout: "" };
@@ -169,6 +203,7 @@ describe("synchronized PR gate", () => {
       body: renderedPrBody(),
     }, {
       workspaceAuthorizationResolver: workspaceAuthorization,
+      stationEvidenceReader: noStationWaivers,
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
@@ -227,6 +262,7 @@ describe("synchronized PR gate", () => {
       body: renderedPrBody(),
     }, {
       workspaceAuthorizationResolver: workspaceAuthorization,
+      stationEvidenceReader: noStationWaivers,
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
@@ -306,6 +342,7 @@ describe("synchronized PR gate", () => {
       body: renderedPrBody(),
     }, {
       workspaceAuthorizationResolver: workspaceAuthorization,
+      stationEvidenceReader: noStationWaivers,
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
@@ -375,6 +412,7 @@ describe("synchronized PR gate", () => {
       body: renderedPrBody(),
     }, {
       workspaceAuthorizationResolver: workspaceAuthorization,
+      stationEvidenceReader: noStationWaivers,
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),

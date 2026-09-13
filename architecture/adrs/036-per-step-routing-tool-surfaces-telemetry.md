@@ -989,3 +989,15 @@ A retry therefore cannot build silently on partial output from an attempt whose
 mechanical result was failure. The `preflight` phase marker is still not
 written on a failed run, and no gate is weakened: the run remains a failure
 that must be re-run, only now with the evidence to diagnose it.
+
+**2026-09-13 (issue #1578, station waiver surface).** `gc_waive_station_observation`
+is added as a thin `zod` registration (`tools/station-observation.js`) over
+`lib/station-observation-waiver.js`. It introduces no routing stage and no
+telemetry field. It binds `repo_path` to the MCP launch workspace, accepts only
+a registered station id and a bounded set of obligation ids, and treats the
+exact writer-authored `/ground-control waive-station` comment as its only
+authority. It performs the one privileged write itself, with fixed argv, then
+reads the ledger back before reporting success. `gc_render_pr_body`'s
+`pre_push_reviews` enum gains `waived`, which `gc_create_synchronized_implement_pr`
+checks against the issue-thread ledger immediately before the PR write. The
+record semantics are in the ADR-029 amendment of the same date.

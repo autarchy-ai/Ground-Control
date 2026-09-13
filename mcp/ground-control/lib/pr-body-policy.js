@@ -29,11 +29,22 @@ export const PR_BODY_REVIEW_CHECK_LINE_COMPLETED =
   "- [x] Pre-push code review and test-quality review completed; all findings fixed or dispositioned";
 export const PR_BODY_REVIEW_CHECK_LINE_NOT_RUN =
   "- [x] Pre-push code review and test-quality review not run for this lane; CI and repository policy gates enforced";
+// A third accurate form (issue #1578): a station that rendered no verdict and was waived by a
+// recorded writer command did not complete. Its wording must never contain the completed line,
+// so the shape gate cannot mistake one for the other. PR creation verifies it against the ledger.
+export const PR_BODY_REVIEW_CHECK_LINE_WAIVED =
+  "- [x] Pre-push code review and test-quality review ran except review stations waived by recorded user authorization; all rendered findings fixed or dispositioned";
 export const PR_BODY_REVIEW_CHECK_LINES = Object.freeze([
   PR_BODY_REVIEW_CHECK_LINE_COMPLETED,
   PR_BODY_REVIEW_CHECK_LINE_NOT_RUN,
+  PR_BODY_REVIEW_CHECK_LINE_WAIVED,
 ]);
-export const PR_BODY_PRE_PUSH_REVIEW_STATES = Object.freeze(["completed", "not_run"]);
+export const PR_BODY_PRE_PUSH_REVIEW_STATES = Object.freeze(["completed", "not_run", "waived"]);
+const PR_BODY_REVIEW_CHECK_LINE_BY_STATE = Object.freeze({
+  completed: PR_BODY_REVIEW_CHECK_LINE_COMPLETED,
+  not_run: PR_BODY_REVIEW_CHECK_LINE_NOT_RUN,
+  waived: PR_BODY_REVIEW_CHECK_LINE_WAIVED,
+});
 // Only the lane whose contract makes the pre-push reviewers optional may render
 // the "not run" attestation; /implement mandates both, so it can never claim it.
 export const PR_BODY_REVIEWS_OPTIONAL_LANE = "quickfix";
@@ -41,7 +52,7 @@ export const PR_BODY_LANES = Object.freeze(["implement", PR_BODY_REVIEWS_OPTIONA
 export function prBodyGcCheckLines(prePushReviews) {
   return [
     PR_BODY_POLICY_CHECK_LINE,
-    prePushReviews === "not_run" ? PR_BODY_REVIEW_CHECK_LINE_NOT_RUN : PR_BODY_REVIEW_CHECK_LINE_COMPLETED,
+    PR_BODY_REVIEW_CHECK_LINE_BY_STATE[prePushReviews] ?? PR_BODY_REVIEW_CHECK_LINE_COMPLETED,
   ];
 }
 const PR_BODY_REQUIRED_HEADERS = Object.freeze([

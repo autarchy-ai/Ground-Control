@@ -167,7 +167,10 @@ these inputs decide which of the two accurate statements it carries. Omitting
 them renders the `/implement` attestation that both reviewers completed, which
 on a default `/quickfix` run claims a verification the run never performed.
 `"not_run"` is accepted only with `lane: "quickfix"` - the lane whose contract
-makes the reviewers optional. The attestation itself is never omitted.
+makes the reviewers optional. The attestation itself is never omitted. When a
+`--review` run's station was waived through `gc_waive_station_observation`,
+pass `"waived"` instead (issue #1578); PR creation verifies it against the
+issue-thread ledger.
 
 The renderer's `change_class` is typically `source` for `/quickfix` runs; `doc-only` for pure documentation fixes; `source+migration` is unusual for `/quickfix` and is a signal that the run probably wanted `/implement` instead.
 

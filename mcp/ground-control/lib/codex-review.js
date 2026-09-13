@@ -314,9 +314,13 @@ export function buildCodexReviewFindingsComments({
   postedComments = [],
   diffMode = null,
   reviewCoverage = null,
+  // Server-written first line naming the verdict this record evidences (issue #1578). It is
+  // inside the header so every size budget below already accounts for it.
+  stationVerdictMarker = null,
 }) {
   const modeLabel = mode === "pre-push" ? "pre-push" : "post-push";
   const headerLine = [
+    ...(stationVerdictMarker ? [stationVerdictMarker, ""] : []),
     buildHeaderLine({ modeLabel, cycleNumber, cap, issueNumber, prNumber, branch }),
     // The durable record states how the diff reached the reviewers, so a
     // reader can tell a fully inlined review from a sliced one without

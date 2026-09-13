@@ -18,6 +18,7 @@ import { runReviewerOverSlices } from "./grc-legacy-compat-6.js";
 import { readVocabularyForReview } from "./plan-posting.js";
 import { evaluateCodexReviewCycleCap } from "./repo-context-2.js";
 import { enforcePostPushReviewGate, enforcePrePushReviewCap } from "./codex-review-cap.js";
+import { buildStationVerdictMarker } from "./execution-obligation-v2.js";
 import { guardStationReobservation } from "./station-observation-records.js";
 
 export async function runCodexReview({
@@ -31,8 +32,9 @@ export async function runCodexReview({
   overridePhaseGate = false,
   overridePhaseReason = null,
   signal = undefined,
-  // Open station-observation obligation from an earlier non-verdict attempt (issue #1476).
-  stationObservation = null,
+  // Open station-observation obligations for this station, from this invocation's earlier
+  // non-verdict attempts or recovered from the durable ledger (issues #1476, #1578).
+  stationObservations = [],
 }) {
   const repoRoot = await ensureGitRepo(repoPath);
 
@@ -285,6 +287,14 @@ export async function runCodexReview({
         postedComments: comments,
         diffMode,
         reviewCoverage,
+        // Only a complete pre-push verdict is observation evidence for the station ledger.
+        stationVerdictMarker: uncommitted
+          ? buildStationVerdictMarker({
+            issueNumber: recordIssueNumber,
+            stationId: "codex_review",
+            logicalCycle: cycleSource.cycleNumber,
+          })
+          : null,
       });
       // #804 review-cycle-1 finding 2: route the rendered body through the
       // same sensitive-content filter the inline poster uses, so reviewer-
@@ -333,8 +343,10 @@ export async function runCodexReview({
 
   // Re-observation resolution, bound to the record just posted, BEFORE the cap marker (#1476).
   const failedReobservation = await guardStationReobservation({
-    stationObservation, findingsCommentUrl, repoRoot, issueNumber: recordIssueNumber,
-    owner: cycleSource?.owner, name: cycleSource?.name, buildFailure: postFailed,
+    stationObservations: uncommitted ? stationObservations : [],
+    observedCycle: cycleSource?.cycleNumber, findingsCommentUrl, repoRoot,
+    issueNumber: recordIssueNumber, owner: cycleSource?.owner, name: cycleSource?.name,
+    buildFailure: postFailed,
   });
   if (failedReobservation) return failedReobservation;
 

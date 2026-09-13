@@ -9,6 +9,23 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { buildFinalReport } from "./lib.js";
 
+// A thread with no codex-station waiver keeps the mandatory codex review gate closed. Since
+// issue #1578 the runner consults the ledger before refusing, so these tests pin an unreachable
+// `gh`: an unreadable ledger must keep the refusal, and no test may reach the network.
+async function withUnreachableGh(fn) {
+  const bin = mkdtempSync(join(tmpdir(), "gc-offline-gh-"));
+  writeFileSync(join(bin, "gh"), "#!/bin/sh\necho 'gh: offline' >&2\nexit 1\n", { mode: 0o755 });
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${bin}:${oldPath}`;
+  try {
+    return await fn();
+  } finally {
+    process.env.PATH = oldPath;
+    rmSync(bin, { recursive: true, force: true });
+  }
+}
+
+
 describe("runPostFinalReport gate boundaries", () => {
   // These tests pin the structured-refusal envelopes that the runners emit
   // BEFORE any GitHub side effect. They never run gh — the failure paths
@@ -218,7 +235,7 @@ describe("runPostFinalReport gate boundaries", () => {
   it("final-report refuses with no_reviews when reviews[] is empty (codex cycle-3 F4)", async () => {
     const dir = makeTempRepo();
     try {
-      const r = await import("./lib.js").then(({ runPostFinalReport }) =>
+      const r = await withUnreachableGh(() => import("./lib.js").then(({ runPostFinalReport }) =>
         runPostFinalReport({
           repoPath: dir,
           issueNumber: 1, prNumber: 1,
@@ -227,7 +244,7 @@ describe("runPostFinalReport gate boundaries", () => {
           ciStatus: "green", sonarStatus: "passed",
           plainEnglishOutcome: FINAL_REPORT_OUTCOME,
         })
-      );
+      ));
       assert.equal(r.ok, false);
       assert.equal(r.error, "final_report_no_reviews");
     } finally {
@@ -238,7 +255,7 @@ describe("runPostFinalReport gate boundaries", () => {
   it("final-report refuses with codex_review_missing when no codex entry is present (codex cycle-4 F3)", async () => {
     const dir = makeTempRepo();
     try {
-      const r = await import("./lib.js").then(({ runPostFinalReport }) =>
+      const r = await withUnreachableGh(() => import("./lib.js").then(({ runPostFinalReport }) =>
         runPostFinalReport({
           repoPath: dir,
           issueNumber: 1, prNumber: 1,
@@ -247,7 +264,7 @@ describe("runPostFinalReport gate boundaries", () => {
           ciStatus: "green", sonarStatus: "passed",
           plainEnglishOutcome: FINAL_REPORT_OUTCOME,
         })
-      );
+      ));
       assert.equal(r.ok, false);
       assert.equal(r.error, "final_report_codex_review_missing");
     } finally {
@@ -292,7 +309,7 @@ describe("runPostFinalReport gate boundaries", () => {
   it("final-report still requires codex review entry when lane='implement' (default)", async () => {
     const dir = makeTempRepo();
     try {
-      const r = await import("./lib.js").then(({ runPostFinalReport }) =>
+      const r = await withUnreachableGh(() => import("./lib.js").then(({ runPostFinalReport }) =>
         runPostFinalReport({
           repoPath: dir,
           issueNumber: 1, prNumber: 1,
@@ -302,11 +319,33 @@ describe("runPostFinalReport gate boundaries", () => {
           lane: "implement",
           plainEnglishOutcome: FINAL_REPORT_OUTCOME,
         })
-      );
+      ));
       assert.equal(r.ok, false);
       assert.equal(r.error, "final_report_codex_review_missing");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("renders server-derived waived stations in both lanes, never as review results (issue #1578)", () => {
+    const stationEvidence = {
+      waivers: [{
+        obligation_id: "STATION-OBS-TEST-QUALITY-REVIEW-C1", station: "test_quality_review", cycle: 1,
+        source_comment_url: "https://github.com/fake/repo/issues/1#issuecomment-9", source_author: "maintainer",
+        observed_later: false,
+      }],
+      unobserved_waived_stations: ["test_quality_review"],
+    };
+    const base = {
+      issueNumber: 1, prNumber: 1, requirements: [], reviews: [{ reviewer: "codex", summary: "0 findings" }],
+      ciStatus: "green", sonarStatus: "passed", plainEnglishOutcome: FINAL_REPORT_OUTCOME, stationEvidence,
+    };
+    for (const lane of ["implement", "quickfix"]) {
+      const body = buildFinalReport({ ...base, lane });
+      assert.match(body, /### Waived review stations/, lane);
+      assert.match(body, /`test_quality_review` cycle 1 \(`STATION-OBS-TEST-QUALITY-REVIEW-C1`\) — no verdict; waived by `maintainer`/, lane);
+      assert.ok(!/test_quality_review[^\n]*(clean|passed|completed)/.test(body), lane);
+    }
+    assert.doesNotMatch(buildFinalReport({ ...base, stationEvidence: null }), /Waived review stations/);
   });
 });

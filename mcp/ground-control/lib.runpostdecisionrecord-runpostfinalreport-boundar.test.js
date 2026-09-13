@@ -9,6 +9,23 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { buildFinalReport } from "./lib.js";
 
+// A thread with no codex-station waiver keeps the mandatory codex review gate closed. Since
+// issue #1578 the runner consults the ledger before refusing, so these tests pin an unreachable
+// `gh`: an unreadable ledger must keep the refusal, and no test may reach the network.
+async function withUnreachableGh(fn) {
+  const bin = mkdtempSync(join(tmpdir(), "gc-offline-gh-"));
+  writeFileSync(join(bin, "gh"), "#!/bin/sh\necho 'gh: offline' >&2\nexit 1\n", { mode: 0o755 });
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${bin}:${oldPath}`;
+  try {
+    return await fn();
+  } finally {
+    process.env.PATH = oldPath;
+    rmSync(bin, { recursive: true, force: true });
+  }
+}
+
+
 describe("runPostDecisionRecord / runPostFinalReport boundary checks (codex cycle-2 F3, F5)", () => {
   // These tests pin the structured-refusal envelopes that the runners emit
   // BEFORE any GitHub side effect. They never run gh — the failure paths
@@ -253,7 +270,7 @@ describe("runPostDecisionRecord / runPostFinalReport boundary checks (codex cycl
   it("final-report still requires non-empty reviews when lane is absent", async () => {
     const dir = makeTempRepo();
     try {
-      const r = await import("./lib.js").then(({ runPostFinalReport }) =>
+      const r = await withUnreachableGh(() => import("./lib.js").then(({ runPostFinalReport }) =>
         runPostFinalReport({
           repoPath: dir,
           issueNumber: 1, prNumber: 1,
@@ -263,7 +280,7 @@ describe("runPostDecisionRecord / runPostFinalReport boundary checks (codex cycl
           // lane intentionally omitted — default /implement contract
           plainEnglishOutcome: FINAL_REPORT_OUTCOME,
         })
-      );
+      ));
       assert.equal(r.ok, false);
       assert.equal(r.error, "final_report_no_reviews");
     } finally {

@@ -5,8 +5,8 @@
 // owns what happens around one station's bounded attempts.
 
 import { buildStationObservationObligationId } from "./execution-obligation-v2.js";
-import { getOwnerRepo } from "./grc-legacy-compat-3.js";
-import { ensureGitRepo } from "./grc-legacy-compat-4.js";
+import { resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
+import { readTrustedExecutionObligationState } from "./grc-legacy-compat-4.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { readPriorCodexReviewPrePushCycleCount } from "./codex-verify-cap.js";
 import { readPriorTestQualityReviewCycleCount } from "./test-quality-runner.js";
@@ -40,6 +40,7 @@ export async function _runStationWithObservationLedger({
   issueNumber,
   invokeReview,
   signal,
+  readOpenStationObservations = readOpenStationObservationsFromLedger,
 }) {
   const stationId = REVIEW_STATION_BY_REVIEWER[reviewer];
   let context = null;
@@ -64,17 +65,23 @@ export async function _runStationWithObservationLedger({
   let ledger = null;
   let observationOpened = false;
 
+  // Obligations an EARLIER invocation left open for this station. Without them a verdict rendered
+  // after a restart resolves nothing, and completion stays blocked on a gate that has since been
+  // observed (issue #1578). Recovered from the durable ledger, never from in-memory state.
+  const recovered = (await readOpenStationObservations({ repoPath, issueNumber, stationId }))
+    .filter((o) => o.stationId === stationId);
+
   const run = await runStationWithNonVerdictRetry({
     stationId,
     maxReattempts,
     signal,
     invoke: (attemptOrdinal) =>
       invokeReview({
-        // Only a re-attempt carries the pending obligation: the first attempt has nothing open,
-        // and passing it anyway would post a resolution for an obligation that never existed.
-        stationObservation: observationOpened
-          ? { obligationId, stationId, logicalCycle }
-          : null,
+        // This invocation's own obligation joins only once it was durably opened: passing it
+        // earlier would post a resolution for an obligation that never existed.
+        stationObservations: observationOpened
+          ? mergePendingObservations(recovered, { obligationId, stationId, logicalCycle })
+          : recovered,
         attemptOrdinal,
       }),
     onAttempt: async (attempt) => {
@@ -121,12 +128,50 @@ export async function _runStationWithObservationLedger({
   return { ...run, stationId, logicalCycle, obligationId, observationOpened, exhaustedNonVerdict };
 }
 
-async function _resolveLedgerTarget(repoPath, cached) {
+function mergePendingObservations(recovered, opened) {
+  return recovered.some((o) => o.obligationId === opened.obligationId)
+    ? recovered
+    : [...recovered, opened];
+}
+
+/**
+ * Open station-observation obligations for one station, read from the trusted ledger.
+ *
+ * Fails open to "none": this read only decides which obligations a verdict may resolve. If it
+ * cannot be completed the obligations stay open and completion keeps refusing, so a missed
+ * recovery can never clear a gate.
+ */
+export async function readOpenStationObservationsFromLedger({
+  repoPath, issueNumber, stationId, workspaceAuthorizationResolver = undefined,
+}) {
+  const ledger = await _resolveLedgerTarget(repoPath, null, workspaceAuthorizationResolver);
+  if (ledger == null) return [];
+  try {
+    const state = await readTrustedExecutionObligationState(
+      ledger.repoRoot, ledger.owner, ledger.name, issueNumber,
+    );
+    if (!state.ok) return [];
+    return state.obligations
+      .filter((o) => o.status === "open" && o.kind === "station_observation" && o.station === stationId)
+      .map((o) => ({ obligationId: o.obligation_id, stationId, logicalCycle: o.cycle }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The station ledger's repository, pinned to the MCP launch workspace (issue #1578).
+ *
+ * Every obligation this seam opens, escalates, or recovers is bound to the checkout this server was
+ * launched for; an unauthorized or unreadable checkout yields no ledger target at all.
+ */
+async function _resolveLedgerTarget(repoPath, cached, workspaceAuthorizationResolver = undefined) {
   if (cached != null) return cached;
   try {
-    const repoRoot = await ensureGitRepo(repoPath);
-    const { owner, name } = await getOwnerRepo(repoRoot);
-    return { repoRoot, owner, name };
+    const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+    return repository.ok
+      ? { repoRoot: repository.repoRoot, owner: repository.owner, name: repository.name }
+      : null;
   } catch {
     return null;
   }

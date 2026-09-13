@@ -9,6 +9,7 @@ import { extractInScopeRequirementUids } from "./issue-requirements-scope.js";
 import { runPostFinalReport } from "./doc-coverage-2.js";
 import { getOwnerRepo } from "./grc-legacy-compat-3.js";
 import { ensureGitRepo, readTrustedExecutionObligationState } from "./grc-legacy-compat-4.js";
+import { resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { runGetIssueThread } from "./issue-thread.js";
 import { verifyMergedRequirementState } from "./merged-requirement-state.js";
 import { validateFinalReportInput } from "./plan-posting.js";
@@ -19,18 +20,16 @@ const FULL_GIT_OID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 // Read and gate on the trusted execution-obligation state. Returns `{ ok: true }`
 // when no obligation is open, or `{ earlyReturn }` carrying the exact envelope the
 // caller must return. Extracted to keep runAssertCompletion under the length cap.
-async function _readCompletionObligationState(repoPath, issueNumber, assertions) {
-  let obligationRepoRoot;
-  let obligationOwnerRepo;
-  try {
-    obligationRepoRoot = await ensureGitRepo(repoPath);
-    obligationOwnerRepo = await getOwnerRepo(obligationRepoRoot);
-  } catch (error) {
+async function _readCompletionObligationState(repoPath, issueNumber, assertions, workspaceAuthorizationResolver) {
+  // The ledger decides what completion may clear — including waived stations — so it is read only
+  // from the launch-workspace-authorized repository, never a caller-selected checkout (#1578).
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
     return {
       earlyReturn: {
         ok: false,
-        error: "completion_obligation_state_failed",
-        message: error.message,
+        error: repository.error === "implement_repo_not_git" ? "completion_obligation_state_failed" : "completion_repo_not_authorized",
+        message: repository.message,
         issue_number: issueNumber,
         assertions,
         final_report: null,
@@ -38,9 +37,9 @@ async function _readCompletionObligationState(repoPath, issueNumber, assertions)
     };
   }
   const obligationState = await readTrustedExecutionObligationState(
-    obligationRepoRoot,
-    obligationOwnerRepo.owner,
-    obligationOwnerRepo.name,
+    repository.repoRoot,
+    repository.owner,
+    repository.name,
     issueNumber,
   );
   if (!obligationState.ok) {
@@ -77,14 +76,14 @@ async function _readCompletionObligationState(repoPath, issueNumber, assertions)
 
 // Phase D terminal (phase="pre_merge"): post the readiness record and return its
 // envelope. Extracted from runAssertCompletion (length cap).
-async function _runPreMergeReadiness({ subInput, repoPath, issueNumber, prNumber, assertions }) {
+async function _runPreMergeReadiness({ subInput, repoPath, issueNumber, prNumber, assertions, workspaceAuthorizationResolver }) {
   const readiness = await runPostFinalReport({
     ...subInput,
     repoPath,
     issueNumber,
     prNumber,
     phase: "pre_merge",
-  });
+  }, { workspaceAuthorizationResolver });
   if (!readiness.ok) {
     return {
       ok: false,
@@ -279,13 +278,13 @@ async function _verifyMergedRequirements({ repoPath, issueNumber, mergedPr, requ
 
 // Phase E post-merge completion: post the final report and return its envelope.
 // Extracted from runAssertCompletion (length cap).
-async function _runPostMergeCompletion({ subInput, repoPath, issueNumber, prNumber, assertions }) {
+async function _runPostMergeCompletion({ subInput, repoPath, issueNumber, prNumber, assertions, workspaceAuthorizationResolver }) {
   const report = await runPostFinalReport({
     ...subInput,
     repoPath,
     issueNumber,
     prNumber,
-  });
+  }, { workspaceAuthorizationResolver });
   if (!report.ok) {
     return {
       ok: false,
@@ -310,7 +309,7 @@ async function _runPostMergeCompletion({ subInput, repoPath, issueNumber, prNumb
   };
 }
 
-export async function runAssertCompletion(input) {
+export async function runAssertCompletion(input, { workspaceAuthorizationResolver = undefined } = {}) {
   const {
     repoPath,
     issueNumber,
@@ -367,7 +366,7 @@ export async function runAssertCompletion(input) {
   // /implement run. Both the Phase D readiness record and Phase E completion
   // fail closed while a trusted issue-thread obligation remains open. Cached
   // arrays and caller summaries are intentionally ignored.
-  const obligationCheck = await _readCompletionObligationState(repoPath, issueNumber, assertions);
+  const obligationCheck = await _readCompletionObligationState(repoPath, issueNumber, assertions, workspaceAuthorizationResolver);
   if (obligationCheck.earlyReturn) return obligationCheck.earlyReturn;
 
   // Phase D terminal (phase="pre_merge", issue #963): post the ready-for-review
@@ -380,7 +379,7 @@ export async function runAssertCompletion(input) {
   // on the post-merge DRAFT→ACTIVE transition and is verified by the
   // phase="post_merge" completion.
   if (phase === "pre_merge") {
-    return _runPreMergeReadiness({ subInput, repoPath, issueNumber, prNumber, assertions });
+    return _runPreMergeReadiness({ subInput, repoPath, issueNumber, prNumber, assertions, workspaceAuthorizationResolver });
   }
 
   // Phase E (phase="post_merge", default): the reconciled completion record is
@@ -421,5 +420,5 @@ export async function runAssertCompletion(input) {
   // The override reason is the trusted authorization comment itself, so recording it in
   // the final report keeps the durable record self-consistent.
   if (verify.overridden) subInput.requirementStateOverrideReason = verify.reason;
-  return _runPostMergeCompletion({ subInput, repoPath, issueNumber, prNumber, assertions });
+  return _runPostMergeCompletion({ subInput, repoPath, issueNumber, prNumber, assertions, workspaceAuthorizationResolver });
 }
