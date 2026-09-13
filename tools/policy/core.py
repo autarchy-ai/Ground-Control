@@ -27,7 +27,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ADR_POLICY_PATH = REPO_ROOT / "architecture" / "policies" / "adr-policy.json"
 
 
-BRANCH_PROTECTION_BASELINE_PATH = Path(".github/branch-protection-baseline.json")
 
 
 CODEOWNERS_PATH = Path(".github/CODEOWNERS")
@@ -182,40 +181,6 @@ def extract_requirement_uid_tokens(body: str) -> list[str]:
         if candidate not in tokens:
             tokens.append(candidate)
     return tokens
-
-
-CI_STRICTNESS_BRANCHES = ("main", "dev")
-
-
-# The required status checks recorded in .github/branch-protection-baseline.json.
-# Every entry must be produced by a job in .github/workflows/ or by a hosted app:
-# `policy` (ci.yml), `sonar` (sonarcloud.yml), `trivy` and `osv-scanner`
-# (security.yml), plus the two app-posted contexts. A context with no producer
-# behind it blocks every pull request forever, which is why the pre-#1500
-# `build` / `frontend` / `integration` / `test` / `verify` entries were dropped
-# with the jobs that produced them (issue #650).
-CI_STRICTNESS_REQUIRED_CONTEXTS = frozenset(
-    {
-        "GitGuardian Security Checks",
-        "SonarCloud Code Analysis",
-        "osv-scanner",
-        "policy",
-        "sonar",
-        "trivy",
-    }
-)
-
-
-CI_PRE_COMMIT_HOOKS = (
-    "trailing-whitespace",
-    "end-of-file-fixer",
-    "check-yaml",
-    "check-json",
-    "check-added-large-files",
-    "check-merge-conflict",
-    "detect-private-key",
-    "gitleaks",
-)
 
 
 GROUND_CONTROL_YAML_PATH = Path(".ground-control.yaml")

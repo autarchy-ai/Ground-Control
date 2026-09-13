@@ -312,9 +312,9 @@ process.stdin.on("end", () => {
     // The shim accepts a sequence of GitHub interactions:
     //   1. `gh repo view --json nameWithOwner` (resolve owner/name)
     //   2. `gh api ... GET /repos/.../issues/<pr>/comments` (cycle marker counter)
-    //   3. `gh pr view --json closingIssuesReferences` (plan-gate lookup)
+    //   3. REST `GET /repos/<o>/<r>/pulls/<pr>` (plan-gate closing-reference lookup, #1584)
     //   4. `gh api ... GET .../issues/<issue>/comments` (plan phase marker)
-    //   5. `gh pr view <pr> --json headRefOid` (head-SHA fetch for posting)
+    //   5. REST `GET /repos/<o>/<r>/pulls/<pr>` (head-SHA fetch for posting, #1584)
     //   6. N x `gh api --method POST .../pulls/<pr>/comments` (one per finding)
     //   7. `gh api graphql ...` (thread-id enrichment)
     //   8. `gh api --method POST .../issues/<pr>/comments` (cycle marker)
@@ -342,8 +342,8 @@ process.stdin.on("end", () => {
           },
           {
             // Closing-issues lookup for the plan-gate.
-            argv_prefix: ["pr", "view", "520", "--json", "closingIssuesReferences"],
-            stdout: JSON.stringify({ closingIssuesReferences: [{ number: 998 }] }),
+            argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"],
+            stdout: JSON.stringify({ number: 520, body: "Closes #998", head: { sha: "abc1234" } }),
           },
           {
             // Phase markers are believed only from an author with repository permission.
@@ -357,8 +357,8 @@ process.stdin.on("end", () => {
           },
           {
             // Head-SHA fetch for posting findings.
-            argv_prefix: ["pr", "view", "520", "--json", "headRefOid"],
-            stdout: JSON.stringify({ headRefOid: "abc1234567" }),
+            argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"],
+            stdout: JSON.stringify({ number: 520, body: "", head: { sha: "abc1234567" } }),
           },
           {
             // GraphQL thread-id enrichment.
@@ -445,11 +445,11 @@ process.stdin.on("end", () => {
       ghHandler: {
         routes: [
           { argv_prefix: ["repo", "view", "--json", "nameWithOwner"], stdout: JSON.stringify({ nameWithOwner: "fake/repo" }) },
-          { argv_prefix: ["pr", "view", "520", "--json", "closingIssuesReferences"], stdout: JSON.stringify({ closingIssuesReferences: [{ number: 998 }] }) },
+          { argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"], stdout: JSON.stringify({ number: 520, body: "Closes #998", head: { sha: "abc1234" } }) },
           // Phase markers are believed only from an author with repository permission.
           { argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/collaborators/tester/permission"], stdout: "write\n" },
           { argv_prefix: ["api", "--method", "GET", "--paginate", "--slurp"], stdout: JSON.stringify([[{ id: 1, body: planMarker, user: { login: "tester" } }]]) },
-          { argv_prefix: ["pr", "view", "520", "--json", "headRefOid"], stdout: JSON.stringify({ headRefOid: "abc1234" }) },
+          { argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"], stdout: JSON.stringify({ number: 520, body: "", head: { sha: "abc1234" } }) },
           { argv_prefix: ["api", "graphql"], stdout: JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } }) },
           // Inline POSTs to /pulls/520/comments succeed.
           { argv_prefix: ["api", "--method", "POST", "/repos/fake/repo/pulls/520/comments"], stdout: JSON.stringify({ id: 7001, html_url: "https://example.test/c/7001" }) },

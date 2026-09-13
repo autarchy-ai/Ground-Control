@@ -1,4 +1,4 @@
-"""Policy checks: version mirror consistency and documentation coverage.
+"""Policy checks: Release Please version-mirror consistency.
 
 Extracted from tools/policy/checks.py (issue #1355), which had reached 5,679 lines against
 the repo's 500-LOC limit. checks.py remains the entry point and re-exports this module, so
@@ -9,18 +9,10 @@ every name described a neighbour's contents. The modules are named for what they
 """
 
 from __future__ import annotations
-import argparse
-import fnmatch
-import hashlib
 import json
-import os
-import posixpath
 import re
-import subprocess
-import sys
-import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 from .core import (
     REPO_ROOT,
     Violation,
@@ -43,6 +35,12 @@ _GENERIC_VERSION_ANNOTATION = "x-release-please-version"
 
 
 _QUOTED_VERSION_RE = re.compile(r"""["'](\d+\.\d+\.\d+[0-9A-Za-z.\-+]*)["']""")
+_SEMVER_RE = re.compile(
+    r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
+    r"(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 
 
 # Characters that terminate a plain (dot-navigated) JSONPath key segment.
@@ -187,15 +185,17 @@ def _parse_release_please_files(config_path: Path, manifest_path: Path) -> tuple
     return manifest, config
 
 
-def _require_manifest_version(manifest: dict[str, object]) -> str:
+def _require_manifest_version(manifest: object) -> str:
     """Return the root-package version string, raising when it is absent or non-string."""
-    manifest_version = manifest.get(RELEASE_PLEASE_ROOT_PACKAGE)
-    if not isinstance(manifest_version, str):
+    manifest_version = (
+        manifest.get(RELEASE_PLEASE_ROOT_PACKAGE) if isinstance(manifest, dict) else None
+    )
+    if not isinstance(manifest_version, str) or not _SEMVER_RE.fullmatch(manifest_version):
         raise _ShortCircuit(
             Violation(
                 code="version-mirror-config-invalid",
                 message=(
-                    f"{RELEASE_PLEASE_MANIFEST} has no string version for the root "
+                    f"{RELEASE_PLEASE_MANIFEST} has no semantic version for the root "
                     f'package "{RELEASE_PLEASE_ROOT_PACKAGE}".'
                 ),
                 details=[],
@@ -222,17 +222,30 @@ def _load_version_mirror_context(root: Path) -> tuple[str | None, list[Any]]:
     _require_release_please_pair(config_path, manifest_path)
     manifest, config = _parse_release_please_files(config_path, manifest_path)
     manifest_version = _require_manifest_version(manifest)
-    package = (config.get("packages") or {}).get(RELEASE_PLEASE_ROOT_PACKAGE) or {}
-    extra_files = package.get("extra-files") or []
+    packages = config.get("packages") if isinstance(config, dict) else None
+    package = packages.get(RELEASE_PLEASE_ROOT_PACKAGE) if isinstance(packages, dict) else None
+    if not isinstance(package, dict):
+        raise _ShortCircuit(
+            Violation(
+                code="version-mirror-config-invalid",
+                message=f'{RELEASE_PLEASE_CONFIG} has no root package "{RELEASE_PLEASE_ROOT_PACKAGE}".',
+                details=[],
+            )
+        )
+    extra_files = package.get("extra-files", [])
+    if not isinstance(extra_files, list):
+        raise _ShortCircuit(
+            Violation(
+                code="version-mirror-config-invalid",
+                message="Release Please extra-files must be a list.",
+                details=[],
+            )
+        )
     return manifest_version, extra_files
 
 
-def _parse_extra_file_entry(entry: str | dict[str, object]) -> tuple[str, str | None, str] | None:
-    """Return ``(path, jsonpath, kind)`` for an extra-files entry, or ``None`` to skip.
-
-    ``None`` covers a malformed entry (neither string nor object) and an entry
-    with no ``path``.
-    """
+def _parse_extra_file_entry(entry: object) -> tuple[str, str | None, str]:
+    """Return one validated Release Please extra-files entry."""
     if isinstance(entry, str):
         path, jsonpath, kind = entry, None, "generic"
     elif isinstance(entry, dict):
@@ -240,10 +253,47 @@ def _parse_extra_file_entry(entry: str | dict[str, object]) -> tuple[str, str | 
         jsonpath = entry.get("jsonpath")
         kind = entry.get("type", "generic")
     else:
-        return None
-    if not path:
-        return None
+        path, jsonpath, kind = None, None, None
+    if (
+        not isinstance(path, str)
+        or not path.strip()
+        or (jsonpath is not None and not isinstance(jsonpath, str))
+        or kind not in {"generic", "json"}
+    ):
+        raise _ShortCircuit(
+            Violation(
+                code="version-mirror-config-invalid",
+                message="Release Please extra-files contains a malformed entry.",
+                details=[repr(entry)],
+            )
+        )
     return path, jsonpath, kind
+
+
+def _resolve_mirror_target(root: Path, path: str) -> Path:
+    """Resolve a mirror path while refusing absolute and repository-escaping targets."""
+    root_resolved = root.resolve()
+    target = Path(path)
+    try:
+        resolved = (root_resolved / target).resolve()
+        resolved.relative_to(root_resolved)
+    except (OSError, ValueError) as exc:
+        raise _ShortCircuit(
+            Violation(
+                code="version-mirror-config-invalid",
+                message="Release Please mirror paths must stay inside the repository.",
+                details=[path],
+            )
+        ) from exc
+    if target.is_absolute():
+        raise _ShortCircuit(
+            Violation(
+                code="version-mirror-config-invalid",
+                message="Release Please mirror paths must be repository-relative.",
+                details=[path],
+            )
+        )
+    return resolved
 
 
 def _read_mirror_text(target: Path, path: str) -> str:
@@ -296,12 +346,9 @@ def _version_mirror_entry_violations(
     entry: str | dict[str, object], root: Path, manifest_version: str
 ) -> list[Violation]:
     """Return the drift Violations (zero or one) for a single extra-files entry."""
-    parsed = _parse_extra_file_entry(entry)
-    if parsed is None:
-        return []
     try:
-        path, jsonpath, kind = parsed
-        text = _read_mirror_text(root / path, path)
+        path, jsonpath, kind = _parse_extra_file_entry(entry)
+        text = _read_mirror_text(_resolve_mirror_target(root, path), path)
         found, label = _extract_mirror_version(text, kind, jsonpath, path)
         return _version_drift_violations(found, label, manifest_version)
     except _ShortCircuit as exc:
@@ -327,149 +374,3 @@ def run_version_mirror_consistency_check(root: Path = REPO_ROOT) -> list[Violati
     for entry in extra_files:
         violations.extend(_version_mirror_entry_violations(entry, root, manifest_version))
     return violations
-
-
-_DOCUMENTATION_COVERAGE_FIXTURE = REPO_ROOT / "tools" / "documentation_coverage_fixture.mjs"
-
-
-_DOCUMENTATION_SECTION_RE = re.compile(r"^##\s+Documentation\b", re.MULTILINE)
-
-
-def _fixture_error(message: str, details: list[str] | None = None) -> Violation:
-    """Build a ``doc-coverage-fixture-error`` Violation (a drift signal, not a pass)."""
-    return Violation(code="doc-coverage-fixture-error", message=message, details=details or [])
-
-
-def _require_coverage_fixture() -> None:
-    """Raise ``_ShortCircuit`` when the Node classifier fixture is absent."""
-    if not _DOCUMENTATION_COVERAGE_FIXTURE.exists():
-        raise _ShortCircuit(
-            _fixture_error(
-                "documentation_coverage_fixture.mjs not found — "
-                "documentation coverage check cannot run.",
-                [f"expected at {_DOCUMENTATION_COVERAGE_FIXTURE}"],
-            )
-        )
-
-
-def _invoke_coverage_fixture(fixture_input: dict[str, object], root: Path) -> dict[str, object]:
-    """Run the Node classifier fixture and return its parsed JSON result.
-
-    Raises ``_ShortCircuit`` carrying a ``doc-coverage-fixture-error`` Violation when
-    the fixture cannot execute, exits non-zero, or emits invalid JSON.
-    """
-    try:
-        proc = subprocess.run(
-            ["node", str(_DOCUMENTATION_COVERAGE_FIXTURE)],
-            input=json.dumps(fixture_input),
-            capture_output=True,
-            text=True,
-            cwd=str(root),
-            timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise _ShortCircuit(
-            _fixture_error(f"documentation_coverage_fixture.mjs failed to execute: {exc}")
-        ) from exc
-
-    if proc.returncode != 0:
-        details = [f"stderr: {proc.stderr.strip()[:500]}"] if proc.stderr.strip() else []
-        raise _ShortCircuit(
-            _fixture_error(
-                "documentation_coverage_fixture.mjs exited with non-zero status.", details
-            )
-        )
-
-    try:
-        return json.loads(proc.stdout)
-    except (json.JSONDecodeError, TypeError) as exc:
-        raise _ShortCircuit(
-            _fixture_error("documentation_coverage_fixture.mjs produced invalid JSON output.")
-        ) from exc
-
-
-def _load_documentation_coverage_result(
-    changed_files: list[str], root: Path
-) -> tuple[Any, list[Violation]]:
-    """Run the classifier fixture and return ``(result, violations)``.
-
-    ``result`` is ``None`` when the check should not compare against a PR body: an
-    empty ``violations`` list means skip gracefully (``node`` unavailable), a
-    non-empty list carries a fixture error. A non-``None`` ``result`` is the parsed
-    classifier output.
-    """
-    import shutil
-
-    if shutil.which("node") is None:
-        return None, []
-
-    try:
-        _require_coverage_fixture()
-        fixture_input = {
-            "repo_path": str(root),
-            "changed_paths": list(changed_files),
-        }
-        return _invoke_coverage_fixture(fixture_input, root), []
-    except _ShortCircuit as exc:
-        return None, [exc.violation]
-
-
-def _documentation_outcome_details(result: dict[str, object]) -> list[str]:
-    """Build the detail lines (classified surfaces, suggested targets) for the outcome."""
-    surface_classes = sorted({
-        c["surface_class"]
-        for c in result.get("classifications", [])
-        if c.get("surface_class") not in ("doc", "unclassified")
-    })
-    suggested = result.get("suggested_doc_targets", [])
-    details = []
-    if surface_classes:
-        details.append(f"classified surfaces: {', '.join(surface_classes)}")
-    if suggested:
-        details.append(f"suggested doc targets: {', '.join(suggested)}")
-    return details
-
-
-def _documentation_outcome_violations(result: dict[str, object], pr_body: str | None) -> list[Violation]:
-    """Return the outcome-missing Violation when a documented surface lacks the section.
-
-    An empty list means no outcome is required, the PR body is unavailable (skip
-    gracefully), or the PR body already carries a ``## Documentation`` section.
-    """
-    if not result.get("outcome_required") or pr_body is None:
-        return []
-    if _DOCUMENTATION_SECTION_RE.search(pr_body):
-        return []
-    return [
-        Violation(
-            code="doc-coverage-outcome-missing",
-            message=(
-                "Diff touches a documented surface but the PR body has no "
-                "## Documentation section. Add a documentation_outcome field "
-                "when calling gc_render_pr_body (ADR-054)."
-            ),
-            details=_documentation_outcome_details(result),
-        )
-    ]
-
-
-def run_documentation_coverage_check(
-    changed_files: list[str],
-    root: Path = REPO_ROOT,
-    pr_body: str | None = None,
-) -> list[Violation]:
-    """Classify the diff and verify the PR body carries a documentation outcome.
-
-    Violation codes:
-    - ``doc-coverage-outcome-missing``: a classified surface requires a
-      documentation outcome but the PR body has no ``## Documentation`` section.
-    - ``doc-coverage-fixture-error``: the Node classifier fixture failed
-      (treat as a drift signal, not a pass).
-
-    The check skips gracefully when ``node`` is unavailable or the PR body
-    cannot be resolved (matches the changelog-fragment check style).
-    """
-    result, violations = _load_documentation_coverage_result(changed_files, root)
-    if result is None:
-        return violations
-    return _documentation_outcome_violations(result, pr_body)

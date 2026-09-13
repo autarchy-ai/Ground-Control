@@ -208,8 +208,18 @@ pooling producers across workflows would accept a repository where `main` requir
 a check only `dev` can produce. Contexts posted by a
 hosted app (`GitGuardian Security Checks`, `SonarCloud Code Analysis`) are exempt
 from needing a local producer through an explicit allowlist that is itself
-shrink-only: a test asserts every entry is still a required context, so an
-exemption cannot outlive the check it exempts.
+shrink-only: the policy contract must reject every allowlist entry that is no longer
+a required context, so an exemption cannot outlive the check it exempts. Unit
+tests exercise that refusal; they are evidence for the contract, not its only
+enforcement.
+
+A workflow counts as a local producer only when the tracked trigger shape proves
+that it will start for pull requests into the protected branch. Workflow-level
+`paths` and `paths-ignore` filters therefore cannot satisfy a required context:
+an unmatched pull request starts no workflow and leaves that context pending.
+Malformed or unsupported trigger/filter shapes are likewise not evidence of a
+producer. This is fail-closed producer discovery, not a second GitHub Actions
+schema or an attempt to evaluate arbitrary expressions.
 
 This narrows the earlier design in one respect and widens it in another. It drops
 the job-dependency, `docker`-gate, and fast-lane assertions, which described a
@@ -224,9 +234,179 @@ The surviving verification topology after #1500 is four required jobs, none
 consuming another's artifact: `policy` (`ci.yml`), `sonar` (`sonarcloud.yml`),
 and `trivy` plus `osv-scanner` (`security.yml`).
 
+## 2026-09-11 amendment: live protection reconciled with the baseline (issue #1155, GC-P031)
+
+The required-context gate above compares two artifacts inside this repository:
+the declared context set and the workflow files. It says nothing about what
+GitHub actually enforces, and those are separate facts that had already diverged.
+Live `main` carried `required_status_checks.strict: false` while
+`.github/branch-protection-baseline.json` declared `strict: true` and live `dev`
+declared `true`, so strictness was neither consistent between the protected
+branches nor consistent with the versioned contract. Live `dev` additionally
+allowed force pushes, against the documented intent that a force-push to `main`
+or `dev` is blocked. No check could notice either, because the offline gate does
+not look at live state and nothing else did.
+
+A second, quieter defect sat in the same file. `admin_bypass_allowed` and
+`changes_land_via_pull_request` were recorded in the baseline and read by
+nothing. That is the same shape of problem as a required context with no
+producing job: declared intent that no gate defends.
+
+**The baseline is now the complete declaration of intended protection, and the
+correspondence to live state is two-sided.** Each protected branch declares its
+required contexts and strictness plus its pull-request, review,
+conversation-resolution, force-push, deletion, and admin-bypass policy.
+`run_ci_required_context_contract` asserts offline that every branch declares
+exactly the fields in `CI_STRICTNESS_PROTECTION_FIELDS`, with the declared types,
+and that `changes_land_via_pull_request` is `true`. `compare_protection` in
+`tools/ci/check_branch_protection.py` compares every declared field against the
+protection GitHub reports, naming branch, field, declared value, and observed
+value for each difference. A field in the baseline that the comparison cannot
+read fails, and so does a field the comparison knows about that the baseline
+omits, so the declaration cannot decay back into decoration.
+
+Coverage closes over the nested review leaves too, not only the top-level
+fields. `review_policy` governs `dismiss_stale_reviews`,
+`require_code_owner_reviews`, `require_last_push_approval`, and
+`required_approving_review_count`; a declaration naming only some of them would be
+a partial policy whose unlisted leaves nothing compares, which is the same
+decorative failure one level down. `require_last_push_approval` is in scope
+precisely because its absence is what a review gate silently loses. Restrictions,
+signatures, linear history, branch locking, and fork syncing are deliberately
+outside this policy.
+
+Only `changes_land_via_pull_request` is pinned to a value offline. The remaining
+booleans are type-checked rather than pinned, because flipping several of them
+(enforcing admins, requiring conversation resolution) is a *tightening*, and a
+gate that fails a tightening is pointed the wrong way. Value agreement is the
+live comparison's job, and the baseline edit that changes an intended value is
+itself a reviewed diff. The offline gate also rejects a baseline branch outside
+the protected set, because iterating only the protected tuple would walk past it
+and its policy would never be compared against anything. It validates the declared
+context collection instead of coercing it: `{str(name) for name in ...}` turns a
+declared `123` into the context `"123"`, and `or []` turns a malformed mapping into
+"no contexts declared." Either one compares equal to something and passes.
+
+**The declaration is loaded once, and the loader validates.**
+`tools/policy/branch_protection_baseline.py` holds the protected-branch tuple, the
+required-context set, the declared provider bindings, the governed field sets for
+every mapping level, and the single loader, which returns a *validated* projection
+and raises with every fault rather than the first.
+`tools/policy/branch_protection_fields.py` asserts the pinned values,
+`tools/policy/ci_strictness.py` keeps the required-context contract, and the live
+side reads the same declaration through the same loader:
+`tools/ci/branch_protection_compare.py` is the pure comparison and
+`tools/ci/check_branch_protection.py` the repository-bound, read-only GitHub
+adapter. A loader that only parsed would leave each consumer to interpret the
+declaration's types for itself, and they would diverge: Python equality treats JSON
+`1` as `True` and `0` as `False`, so an unvalidated `strict: 1` compares equal to a
+declared `true` and the live gate reports a clean match for a value whose real
+state was never established. Live scalars are typed the same way before comparison,
+and a wrongly typed live value is unevaluable rather than a match. The module split
+follows the requirement boundary: GC-P030 owns the contexts, GC-P031 owns the rest
+of the policy.
+
+**Every mapping level is closed, not just the top one.** Exact-key coverage applies
+to the baseline root, the branch set, `required_status_checks`, `review_policy`, and
+the bypass-principal collections. Closing only the branch entry would let
+`required_status_checks.provider_binding` be added without changing any branch's
+top-level keys, and both gates would keep reading only `strict` and `contexts` while
+the new declaration sat there enforced by nothing.
+
+**Two of the governed fields are authorization-bearing, and were the reason for
+widening the projection.** A required context name is satisfiable by whoever may
+post that name: branch protection can bind a required check to one App id, and
+without that binding any actor able to publish a commit status or check run can post
+a green `policy` on its own commit and satisfy the gate without the workflow
+running. `CI_STRICTNESS_CONTEXT_PROVIDERS` therefore declares the App permitted to
+satisfy each context, the comparison checks `(context, app_id)` rather than names
+alone, an unbound or unexpected provider is drift, and a context named twice with
+conflicting bindings is unevaluable. Separately, an actor listed in
+`required_pull_request_reviews.bypass_pull_request_allowances` can land changes
+without the pull-request boundary while every scalar review setting compares clean,
+so the users, teams, and apps collections are declared and compared per branch.
+GitHub omits that mapping when nothing is allowed, so an absent mapping reads as
+three empty collections. That is the only safe default: assuming the opposite would
+report drift on every correctly configured branch and train the operator to ignore
+the check. The executable declaration contract must also keep provider-map keys equal
+to the required-context set; a unit assertion alone must not be the only thing
+preventing an undeclared provider from being treated as acceptable.
+
+**"Could not be determined" is a third outcome, not a flavour of the other two.**
+The live check exits 0 on a match, 1 on drift, and 2 when any branch could not be
+evaluated. A branch in that third state produces no drift claims at all, because
+naming a specific difference requires having read the thing being compared. Each
+such branch carries a stable reason key (`live_read_failed` for a credential
+without `administration:read`, `live_read_timed_out`, `gh_unavailable`,
+`live_response_malformed`, `live_contexts_malformed`,
+`live_contexts_inconsistent`) so a caller can branch on the kind of failure
+without parsing prose. GitHub reports the required set both as the legacy
+`contexts` array and as `checks`; trusting one and ignoring the other would accept
+a response whose two views disagree, so when both are present they must agree and
+disagreement is not-determinable rather than a match against whichever was read.
+An absent `{"enabled": ...}` wrapper likewise reads as unreported rather than as
+`false`.
+
+**The live read is bound, not configurable.** The target repository is the
+canonical identity from `tools/policy/repo_identity.py` and the host is fixed, so
+neither `GH_REPO` nor `GH_HOST` can redirect an administration-capable credential
+at a different target. The subprocess runs with `shell=False`, carries a timeout
+so a hung read fails the gate rather than holding it open, and passes no token in
+argv, so `gh` uses the operator's own stored credential.
+
+**The live comparison is not a merge gate, deliberately.** Reading branch
+protection requires repository administration permission, and `administration`
+is not a grantable GitHub Actions `permissions:` scope, so the CI `policy` job's
+`GITHUB_TOKEN` cannot perform the read. Wiring it into `make policy` would
+therefore require skipping silently whenever the read is unauthorized, which is
+exactly the "reports green because it never looked" failure `require_scanned`
+exists to prevent. It is an explicitly invoked gate, `make
+branch-protection-check`, that always enforces when run. The documentation says
+plainly that repo policy detects this drift when invoked rather than
+continuously.
+
+**The live write path is the narrow endpoint, and this module has none.**
+Reconciling `main` used
+`PATCH /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks`,
+which can express strictness and the context set and nothing else. The
+full-document `PUT` is rejected for this purpose: its omitted or mis-serialized
+fields can silently reset review, conversation, restriction, force-push,
+deletion, or admin policy, and the legacy `repo-setup` snippet nulls
+`required_status_checks` that way. The reconciliation captured both branches'
+full protection documents before the write and re-read them after, confirming
+the only normalized semantic difference was `main`'s `strict`.
+`check_branch_protection.py` is read-only by design: a repeatable branch
+administration capability would need its own authorization contract through a
+repository-bound MCP tool, not a write mode grown onto an operator script.
+
+## 2026-09-11 amendment: surviving gate placement (issue #1303)
+
+The post-#1500 inventory keeps the required `policy`, `sonar`, `trivy`, and
+`osv-scanner` jobs and the two hosted-app contexts. It closes two remaining
+offline declaration gaps: the external allowlist must be a subset of the
+runtime required-context declaration, and the provider map must cover that
+declaration exactly. These are production policy checks, not assertions that
+exist only in a unit test.
+
+The required `policy` job now runs `pre-commit run --all-files`, making the
+tracked hook configuration the single file-hygiene/security inventory instead
+of manually duplicating most hook commands in YAML. PR-title CI stays advisory,
+but `run_pr_title_contract` rejects vocabulary drift between its Action config
+and `.ground-control.yaml`. `run_github_action_pin_contract` rejects floating
+external Action references across every workflow. Required producers remain
+unfiltered at workflow level, and unsupported or malformed trigger/filter
+shapes remain non-producers.
+
+The live protection comparison remains a separate authenticated operator gate:
+CI cannot obtain `administration:read`, so treating an unauthorized read as a
+green `make policy` result would be fail-open. The repository baseline is intent;
+`make branch-protection-check` is evidence about GitHub's live state. The full
+inventory, including retired duplicate and backend-era checks, is in
+[`docs/architecture/SURVIVING_GATES.md`](../../docs/architecture/SURVIVING_GATES.md).
+
 ## Related Issues
 
-Issue #1461, issue #1468, issue #650.
+Issue #1461, issue #1468, issue #650, issue #1155, issue #1303.
 
 ## Related ADRs
 

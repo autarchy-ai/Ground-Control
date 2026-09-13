@@ -5,7 +5,7 @@
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
 import { readTrustedMergeStateOverride, resolvePrForClose } from "./close-issue.js";
-import { extractInScopeRequirementUids } from "./codex-workflow-2.js";
+import { extractInScopeRequirementUids } from "./issue-requirements-scope.js";
 import { runPostFinalReport } from "./doc-coverage-2.js";
 import { getOwnerRepo } from "./grc-legacy-compat-3.js";
 import { ensureGitRepo, readTrustedExecutionObligationState } from "./grc-legacy-compat-4.js";

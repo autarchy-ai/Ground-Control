@@ -6,10 +6,13 @@ name: Release Please
 # CHANGELOG.md from the Conventional Commit history. Merging that PR tags vX.Y.Z and cuts
 # the GitHub Release.
 #
-# After the context-graph teardown (issue #1500) there is no backend image to publish:
-# Ground Control is the MCP server over repo-local files, so this workflow no longer builds
-# or pushes a GHCR artifact. The release PR is opened by GITHUB_TOKEN, so `dev`'s required
-# checks do not auto-run on it — admin/one-click merge it. The main -> dev back-merge is
+# Each release also publishes the MCP server and its workflow skills to npm as `grndctl`
+# (issue #1587), so hosts install a released version instead of running a checkout. Release
+# Please owns the package version through extra-files. Publishing uses npm trusted publishing
+# (GitHub OIDC). The NPM_TOKEN secret exists only to bootstrap the first publish, because
+# npm cannot configure a trusted publisher for a package that does not exist yet; once the
+# package is configured, delete the secret and every release publishes without a token. The release PR is opened by GITHUB_TOKEN, so `dev`'s required
+# checks do not auto-run on it — a maintainer reviews and merges it. The main -> dev back-merge is
 # handled by sync-main-to-dev.yml.
 on:
   push:
@@ -28,6 +31,9 @@ jobs:
     permissions:
       contents: write # create/maintain the release PR, tag, and Release
       pull-requests: write # maintain the release PR
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      sha: ${{ steps.rp.outputs.sha }}
     steps:
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: rp
@@ -35,3 +41,35 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  publish-npm:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing and provenance
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    defaults:
+      run:
+        working-directory: mcp/ground-control
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install an npm CLI that supports trusted publishing
+        run: npm install -g npm@11.19.1
+      - run: npm ci
+      - run: npm test
+      - name: Publish with the bootstrap token
+        if: env.NPM_TOKEN != ''
+        run: |
+          npm config set //registry.npmjs.org/:_authToken "${NPM_TOKEN}"
+          npm publish --provenance --access public
+      - name: Publish with trusted publishing
+        if: env.NPM_TOKEN == ''
+        run: npm publish --provenance --access public

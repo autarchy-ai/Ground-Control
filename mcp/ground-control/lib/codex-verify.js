@@ -11,13 +11,19 @@ import { readRequirementByUid } from "./requirement-files.js";
 import { codexEngineEnv } from "./codex-engine-env.js";
 import { evaluateCodexVerifyCycleCap, postCodexVerifyCycleMarker, readPriorCodexVerifyCycleCount } from "./codex-verify-cap.js";
 import { buildCodexArchitecturePreflightPrompt, getIssueContext } from "./codex-workflow-3.js";
+import { formatWorkingTreeMutation } from "./command-failure-diagnostics.js";
 import { buildCodexArchitectureExecArgs, findNewWorkingTreeChanges, readGeneratedCodexSummary } from "./codex-workflow.js";
 import { getOwnerRepo, postPhaseMarker } from "./grc-legacy-compat-3.js";
 import { enrichCommentsWithThreadIds, ensureGitRepo, fetchReviewCommentById } from "./grc-legacy-compat-4.js";
 import { buildCodexVerifyPrompt, getRuntimeAllowedAuthors, parseCodexVerifyTail, postReviewCommentReply, resolveReviewThread } from "./issue-thread.js";
 import { listWorkingTreeChanges } from "./knowledge-capture.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
-import { getDefaultCodexTimeoutMs, execFile, execFileWithInput, formatCommandFailure } from "./runtime-primitives.js";
+import { getDefaultCodexTimeoutMs, execFileWithInput, formatCommandFailure } from "./runtime-primitives.js";
+import { fetchPullRequest } from "./github-rest.js";
+
+// Enough paths to identify what a failed run touched without turning the
+// failure message into a directory listing; the full count travels alongside.
+const PREFLIGHT_FAILURE_FILE_MAX = 20;
 
 // Issue-first runs treat the GitHub issue as the authoritative contract. When no
 // requirement anchors the run, a loadable issue body is mandatory: if the issue
@@ -80,6 +86,28 @@ async function postPreflightPhaseMarker(repoRoot, issueNumber) {
       `[gc_codex_architecture_preflight] phase marker post failed for issue #${issueNumber}: ${markerError.message}`,
     );
     return null;
+  }
+}
+
+// A preflight killed at the wall cap has usually already written to the
+// checkout: it runs codex under `--sandbox workspace-write`. The failure must
+// name those paths, otherwise the mechanical result says only "failed" while
+// the tree carries partial output the next attempt silently builds on
+// (issue #1568). Best-effort — a git failure here must not mask the real
+// failure being reported.
+async function describeFailedPreflightMutation(repoRoot, preexistingChangedFiles) {
+  try {
+    const changed = findNewWorkingTreeChanges(
+      preexistingChangedFiles,
+      await listWorkingTreeChanges(repoRoot),
+    );
+    return {
+      changed_files: changed.slice(0, PREFLIGHT_FAILURE_FILE_MAX),
+      changed_file_count: changed.length,
+      preexisting_changed_file_count: preexistingChangedFiles.length,
+    };
+  } catch (scanError) {
+    return { working_tree_scan_error: scanError.message };
   }
 }
 
@@ -177,7 +205,22 @@ export async function runCodexArchitecturePreflight({
       phase_marker: phaseMarker,
     };
   } catch (error) {
-    throw new Error(`Codex architecture preflight failed: ${formatCommandFailure("codex", error)}`);
+    const mutation = await describeFailedPreflightMutation(repoRoot, preexistingChangedFiles);
+    const failure = new Error(
+      `Codex architecture preflight failed: ${formatCommandFailure("codex", error)}`
+      + ` | ${formatWorkingTreeMutation(mutation)}`,
+    );
+    // Structured twin of the message suffix, for callers that dispatch on the
+    // result rather than read it. The async registry bounds and scrubs this
+    // before it reaches a poll envelope.
+    failure.diagnostics = {
+      stage: "architecture_preflight",
+      issue_number: issueNumber ?? null,
+      requirement_uid: requirementUid ?? null,
+      timed_out: error?.code === "ETIMEDOUT",
+      ...mutation,
+    };
+    throw failure;
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -192,12 +235,8 @@ async function fetchAuthorizedReviewComment({ repoRoot, owner, name, prNumber, c
   const allowed = getRuntimeAllowedAuthors();
   let prAuthorLogin = null;
   try {
-    const { stdout } = await execFile(
-      "gh",
-      ["pr", "view", String(prNumber), "--json", "author"],
-      { cwd: repoRoot },
-    );
-    prAuthorLogin = JSON.parse(stdout)?.author?.login || null;
+    // REST pull-request read; `gh pr view` spent the shared GraphQL budget (issue #1584).
+    prAuthorLogin = (await fetchPullRequest(repoRoot, owner, name, prNumber))?.author?.login || null;
   } catch {
     prAuthorLogin = null;
   }

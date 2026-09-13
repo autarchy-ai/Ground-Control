@@ -123,6 +123,17 @@ class VersionMirrorConsistencyChecksTest(unittest.TestCase):
             self._write(root, "backend/build.gradle.kts", 'version = "0.20.1" // x-release-please-version\n')
             codes = {v.code for v in run_version_mirror_consistency_check(root=root)}
             self.assertIn("version-mirror-drift", codes)
+    def test_drift_when_generic_mirror_has_trailing_non_semver_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._canonical_repo(root, "1.0.1")
+            self._write(
+                root,
+                "backend/build.gradle.kts",
+                'version = "1.0.1!" // x-release-please-version\n',
+            )
+            codes = {v.code for v in run_version_mirror_consistency_check(root=root)}
+            self.assertIn("version-mirror-drift", codes)
     def test_drift_when_mirror_file_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -141,6 +152,50 @@ class VersionMirrorConsistencyChecksTest(unittest.TestCase):
             root = Path(tmp)
             self._canonical_repo(root, "1.0.1")
             self._write(root, ".release-please-manifest.json", json.dumps({"other": "1.0.1"}) + "\n")
+            codes = {v.code for v in run_version_mirror_consistency_check(root=root)}
+            self.assertIn("version-mirror-config-invalid", codes)
+    def test_config_invalid_when_manifest_version_is_not_semver(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._canonical_repo(root, "not-a-version")
+            codes = {v.code for v in run_version_mirror_consistency_check(root=root)}
+            self.assertIn("version-mirror-config-invalid", codes)
+    def test_config_invalid_when_numeric_prerelease_has_a_leading_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._canonical_repo(root, "1.2.3-01")
+            codes = {v.code for v in run_version_mirror_consistency_check(root=root)}
+            self.assertIn("version-mirror-config-invalid", codes)
+    def test_config_invalid_when_an_extra_file_entry_is_malformed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._canonical_repo(root)
+            config_path = root / "release-please-config.json"
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            config["packages"]["."]["extra-files"].append({"type": "json"})
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            codes = {v.code for v in run_version_mirror_consistency_check(root=root)}
+            self.assertIn("version-mirror-config-invalid", codes)
+    def test_config_invalid_when_an_extra_file_type_is_unsupported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._canonical_repo(root)
+            config_path = root / "release-please-config.json"
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            config["packages"]["."]["extra-files"].append(
+                {"type": "xml", "path": "pom.xml"}
+            )
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            codes = {v.code for v in run_version_mirror_consistency_check(root=root)}
+            self.assertIn("version-mirror-config-invalid", codes)
+    def test_config_invalid_when_a_mirror_path_escapes_the_repository(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._canonical_repo(root)
+            config_path = root / "release-please-config.json"
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            config["packages"]["."]["extra-files"].append("../outside.txt")
+            config_path.write_text(json.dumps(config), encoding="utf-8")
             codes = {v.code for v in run_version_mirror_consistency_check(root=root)}
             self.assertIn("version-mirror-config-invalid", codes)
     def test_jsonpath_keys_supports_empty_root_package_key(self):

@@ -61,6 +61,7 @@ class AdrGuard2ChecksTest(PolicyChecksFixture):
             "requirementUids": [],
             "adrRefs": ["ADR-036"],
             "summary": "Documentation update only.",
+            "changelogMode": "release-please",
             "changes": ["Clarified workflow doc wording"],
             "traceability": {"implements": [], "tests": []},
         })
@@ -83,6 +84,7 @@ class AdrGuard2ChecksTest(PolicyChecksFixture):
             "requirementUids": [],
             "adrRefs": ["ADR-021"],
             "summary": "Quickfix run with pre-push reviews off.",
+            "changelogMode": "release-please",
             "changes": ["Corrected the token boundary"],
             "traceability": {"implements": [], "tests": []},
             "lane": "quickfix",

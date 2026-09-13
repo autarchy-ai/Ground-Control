@@ -12,6 +12,7 @@ from . import cli
 from . import cli_safety
 from . import core
 from . import decision_records
+from . import documentation_coverage
 from . import execution_contract
 from . import file_size
 from . import repo_identity
@@ -32,6 +33,7 @@ _EXPORT_MODULES = (
     repo_identity,
     authz_matrix,
     decision_records,
+    documentation_coverage,
     workflow_routing,
     execution_contract,
     workflow_contracts,

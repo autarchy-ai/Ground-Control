@@ -363,56 +363,17 @@ export const TO_CAMEL = {
   treatment_strategy_vocabulary: "treatmentStrategyVocabulary",
   // #1106 — verification result. evidence is a Map<String,Object> (opaque).
   // OPAQUE_VALUE_KEYS already has no entry for it — add both forms.
-  // issue #859 — Workflow-run telemetry. snake_case MCP args / response fields
-  // → camelCase backend DTO fields. Missing entries would cause Jackson to
-  // silently drop the fields on write and produce snake_case output on reads.
-  workflow_type: "workflowType",
-  runtime_driver: "runtimeDriver",
+  // Shared active MCP response/request fields.
   requirement_uids: "requirementUids",
   issue_number: "issueNumber",
   pr_number: "prNumber",
   started_at: "startedAt",
-  ended_at: "endedAt",
-  final_state: "finalState",
-  cost_proxy: "costProxy",
-  cost_currency: "costCurrency",
-  token_usage: "tokenUsage",
-  model_invocation_count: "modelInvocationCount",
-  wall_clock_minutes: "wallClockMinutes",
-  event_type: "eventType",
   cycle_index: "cycleIndex",
-  occurred_at: "occurredAt",
   duration_ms: "durationMs",
-  // Gate outcome and finding projection (issue #1355). Without these entries the fields
-  // reach the backend snake_cased, fail Bean Validation as absent, and — because emission
-  // is fail-open — vanish without a trace.
+  // Durable station-observation attempts use explicit outcomes; these are issue-thread
+  // recovery facts, not a backend measurement projection.
   station_id: "stationId",
   station_result: "stationResult",
-  findings_dropped: "findingsDropped",
-  finding_key: "findingKey",
-  source_kind: "sourceKind",
-  total_runs: "totalRuns",
-  merged_runs: "mergedRuns",
-  closed_runs: "closedRuns",
-  active_runs: "activeRuns",
-  escalated_runs: "escalatedRuns",
-  abandoned_runs: "abandonedRuns",
-  superseded_runs: "supersededRuns",
-  cycle_time_p50_min: "cycleTimeP50Min",
-  cycle_time_p95_min: "cycleTimeP95Min",
-  cycle_time_p99_min: "cycleTimeP99Min",
-  total_cost_proxy: "totalCostProxy",
-  merged_cost_proxy: "mergedCostProxy",
-  closed_cost_proxy: "closedCostProxy",
-  cost_proxy_per_merged_run: "costProxyPerMergedRun",
-  cost_proxy_per_closed_run: "costProxyPerClosedRun",
-  total_model_invocations: "totalModelInvocations",
-  total_wall_clock_minutes: "totalWallClockMinutes",
-  total_token_usage: "totalTokenUsage",
-  phase_hotspots: "phaseHotspots",
-  event_count: "eventCount",
-  escalated_count: "escalatedCount",
-  max_cycle_index: "maxCycleIndex",
   // GC-O009 #1278 — Workflow control surface (start/status/signal). snake_case MCP
   // args / response fields → camelCase backend DTO fields (StartWorkflowExecutionRequest,
   // SendSignalRequest, WorkflowExecutionResponse). Missing entries would drop request

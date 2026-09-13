@@ -102,6 +102,54 @@ historical rationale for artifact identity, promotion, and rollback.
 The repo-wide guardrails and concept boundaries for this amendment are in
 [`architecture/notes/release-please-preflight.md`](../notes/release-please-preflight.md).
 
+## 2026-09-13 Amendment: npm Distribution as `grndctl` (issue #1587)
+
+Hosts ran the MCP server and symlinked skills straight out of a Ground Control
+checkout, so every agent ran whatever branch or uncommitted edits that checkout
+held when its server started. A release is now also the deployable artifact:
+merging the release PR publishes `mcp/ground-control` to npm as `grndctl`, with
+the repository's workflow skills bundled at pack time. Hosts install it with
+`npm install -g grndctl`, configure `grndctl mcp` as the MCP command, copy the
+skills with `grndctl install-skills`, and upgrade with `npm update -g grndctl`.
+Upgrading is the host operator's decision. `grndctl init` sets up one
+repository at a time: it proposes detected values with their evidence, requires
+the operator to confirm or edit each one and then the previewed file changes, and
+writes only that repository's `.ground-control.yaml` (never rewriting an existing
+one), its `ground-control` `.mcp.json` entry, a missing `.env` from the template,
+and the `.env` ignore rule. A non-interactive run requires every value as an
+explicit flag and never falls back to detection. `grndctl doctor` checks the host
+and the repository without writing anything.
+
+Release Please owns the package version: `mcp/ground-control/package.json` and
+its lockfile are declared `extra-files` mirrors, so the independent MCP-server
+coordinate in the 2026-09-11 amendment is superseded. The `publish-npm` job
+publishes the exact release commit with provenance through npm trusted
+publishing (GitHub OIDC). A one-time `NPM_TOKEN` secret bootstraps the first
+publish only, because npm cannot configure a trusted publisher before the
+package exists; it is deleted once trusted publishing is configured.
+
+## 2026-09-11 Amendment: MCP-only Release Surface (issue #1303)
+
+The #1500 re-platform removed the backend, frontend, container publication, and
+deployment surfaces. Release Please still owns the root manifest,
+`release-please-config.json`, generated `CHANGELOG.md`, immutable tag, and GitHub
+Release; there are currently no configured root-product mirror files. The MCP
+server and citation-package versions remain independent package coordinates.
+
+The release workflow therefore creates repository releases only. It does not
+build an image, publish to GHCR, or deploy. Repository policy validates strict
+SemVer, exact mirror equality, config/path containment, PR-title vocabulary
+parity, and full-SHA Action pins. The PR-title workflow is early feedback rather
+than a separate authority: policy keeps it aligned with `.ground-control.yaml`
+and the MCP PR boundary.
+
+The main-to-dev workflow keeps the human-merged back-sync decision, but its
+automation branch is now guarded by the `main` ref, automation ownership, the
+observed remote head OID, and exact `--force-with-lease`. The backend/image and
+deployment clauses in the 2026-07-15 amendment are historical and superseded.
+The complete current placement rationale is recorded in
+[`docs/architecture/SURVIVING_GATES.md`](../../docs/architecture/SURVIVING_GATES.md).
+
 ## Original Decision (superseded where the amendment conflicts)
 
 Release and deployment are **separate lifecycle events**. Deployment is the

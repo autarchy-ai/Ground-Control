@@ -4,10 +4,11 @@ name: PR Title
 # Please derives the SemVer bump and CHANGELOG from Conventional Commit history on `main`,
 # so PR titles must be well-formed: feature PRs squash-merge into `dev` using the PR title
 # as the commit subject, and the dev -> main promotion preserves those subjects. This is
-# the authoritative CI enforcement of the same vocabulary the /implement skill validates
-# locally (skills/implement/steps/step-09-pr-body.md) — one allow-list, not two divergent
-# ones. A green title check alone is not the whole contract: the repo's merge method must
-# preserve the signal (see docs/DEVELOPMENT_WORKFLOW.md § Release model).
+# advisory early feedback for the same vocabulary that repository policy and the MCP PR
+# creation boundary enforce. Policy checks this file against `.ground-control.yaml`, so
+# there is one allow-list rather than two divergent ones. A green title check alone is not
+# the whole contract: the repo's merge method must preserve the signal (see
+# docs/DEVELOPMENT_WORKFLOW.md § Release model).
 #
 # This action reads only the PR title via the API (no checkout of PR head), so `pull_request`
 # is safe — no untrusted code executes.

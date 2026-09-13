@@ -9,7 +9,7 @@ start PostgreSQL or run Gradle, it is stale (see the
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 22+
 - `gh` CLI, authenticated (`gh auth status`)
 - `git`
 - Python 3 (for the repo policy tooling)
@@ -33,6 +33,9 @@ make mcp-test                     # node --test suite (primary gate)
 make policy                       # repo-native guardrails + MCP lint + Vale
 ```
 
+To try your changes in an agent session, `npm link` from `mcp/ground-control` so the
+`grndctl` command runs your clone. Agents otherwise run the published package.
+
 ### Makefile targets
 
 | Target | Description |
@@ -44,6 +47,7 @@ make policy                       # repo-native guardrails + MCP lint + Vale
 | `make policy-tests` | Python unit tests for the policy tooling |
 | `make vale-lint` | Prose lint on changed docs |
 | `make hooks` | Activate + verify commit-time hooks for this clone |
+| `make docs` | Build the public docs (Read the Docs) with warnings as errors |
 | `make graphify` | (Optional) rebuild the disposable Graphify index |
 | `make help` | List all targets |
 
@@ -75,9 +79,10 @@ enforced by policy.
 
 - Target `dev`, not `main`.
 - **The PR title must be a Conventional Commit** (`type(optional-scope): lowercase
-  subject`), enforced by CI (`.github/workflows/pr-title.yml`). Release Please parses
-  merged commit history to compute the next version and changelog, so the title is
-  load-bearing, not cosmetic.
+  subject`), enforced by repository policy and the MCP PR boundary; the
+  `.github/workflows/pr-title.yml` job supplies advisory early feedback. Release
+  Please parses merged commit history to compute the next version and changelog,
+  so the title is load-bearing, not cosmetic.
 - CI must pass: the `node --test` suite, `make policy` (guardrails, MCP lint, Vale), and
   the SonarCloud gate.
 - Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md).

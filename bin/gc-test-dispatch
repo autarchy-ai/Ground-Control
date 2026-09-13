@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Ground Control host-wide verification resource dispatcher (GC-O016, ADR-096).
+
+Admits a verification command against a shared per-user CPU budget, then runs that
+exact command. See `docs/DEVELOPMENT_WORKFLOW.md` for the wrapping recipe.
+
+Installed as a real host copy by `bin/install-ground-control.sh`, never a symlink
+into a checkout: a command every repository on the host depends on must not change
+or break when one working tree is switched, moved, or deleted. The package is
+therefore resolved from the installed data directory, with the checkout layout kept
+as a fallback so the dispatcher is runnable straight out of a clone.
+"""
+
+import os
+import sys
+from pathlib import Path
+
+PACKAGE = "gc_dispatch"
+
+
+def _package_roots():
+    # Both roots are derived from this file's own resolved location or the XDG
+    # data directory. No environment variable may name a package root: importing
+    # dispatcher code from a caller-selected directory would put the admission
+    # logic itself under the control of the command being admitted.
+    yield Path(__file__).resolve().parents[1] / "tools"
+    data_home = os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
+    yield Path(data_home) / "ground-control"
+
+
+def main():
+    for root in _package_roots():
+        if (root / PACKAGE / "cli.py").is_file():
+            sys.path.insert(0, str(root))
+            break
+    else:
+        sys.stderr.write(
+            "gc-test-dispatch: the dispatcher package is not installed; "
+            "run bin/install-ground-control.sh from a Ground Control checkout\n")
+        return 70
+    from gc_dispatch.cli import main as dispatch_main
+
+    return dispatch_main(sys.argv[1:])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

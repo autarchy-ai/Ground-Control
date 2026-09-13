@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ciConclusionIsVerdictFailure, ciStationResult } from "./lib/ci-conclusion.js";
-import { ciGateFindings } from "./gate-finding-adapters.js";
+import { ciStationResult } from "./lib/ci-conclusion.js";
 
 test("a rejecting verdict is the only conclusion that reads as a defect", () => {
   assert.equal(ciStationResult("failure"), "fail");
-  assert.equal(ciConclusionIsVerdictFailure("failure"), true);
 });
 
 test("success is a pass", () => {
@@ -18,7 +16,6 @@ test("infrastructure and scheduling outcomes are not evaluable, not failures", (
   // dead runner was counted as the change being rejected.
   for (const conclusion of ["timed_out", "startup_failure", "queued_too_long", "stale"]) {
     assert.equal(ciStationResult(conclusion), "not_evaluable", conclusion);
-    assert.equal(ciConclusionIsVerdictFailure(conclusion), false, conclusion);
   }
 });
 
@@ -28,7 +25,6 @@ test("a run waiting on a human approval rendered no verdict", () => {
 
 test("cancellation has its own station result", () => {
   assert.equal(ciStationResult("cancelled"), "cancelled");
-  assert.equal(ciConclusionIsVerdictFailure("cancelled"), false);
 });
 
 test("a run that inspected nothing is coverage, not a pass", () => {
@@ -41,27 +37,4 @@ test("an unrecognized or absent conclusion defaults away from fail", () => {
   assert.equal(ciStationResult(null), "not_evaluable");
   assert.equal(ciStationResult(undefined), "not_evaluable");
   assert.equal(ciStationResult(""), "not_evaluable");
-});
-
-test("a non-verdict run with no failed steps synthesizes no finding", () => {
-  for (const conclusion of ["timed_out", "cancelled", "startup_failure", "queued_too_long"]) {
-    const result = ciGateFindings({ ok: true, conclusion, failed_steps: [] });
-    assert.deepEqual(result.findings, [], conclusion);
-  }
-});
-
-test("a rejecting run with no failed steps still explains itself", () => {
-  const result = ciGateFindings({ ok: true, conclusion: "failure", failed_steps: [] });
-  assert.equal(result.findings.length, 1);
-  assert.equal(result.findings[0].category, "failure");
-});
-
-test("failed steps are recorded regardless of how the run concluded", () => {
-  const result = ciGateFindings({
-    ok: true,
-    conclusion: "failure",
-    failed_steps: [{ job_name: "build", step_name: "compile" }],
-  });
-  assert.equal(result.findings.length, 1);
-  assert.equal(result.findings[0].category, "build/compile");
 });

@@ -4,11 +4,14 @@
 # whole repo and, unlike the sibling `trivy` job (`ignore-unfixed: true`), has no
 # built-in way to skip advisories with no upstream fix. The single entry below is
 # such a case, not a suppressed fixable finding: every vulnerability that HAS a
-# released fix is upgraded, not ignored (see the npm `overrides` bump and the
-# nltk 3.10.3 lock bump in this PR). This mirrors the trivy job's existing
+# released fix is upgraded, not ignored. This mirrors the trivy job's existing
 # ignore-unfixed policy for un-actionable findings; it is user-authorized.
+#
+# The same advisory is dismissed on GitHub Dependabot (alert 159, reason
+# `not_used`) on the reachability analysis recorded below. Keep the two records
+# in step: whatever closes one closes the other.
 
 [[IgnoredVulns]]
 id = "GHSA-8mgp-746c-j5xp"
-ignoreUntil = 2026-12-01
-reason = "No upstream fix available: this NLTK advisory (model-artifact APIs bypass pathsec and touch files outside allowed roots) affects the latest nltk release (3.10.3) with no fixed version published. nltk is a dependency of the lit-review-argument research skill only and is imported nowhere in the MCP server or the repo's CI/policy tooling; exploiting it requires loading an attacker-supplied NLTK model artifact, which no repository CI or runtime path does. Every nltk advisory that HAS a fix is cleared by the 3.10.0 -> 3.10.3 lock bump in this PR. Re-evaluate when nltk ships a fix (ignoreUntil 2026-12-01)."
+ignoreUntil = 2026-10-15
+reason = "NLTK model-artifact APIs bypass pathsec and touch files outside allowed roots (CVE-2026-81726). No released fix: nltk 3.10.3 is the latest PyPI release and is vulnerable, and the advisory publishes no fixed version. Upstream HAS merged the fixes (nltk PRs 3757, 3759 and 3813, merged to `develop` 2026-08-18 through 2026-08-28) but has not cut a release carrying them — `develop`'s VERSION still reads 3.10.3. Not reachable here: nltk enters the repo only as a dependency of the `lit-review-argument` research skill, whose upstream (argdown-feedback) imports exactly `nltk.sem.logic` and `nltk.tokenize.sent_tokenize`; the vulnerable modules (`nltk.parse.transitionparser`, `nltk.tag.perceptron`, `nltk.classify.maxent`, `nltk.chunk.named_entity`) are imported by neither that package nor anything in this repo, and the repo's only direct nltk calls are `nltk.data.find` and `nltk.download('punkt')` in validate-argument-map.sh. The skill is invoked by hand and runs in no CI job, and exploiting the advisory requires loading an attacker-supplied NLTK model artifact, which no repository CI or runtime path does. Action on expiry: re-pin nltk to the first upstream release carrying PRs 3757/3759/3813 and drop this entry (ignoreUntil 2026-10-15)."

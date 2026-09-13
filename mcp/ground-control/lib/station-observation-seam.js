@@ -11,7 +11,6 @@ import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { readPriorCodexReviewPrePushCycleCount } from "./codex-verify-cap.js";
 import { readPriorTestQualityReviewCycleCount } from "./test-quality-runner.js";
 import { resolveNonVerdictRetryLimit, runStationWithNonVerdictRetry } from "./review-reattempt.js";
-import { REVIEW_STATION_BY_REVIEWER, _emitReviewStationAttempt } from "./review-station-emission.js";
 import {
   postStationObservationEscalation,
   postStationObservationOpened,
@@ -19,6 +18,10 @@ import {
 
 /** `.ground-control.yaml` block name for each reviewer. */
 const REVIEWER_CONFIG_BLOCK = Object.freeze({
+  codex: "codex_review",
+  "test-quality": "test_quality_review",
+});
+export const REVIEW_STATION_BY_REVIEWER = Object.freeze({
   codex: "codex_review",
   "test-quality": "test_quality_review",
 });
@@ -75,20 +78,7 @@ export async function _runStationWithObservationLedger({
         attemptOrdinal,
       }),
     onAttempt: async (attempt) => {
-      // Only the unobserved attempts are emitted here. The attempt that renders a verdict is
-      // emitted by _runReviewCycleShared, where its findings are available to travel with it —
-      // emitting it twice would invent rework that never happened.
       if (attempt.station_result !== "not_evaluable") return;
-      // An outage is still a recorded attempt: `not_evaluable` keeps it out of the yield and
-      // iterations-to-green denominators while preserving the coverage fact that the gate ran.
-      await _emitReviewStationAttempt({
-        repoPath,
-        issueNumber,
-        reviewer,
-        stationResult: attempt.station_result,
-        findings: [],
-        findingsDropped: 0,
-      });
       if (observationOpened) return;
       ledger = await _resolveLedgerTarget(repoPath, ledger);
       if (ledger == null) return;

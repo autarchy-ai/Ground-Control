@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
-import json
 import os
 import posixpath
 import re
@@ -25,9 +24,6 @@ from .core import (
     GROUND_CONTROL_YAML_PATH,
     REPO_ROOT,
     Violation,
-)
-from .cli_safety import (
-    safe_cli_path,
 )
 
 
@@ -47,16 +43,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Positional repo-relative files to evaluate. Used by pre-commit.",
     )
     parser.add_argument("--files-env", help="Read newline-delimited files from an env var.")
-    parser.add_argument(
-        "--json",
-        dest="json_out",
-        help=(
-            "Write the violations and this run's duration to a JSON file, for the ADR-090 "
-            "measurement projection. Emitted at the gate's own boundary so the measurement layer "
-            "reads a structured artifact instead of re-running the gate or parsing its console "
-            "output. Never changes the exit code."
-        ),
-    )
     parser.add_argument("--staged", action="store_true", help="Read staged files from git.")
     parser.add_argument(
         "--skip-pr-body",
@@ -93,30 +79,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     return parser.parse_args(argv)
-
-
-def write_violations_json(path: str, violations: list[Violation], duration_ms: int) -> None:
-    """Write this run's violations as structured data (issue #1355, ADR-090).
-
-    Fail-open: measurement must never change whether the policy gate passes, so a write failure
-    is swallowed. The gate's verdict is its exit code, not this file.
-    """
-    try:
-        safe_cli_path(path).write_text(
-            json.dumps(
-                {
-                    "station_id": "policy",
-                    "duration_ms": duration_ms,
-                    "violations": [
-                        {"code": v.code, "details": list(v.details)} for v in violations
-                    ],
-                },
-                indent=1,
-            ),
-            encoding="utf-8",
-        )
-    except (OSError, ValueError):
-        pass
 
 
 def render_and_exit(violations: list[Violation]) -> int:

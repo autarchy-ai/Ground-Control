@@ -44,19 +44,6 @@ export function sonarGatePassed(sonar) {
 }
 
 /**
- * Classify an observed Sonar envelope onto the station-result axis.
- *
- * A repo with no sonarcloud block skips the gate: that is coverage, not a pass,
- * and counting it as one would inflate first-pass yield with runs Sonar never
- * inspected.
- */
-export function sonarStationResult(sonar) {
-  if (!sonarGateEvaluable(sonar)) return "not_evaluable";
-  if (sonar.skipped === true) return "skipped_station";
-  return sonarGatePassed(sonar) ? "pass" : "fail";
-}
-
-/**
  * Describe why a non-passing gate failed, in terms the driver can act on.
  *
  * @returns {{sonar_gate: string, error: string, message: string, next_action: string}}

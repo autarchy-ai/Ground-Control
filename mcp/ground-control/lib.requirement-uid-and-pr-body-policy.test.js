@@ -8,6 +8,9 @@
 
 import { before, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   EXACT_REQUIREMENT_UID_RE,
   PR_BODY_POLICY_CHECK_LINE,
@@ -141,7 +144,8 @@ describe("checkPrBodyShape (policy-shape predicate)", () => {
       summary: "ok",
       changes: ["thing"],
       traceability: { implements: ["GC-O007 ← a"], tests: ["GC-O007 ← b"] },
-      changelogFragment: "changelog.d/868.changed.md",
+      changelogFragment: null,
+      changelogMode: "release-please",
       ...overrides,
     });
   }
@@ -225,7 +229,7 @@ describe("checkPrBodyShape (policy-shape predicate)", () => {
 describe("runRenderPrBody (policy enforcement at the tool boundary)", () => {
   function baseInput(overrides = {}) {
     return {
-      repoPath: process.cwd(),
+      repoPath: path.resolve(process.cwd(), "../.."),
       issueNumber: 868,
       changeClass: "source",
       requirementUids: ["GC-O007"],
@@ -233,7 +237,8 @@ describe("runRenderPrBody (policy enforcement at the tool boundary)", () => {
       summary: "ok",
       changes: ["thing"],
       traceability: { implements: ["GC-O007 ← a"], tests: ["GC-O007 ← b"] },
-      changelogFragment: "changelog.d/868.changed.md",
+      changelogFragment: null,
+      changelogMode: "release-please",
       ...overrides,
     };
   }
@@ -242,6 +247,31 @@ describe("runRenderPrBody (policy enforcement at the tool boundary)", () => {
     assert.equal(r.ok, true);
     assert.ok(r.body.includes("## Summary"));
     assert.ok(r.byte_length > 0);
+  });
+  it("rejects release-please mode when the target repo has no Release Please config", async () => {
+    const repoPath = mkdtempSync(path.join(tmpdir(), "gc-pr-body-"));
+    try {
+      const r = await runRenderPrBody(baseInput({ repoPath }));
+      assert.equal(r.ok, false);
+      assert.equal(r.error, "pr_body_changelog_mode_mismatch");
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+  it("rejects fragment mode when the target repo uses Release Please", async () => {
+    const repoPath = mkdtempSync(path.join(tmpdir(), "gc-pr-body-"));
+    try {
+      writeFileSync(path.join(repoPath, "release-please-config.json"), "{}\n");
+      const r = await runRenderPrBody(baseInput({
+        repoPath,
+        changelogMode: "fragments",
+        changelogFragment: "changelog.d/868.changed.md",
+      }));
+      assert.equal(r.ok, false);
+      assert.equal(r.error, "pr_body_changelog_mode_mismatch");
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
   });
   it("renders bodies whose caller-supplied fields contain deferral language — downstream catches it (codex cycle-4 F1)", async () => {
     // The JS-side Tier-1 detector was removed in the cycle-4 fix because it

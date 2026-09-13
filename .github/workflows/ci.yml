@@ -56,19 +56,7 @@ jobs:
           path: ~/.cache/pre-commit
           key: ${{ runner.os }}-pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
       - name: Pre-commit file hygiene and secret scan
-        run: |
-          for hook in \
-            trailing-whitespace \
-            end-of-file-fixer \
-            check-yaml \
-            check-json \
-            check-added-large-files \
-            check-merge-conflict \
-            detect-private-key \
-            gitleaks
-          do
-            pre-commit run "$hook" --all-files
-          done
+        run: pre-commit run --all-files
       # The policy tests include a renderer-vs-check_pr_body compose check that
       # spawns `node tools/render_pr_body_fixture.mjs`, which imports the MCP
       # server's lib.js — so the MCP node_modules must be present. Install them

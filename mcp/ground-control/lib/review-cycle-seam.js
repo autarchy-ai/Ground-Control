@@ -4,11 +4,9 @@
 // (docs/CODING_STANDARDS.md, Sonar S104). It contained no mutual recursion, so it was
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
-import { reviewGateFindings } from "../gate-finding-adapters.js";
 import { runCodexReview } from "./codex-review-runner.js";
 import { runPostDecisionRecord } from "./decision-records.js";
 import { _statusForReviewerAction, buildAutoFixDecisionFindings, normalizeReviewCycleNextAction, reviewCycleFindings, summarizeReviewFindings } from "./knowledge-capture.js";
-import { _emitReviewStationAttempt } from "./review-station-emission.js";
 import { verifyAutoDispositionGrant } from "./review-cap-disposition-2.js";
 import { runTestQualityReview } from "./test-quality-runner-2.js";
 import { _decorateUnobservedStation, _runStationWithObservationLedger } from "./station-observation-seam.js";
@@ -70,19 +68,6 @@ async function _runReviewCycleShared({
       ...diffFields,
     };
   }
-
-  // The verdict's findings travel with the attempt that rendered it. The attempt itself was
-  // already recorded at the execution boundary (issue #1476) — including the `not_evaluable`
-  // attempts a transient failure produces, which the old cycle-consumed placement could not see.
-  const reviewFindings = reviewGateFindings(findings, reviewer);
-  await _emitReviewStationAttempt({
-    repoPath,
-    issueNumber,
-    reviewer,
-    stationResult: status === "clean" ? "pass" : "fail",
-    findings: reviewFindings.findings,
-    findingsDropped: reviewFindings.dropped,
-  });
 
   // Otherwise: post the auto-fix decision record. The cycle was
   // consumed by the review, so the decision record must be posted —

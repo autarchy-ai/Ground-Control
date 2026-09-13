@@ -130,15 +130,13 @@ routing:
       provider: claude
       model: claude-sonnet-5
 
-telemetry:
-  enabled: false
 ```
 
 Config contract:
 
 - `schema_version` is required and currently must be `1`.
 - `project` is required and must be a lowercase identifier using letters, numbers, and hyphens.
-- Unknown top-level keys are rejected. Current top-level keys are `schema_version`, `project`, `github_repo`, `workflow`, `sonarcloud`, `rules`, `knowledge`, `docs`, `example_paths`, `requirements`, `cross_cutting_concerns`, `routing`, `telemetry`, `architecture`, and `short_code`. A legacy `grc` key from a pre-retirement config is still tolerated (not a schema-validation failure) so an existing consumer repo's config does not break, but it is ignored input, not a supported configuration surface (ADR-089); do not add new `grc.*` config.
+- Unknown top-level keys are rejected. Current top-level keys are `schema_version`, `project`, `github_repo`, `workflow`, `sonarcloud`, `rules`, `knowledge`, `docs`, `example_paths`, `requirements`, `cross_cutting_concerns`, `routing`, `architecture`, and `short_code`. Legacy `grc` and `telemetry` keys are tolerated so existing consumer configs do not break, but both are ignored inputs rather than supported configuration surfaces (ADR-089, issue #1303).
 - `workflow.*` values are optional non-empty strings. `workflow.base_branch` must be a safe Git ref name using `[A-Za-z0-9._/-]`.
 - `sonarcloud` is optional, but when present it must include non-empty `project_key` and `organization`. `sonarcloud.quality_gate` and `sonarcloud.analysis_check` are optional non-empty strings. `analysis_check` names the CI check-run or workflow that publishes this repo's Sonar analysis, so the watcher can tell "the analysis has not landed yet" from "no analysis is coming" (issue #1559); absent, any check whose name or workflow name matches `/sonar/i` is treated as the producer. It selects an existing producer - it never asserts that a scan may be skipped.
 - `rules.plan_rules` is optional and points to the repo-relative plan-rules file whose content is inlined into `gc_get_repo_ground_control_context`.
@@ -152,7 +150,6 @@ Config contract:
 - Routing stages use lowercase stage keys matching `[a-z][a-z0-9_-]*`. Route fields are `tier`, `provider`, and `model`.
 - Routing `tier` is one of `low`, `medium`, or `high`; `provider` currently supports `claude`. Routing is advisory metadata and does not select an executor or force delegation.
 - Claude model values in executable routing config must be canonical CLI ids such as `claude-haiku-4-5`, `claude-sonnet-5`, or `claude-opus-4-8`; display aliases like `sonnet-4.6` are rejected.
-- `telemetry.enabled` defaults to `false` and per-step telemetry is retired (issue #1500): the projection it recorded into lived in the removed backend, so the orchestrator makes no telemetry call and nothing is written. Any `.gc/telemetry/*.jsonl` files left on disk are inert historical artifacts; they are gitignored, nothing writes them, and the local summarizer that read them was removed in #1507.
 
 `AGENTS.md` should still carry a brief `Ground Control Context` section that points agents at `.ground-control.yaml` and `.gc/`, so repo newcomers know where the workflow config lives.
 
@@ -224,7 +221,7 @@ flowchart TB
 
 - **Yellow** nodes are user touchpoints. Per ADR-029, the workflow has **one** synchronous human touchpoint: PR merge (the `End` node). Plans are posted to the GitHub issue thread (S5) and the agent proceeds without waiting; review findings and decisions on findings are also recorded on the issue thread.
 - **Specs-as-code transition ordering (issue #1541, superseding #963).** The requirement `DRAFT→ACTIVE` transition (Step 15) and traceability reconciliation (Step 16) are requirement-file edits made in the delivery diff, **before publish**, so they are reviewed in and merged by the PR. Phase D ends at a **pre-merge readiness record** (Step 17 `phase="pre_merge"`, carrying a `ready_for_review` marker) that names that requirement state as *proposed* and STOPS for the user to merge. **Phase E is validation-only**: re-entered by re-running `/implement <issue>` (Step 1 detects the `ready_for_review` marker + a merged PR + no `gc:final-report` marker and short-circuits to Step 17 `post_merge`), it makes no requirement-file edits - it re-derives scope from the issue and verifies every requirement at the linked PR's immutable merge revision, refusing (`completion_requirement_state_unverified` / `completion_scope_mismatch`) before the final report on any mismatch and rendering the observed merged values. `gc_assert_completion phase="post_merge"` remains merge-gated (`completion_pr_not_merged`). This fixes the #963 ordering, which stranded post-merge requirement edits off the target branch once requirements became repo-local files (#1500); a reviewed-but-abandoned PR leaves the requirement DRAFT because its transition never merged.
-- **Entry is always by issue.** Step 1 resolves the input to a GitHub issue (either directly or via a UID → issue shim) and parses the `## Requirements` section from the issue body into `in_scope_requirements[]`. The list may be empty (bug fix / refactor) or contain one or many UIDs (grouped implementation). Everything downstream treats the issue as the authoritative context and the list as the set of requirements to be transitioned to `ACTIVE` on completion. Step 1 also creates the feature branch with a **bounded short-slug name** `<issue-number>-<short-slug>` (at most 50 characters, lowercase ASCII, digits, and hyphens). `gc_prepare_implement_branch` is the only branch-mutation path: it creates or switches the branch inside the invocation checkout with fixed argv and cwd, then verifies that the canonical top level, Git directory, origin, and branch shape are unchanged and compliant. The skill never runs a branch recipe itself, and it never relocates into another worktree. The tool **validates the branch it hands back against the same rule**, because an existing branch may predate the rule; an unbounded name derived from a full issue title breaks terminal display, copy-paste, CI breadcrumbs, and downstream shell quoting. A structured branch failure is an execution obligation: repair it when safe, or record an escalated obligation with a concrete decision request when it needs authority the run does not have. Slug derivation rule, validation predicate, and worked examples live in `skills/implement/steps/step-01-issue-branch-resolution.md`. Step 1 then flags the resolved issue **in-progress**: an `in-progress` label (created on demand if the repo lacks it) plus a pickup comment on the thread recording the driver, the checked-out branch, and a timestamp; a maintainer scanning `/issues`, or another agent, sees at a glance that work is underway. The in-progress label removal is optional best-effort after Step 17 completion; it is no longer a mandatory gate (#1103). For a requirement-backed run the PR body uses a non-closing `Refs #<issue-number>` (issue #1541), so the issue stays open at merge and is closed only by the validated `gc_close_issue_after_merge` in Phase E (after merged requirement-state validation); a requirement-free run keeps `Closes #<issue-number>` and GitHub auto-closes at merge. A run that escalates to the user without completing intentionally leaves both the label and the issue open, because the issue *was* picked up but the work is paused, not finished.
+- **Entry is always by issue.** Step 1 resolves the input to a GitHub issue (either directly or via a UID → issue shim) and parses the `## Requirements` section from the issue body into `in_scope_requirements[]`. The list may be empty (bug fix / refactor) or contain one or many UIDs (grouped implementation). That section is scope *input*, and `gc_update_issue_requirements` is its only supported writer: when a run introduces a requirement mid-flight under Step 4's structural-gate rule, the anchoring UID has to reach the section or no authority reads it - the mechanical gates refuse it as out of scope and Phase E's merged-state verification derives an empty scope and verifies nothing (issue #1569). `add` unions onto the current scope and can never drop a UID, while `remove` is a separate explicit operation requires a durable authorization comment on the issue from a user with repository write access naming the exact UID set, so no agent action alone can narrow the scope the completion gates verify; every UID remaining in the result must resolve to `docs/requirements/<UID>/requirement.md` with a frontmatter `id` matching its directory; the write is bounded to that section and verified by re-parsing the stored body with the same extractor the gates read; and re-running with the same set writes nothing. No skill or agent edits an issue body directly (ADR-027). Everything downstream treats the issue as the authoritative context and the list as the set of requirements to be transitioned to `ACTIVE` on completion. Step 1 also creates the feature branch with a **bounded short-slug name** `<issue-number>-<short-slug>` (at most 50 characters, lowercase ASCII, digits, and hyphens). `gc_prepare_implement_branch` is the only branch-mutation path: it creates or switches the branch inside the invocation checkout with fixed argv and cwd, then verifies that the canonical top level, Git directory, origin, and branch shape are unchanged and compliant. The skill never runs a branch recipe itself, and it never relocates into another worktree. The tool **validates the branch it hands back against the same rule**, because an existing branch may predate the rule; an unbounded name derived from a full issue title breaks terminal display, copy-paste, CI breadcrumbs, and downstream shell quoting. A structured branch failure is an execution obligation: repair it when safe, or record an escalated obligation with a concrete decision request when it needs authority the run does not have. Slug derivation rule, validation predicate, and worked examples live in `skills/implement/steps/step-01-issue-branch-resolution.md`. Step 1 then flags the resolved issue **in-progress**: an `in-progress` label (created on demand if the repo lacks it) plus a pickup comment on the thread recording the driver, the checked-out branch, and a timestamp; a maintainer scanning `/issues`, or another agent, sees at a glance that work is underway. The in-progress label removal is optional best-effort after Step 17 completion; it is no longer a mandatory gate (#1103). For a requirement-backed run the PR body uses a non-closing `Refs #<issue-number>` (issue #1541), so the issue stays open at merge and is closed only by the validated `gc_close_issue_after_merge` in Phase E (after merged requirement-state validation); a requirement-free run keeps `Closes #<issue-number>` and GitHub auto-closes at merge. A run that escalates to the user without completing intentionally leaves both the label and the issue open, because the issue *was* picked up but the work is paused, not finished.
 - **Steps 1–4** gather context and run the codex architecture preflight before any code is written. Step 4 also consults the repo knowledge base via the index if one is present.
 - **Step 6** is TDD (red → green → refactor per clause) under four explicit paths: **A**, new requirement/feature (test the missing behavior first); **B**, shipped-code bug fix (reproduce the reported defect on the unmodified buggy tree before repair); **C**, reviewer-finding fix (lock executable or runtime-data repairs with regression evidence in the same review cycle); and **D**, prose-only/static contract narrowing (the existing documentation-only carve-out may apply). Step 1's feature/bug-fix/mixed `implementation_intent` is informational; the Step 4 plan assigns the authoritative `tdd_path` per clause, so mixed issues use multiple paths. Runtime configuration, schemas, grammars, fixtures, policy data, and executable renames cannot use the documentation-only carve-out. Steps 7–8 are the local quality gate. The carve-out lives in `skills/implement/steps/step-04.4-tdd.md` and remains limited to diffs with no executable behavior whose claims are protected by an existing structural gate (policy check, schema validator, lint rule, verifier script). It must be declared in the plan and re-stated as an issue comment naming the gate; substring/snapshot tests written only to satisfy TDD wording are explicitly disallowed. The completion gate re-validates it with a two-check sweep over the union of committed, staged, unstaged, and untracked paths (Step 6 runs before stage-and-commit, so working-tree state is part of the diff): every path must be in the documentation set AND every diff hunk's content must be free of executable behavior; a path check alone isn't enough, because a doc file can still carry executable behavior.
 - **The completion gate (step 8)** runs `cfg.workflow.completion_command` and `cfg.workflow.policy_command` on the final tree and blocks the run on either failing. In this repository those are `make mcp-test` and `make policy`. The server-side project quality-gate evaluation that once ran here (`gc_assert_quality_gates`, issue #1101) was retired with the backend it queried; the repo-native guardrails in `make policy` are the surviving gate, and requirement traceability is verified against the merged files at Step 17.
@@ -233,7 +230,7 @@ flowchart TB
 - **Fix-locks-itself evidence (Steps 6.5 and 6.6).** Both reviewers use the canonical rule in `skills/implement/steps/_review-loop-rules.md`: each accepted fix to executable code or a runtime-consumed data contract adds or extends a test that fails when the named defect is reintroduced, and self-verification records the test path plus case/describe name. Pure prose may state that there is no executable surface to lock; narrowly factual rename or defensive-narrowing exceptions remain per-finding rationales and do not turn an executable diff into documentation-only work. Cycle wrappers auto-post the decision before the repair, so the record cannot truthfully cite later test evidence; no MCP record lifecycle or schema changes in issue #871.
 - **Automated cap disposition (optional, default off; issue #1245).** When `workflow.review_disposition.enabled` is true, the cap boundary at Step 6.5 / 6.6 is dispositioned automatically instead of always stopping for the user. After the last-in-cap findings are fixed, self-verified, and re-staged, the orchestrator calls `gc_review_cap_disposition`, which scores the **post-fix** diff server-side (diff size, changed-surface class, finding shape, and prior auto-overrides) and returns `proceed` (advance), `one_more_cycle` (re-invoke the cycle tool with `override_cap=true` + `auto_grant=true`), or `escalate_to_human` (stop for the user as today). A gray-zone LLM judge ranks only the residual undecided band; it can never override the deterministic ceiling/fast paths. Authority for the one auto-granted over-cap cycle is a durable `gc:review-auto-disposition` marker the tool posts, **not** agent `override_reason` text; the cycle wrappers verify the marker before honoring `auto_grant=true`. A hard `max_auto_overrides` ceiling (default 1) caps the auto path at one extra cycle; beyond it only the human `override_cap` escape proceeds. `mode: shadow` (the enabled default) posts the disposition but still escalates, building agreement data before `mode: authoritative` lets the disposition drive control flow. This repo runs the enabled workflow in `mode: authoritative`, so approved dispositions drive the next step automatically. With the knob off, behavior is byte-for-byte unchanged. Enforced in the MCP layer (ADR-031 / ADR-029 amendments, GC-O007).
 - **Deterministic execution bands (#1426/#1473).** Successful-path mechanical work is composed by `gc_implement_mechanical` instead of consuming a separate model turn per step: `bootstrap` gathers Steps 1–2 context and pickup state, `verify` runs Step 6, `publish` runs Steps 7–8.5, `monitor` runs Steps 10–11, `readiness` records Step 17 pre-merge, and `finalize` runs Step 17 post-merge plus Step 20. The canonical `/implement` and `/quickfix` workflows call the three long actions (`verify`, `publish`, `monitor`) with `async: true` and one bounded `idempotency_key` per logical attempt, then poll `gc_codex_job`; short actions remain synchronous. The same key and normalized input reuse one running or terminal job, different input under the key is refused, and distinct active `verify`/`publish` attempts cannot race on one checkout. A terminal job preserves the action envelope under `result`: red tests, hooks, merge conflicts, CI, or Sonar are completed jobs with `result.ok: false` and bounded repair evidence, not transport failures. After repair the caller uses a new key. Publish conflicts retain the exact synchronization evidence required to resume the preserved merge. Mechanical jobs return `job_not_cancellable` because their full subprocess and polling graph does not yet honor abort; the `publish` hang this closes is prevented instead by the shared gate runner reaping its process tree on the leader's exit (a leaked descendant can no longer hold the stdout pipe and keep the runner running after every visible child has exited), a per-worktree mutation lease, a versioned write-ahead recovery journal, a pre-commit compare-and-swap on `HEAD`/`MERGE_HEAD`, and restart-time reconciliation that resumes a journal-matching merge through the base-sync retry contract or refuses ambiguous state without mutating (issue #1495, ADR-036). Architecture, implementation, review finding decisions, and post-merge traceability reconciliation remain agent work.
-- **Requirement identity for repository gates (#1434).** A repository whose completion, policy, or pre-commit command runs a requirement-governance check normally derives the requirement under test from the branch name. `/implement` can target a requirement whose issue branch carries no UID, so an optional `requested_requirement_uid` on `gc_implement_mechanical` and `gc_synchronize_implement_branch` reaches every repo-authored gate as the `ACES_REQUIREMENT_UID` environment variable: the `verify` completion and policy commands, the `publish` pre-commit command, and both final-tree gates at Step 8.5, including the committed-retry path. The value travels in the child environment rather than the command text, so it never enters argv and offers no interpolation point. A well-formed UID is not authority: every action that can reach a gate resolves the requested UID server-side against the target issue's canonical Requirements section and refuses an unlisted one before any gate runs. Each of these actions is independently callable, so `bootstrap`'s membership check protects only its own entry point; without the shared binding a caller could name a requirement from another issue or project and have the repository's governance gate evaluated, and attested, against it. Omitting the input changes nothing: no variable is injected, and branch-derived governance behaves exactly as before. The environment is the only place the value exists; it is never added to result envelopes, telemetry, synchronization markers, or issue comments.
+- **Requirement identity for repository gates (#1434).** A repository whose completion, policy, or pre-commit command runs a requirement-governance check normally derives the requirement under test from the branch name. `/implement` can target a requirement whose issue branch carries no UID, so an optional `requested_requirement_uid` on `gc_implement_mechanical` and `gc_synchronize_implement_branch` reaches every repo-authored gate as the `ACES_REQUIREMENT_UID` environment variable: the `verify` completion and policy commands, the `publish` pre-commit command, and both final-tree gates at Step 8.5, including the committed-retry path. The value travels in the child environment rather than the command text, so it never enters argv and offers no interpolation point. A well-formed UID is not authority: every action that can reach a gate resolves the requested UID server-side against the target issue's canonical Requirements section and refuses an unlisted one before any gate runs. Each of these actions is independently callable, so `bootstrap`'s membership check protects only its own entry point; without the shared binding a caller could name a requirement from another issue or project and have the repository's governance gate evaluated, and attested, against it. Omitting the input changes nothing: no variable is injected, and branch-derived governance behaves exactly as before. The environment is the only place the value exists; it is never added to result envelopes, synchronization markers, or issue comments.
 - **Steps 7–11** stage, commit, push, synchronize the remote integration branch, open the PR, and block on CI + SonarCloud. **Step 8.5 pre-PR synchronization (#1421):** `gc_synchronize_implement_branch` fetches the configured base into `refs/remotes/origin/<base>` with an explicit refspec and either records `already_current` or leaves a real `--no-ff --no-commit` merge for final-tree verification/conflict resolution in the invocation checkout. It verifies the merge graph, pushes normally, and posts a trusted versioned issue-thread attestation containing the fetched-base and resulting-feature SHAs. Step 9 renders the body, then `gc_create_synchronized_implement_pr` re-fetches the base and refuses the GitHub write unless that attestation, the local head, and the remote feature head still match. The canonical workflow has no direct CLI PR-creation fallback. **PR title format (issue #901):** Step 9 validates the title locally and again at the MCP creation boundary. The title uses one conventional-commit type with optional scope and a lowercase-leading subject; per-repo `workflow.pr_title` overrides remain authoritative.
 - **Tiered publish verification (#1497).** When `workflow.verification.toolchain_fingerprint_command` is configured, the `verify` action posts a content-addressed **verification attestation** to the issue thread (`gc.implement.verification-attestation/v1`) binding the exact staged tree, the freshly resolved base commit, the requirement context, a normalized command/config + schema digest, and a repo-supplied toolchain-input digest. The publish band reuses it instead of re-running the authoritative completion + policy gates on an unchanged tree: base synchronization's already-current path skips the gates only when a trusted attestation matches every binding, and re-runs full verification (then attests the result) on any miss; a merge attests the final merged tree. `precommit_command` still runs on every publish (the mutation-sensitive layer), CI/SonarCloud remain the independent remote authority, and reuse is fail-closed: absent, malformed, untrusted, or non-matching evidence re-runs full verification, never an assertion. Absent the config the feature is off and behavior is byte-for-byte unchanged. `verify` also returns a per-gate `timings` list with the `dominant_gate`, and a long async sweep exposes a bounded `progress` snapshot through `gc_codex_job` (current phase + last child-output activity) so a healthy sweep is distinguishable from a dead job. Design record: `architecture/notes/tiered-publish-verification-preflight.md`.
 - **Step 11 distinguishes an unevaluable gate from open findings (#946).** `gc_watch_sonar_analysis` can return an envelope in which no analysis was read at all: the MCP host has no `SONAR_TOKEN`, the repository or inputs are wrong, a fetch failed, or SonarCloud published nothing for the pull request within the watch window. The `monitor` action classifies those as `sonar_gate: "not_evaluable"` and answers with a repair that fits - `provision_sonar_token_on_mcp_host_then_rerun_monitor`, `diagnose_sonar_watch_failure_then_rerun_monitor`, or `rerun_monitor_after_sonar_analysis_completes` - rather than `fix_sonar_findings_then_rerun_publish_and_monitor`, which names code defects that were never read and which no driver can act on. Only a gate that actually returned open issues or hotspots stays `sonar_findings_open`, and only that consumes a Step 11 fix cycle. The station axis follows the same rule as CI's (`lib/ci-conclusion.js`): a gate that inspected nothing records `not_evaluable`, never a `fail` verdict. A green `SonarCloud Code Analysis` check-run is never a substitute - it says the hosted quality gate did not fail, not that the issue and hotspot lists are empty, which is what Step 11 requires.
@@ -288,7 +285,7 @@ The legacy `Skill("review-tests")` path was removed in #884 v2. Existing host in
 
 Claude does NOT merge. The user reviews the PR and merges.
 
-## Per-step routing, tool surfaces, and telemetry (ADR-036)
+## Per-step routing and tool surfaces (ADR-036)
 
 Per ADR-036 the `/implement` skill carries three cost-side optimizations layered on top of the GC-O007 gate model (which is unchanged on the contract - one human touchpoint at PR merge, ADR-029's configurable pre-push Codex cap [default 1 cycle per #906; per-repo override via `workflow.codex_review.pre_push_cap`], zero deferral, four-phase structure).
 
@@ -297,19 +294,8 @@ Per ADR-036 the `/implement` skill carries three cost-side optimizations layered
 | Per-step routing | Each step carries a provider-neutral tier (`low`, `medium`, `high`); `gc_resolve_workflow_route` resolves advisory provider/model/tier metadata from `.ground-control.yaml`. The primary invocation session remains the normal executor for all drivers; Ground Control does not manufacture subagents for routine work. | `.ground-control.yaml` → `routing.enabled` (default `false`) plus optional `routing.stages.<stage>` overrides |
 | Durable-record MCP tools | `gc_post_decision_record` (Step 6.5 cycle decisions), `gc_post_final_report` (Step 17 final report, invoked via `gc_assert_completion`), `gc_render_pr_body` (Step 9 PR body) replace agent free-prose with deterministic structured-input renderers. `gc_render_pr_body`'s evidence envelope is repo-neutral (#1199): semantic, stack-agnostic attestations, never configured command strings. All three filter sensitive content, post under a structured marker family, and reject `decision: "defer"` server-side. `gc_post_final_report` also requires `/implement` callers to pass `plain_english_outcome`, which renders an Outcome section before the structured evidence. `gc_render_pr_body` takes `lane` and `pre_push_reviews` (issue #1551) to decide which pre-push review attestation the Ground Control Checks section carries: `/implement` leaves both unset and attests that Steps 6.5/6.6 completed, while a `/quickfix` run whose reviewers were off attests that they did not run. Every body still carries one of the two attestations, and only `lane: "quickfix"` may claim the reviewers did not run. | Always available; SKILL calls them unconditionally once the tools are present |
 | Merged requirement-state + post-merge close gates (#1058/#1156/#1103/#1541) | `gc_assert_completion` (Step 17). `phase="post_merge"` is merge-gated, then re-derives in-scope UIDs from the issue and verifies every requirement at the linked PR's immutable merge revision (UID path, frontmatter id, expected status, required traceability), refusing (`completion_requirement_state_unverified` / `completion_scope_mismatch`) before `gc_post_final_report` on any mismatch and rendering observed merged values; `override` + `override_reason` is the recorded escape hatch. The requirement transition and traceability edits are made pre-publish in the delivery diff (issue #1541). `gc_close_issue_after_merge` (Step 20 / Phase E) verifies the linked PR's `merged_at` non-null AND state `MERGED`, and - for an open issue - a trusted `gc:final-report` marker before closing; idempotent on already-closed issues; only resolution, verification, and closure - no next-issue recommendation (ADR-089). Requirement-backed runs use a non-closing `Refs #<n>`; requirement-free runs keep `Closes #<n>`. The /quickfix lane is requirement-free and exempt from the merged-state and outcome gate. | Always on for `/implement`; `lane: "quickfix"` opts out of the merged-state and outcome prerequisites |
-| Per-step telemetry | Retired with the backend projection it wrote to (issue #1500). `telemetry.enabled` is `false` and the orchestrator makes no telemetry call, so nothing is recorded per step. Any `.gc/telemetry/*.jsonl` files left on disk are inert historical artifacts; they are gitignored, nothing writes them, and the local summarizer that read them was removed in #1507. | `.ground-control.yaml` → `telemetry.enabled` (default `false`) |
 
 Each new tool is deterministic and structured-input/output, with no LLM call in the tool itself.
-
-### Workflow-run recording (issue #1435, ADR-061)
-
-The ADR-061 reporting projection that `gc_implement_mechanical` wrote run and
-station events into lived in the backend the #1500 re-platform removed, so
-nothing is recorded today. `GC_BASE_URL` remains the optional emission sink in
-`mcp/ground-control`: unset, which is the default, the emitter is disabled and
-the server never attempts the call. Recording was always fail-open and off the
-control path, so no phase behaves differently with it inert. The GitHub issue
-thread is the durable workflow record (ADR-029) and is unaffected.
 
 ## Review Pipeline
 
@@ -364,20 +350,6 @@ After editing a hook file under `.claude/hooks/` in the repo, re-run `scripts/bo
 
 One user-level hook is deliberately NOT in the repo: `~/.claude/hooks/block-break-system-packages.sh`. It's a generic pip/apt safety gate unrelated to the Ground-Control workflow, so it stays host-local and `bootstrap-claude-workflow.sh` leaves it alone.
 
-#### Stop Hook - `verify-implementation.sh`
-Blocks Claude from completing, but **only when `/implement` was invoked in the current session**. Scoped by process ID (`$PPID`) so concurrent Claude windows on the same branch don't interfere.
-
-Universal checks (all repos):
-- The former changelog-fragment check was retired by issue #1399 (GC-P027): Release Please now owns `CHANGELOG.md`, generating it from Conventional Commit history on `main`, so there is no per-PR `changelog.d/` fragment left to enforce. What replaced it runs in CI, not this host-local hook: product-version-mirror consistency (`tools/policy/checks.py::run_version_mirror_consistency_check`, code `version-mirror-drift`) and the Conventional Commit PR-title gate (`.github/workflows/pr-title.yml`). See § Release model below.
-
-Project-specific checks (`.claude/hooks/verify-extra.sh`, sourced if present):
-- shared repo-native policy script (`bin/policy`) over the changed-file set
-
-The hook no longer enforces `/review` and `/security-review` - those were removed from the `/implement` skill in favor of `gc_codex_review` + `gc_test_quality_review`. The `/implement` skill itself is the enforcement point for review coverage; the hook only guards repo policy (`bin/policy`) now that the changelog signal has moved to CI.
-
-#### Skill Call Logging - `log-skill-call.sh`
-PostToolUse hook on `Skill` - writes JSONL to `/tmp/claude-skill-log/<PID>.jsonl` (per-session, not per-branch). The Stop hook previously read this log to verify `/review` and `/security-review` were actually invoked; it's still wired up for forward compat in case we reintroduce skill-based checks. Stale logs (>24 h) are auto-pruned.
-
 #### Git Merge Guard - `git-merge-guard.py`
 PreToolUse hook on `Bash`. The user owns every protected-branch merge and every pull-request merge. Blocked unconditionally: `gh pr merge`, `git reset --hard`, and a plain `git push --force` / `git push -f`. A `git push --force-with-lease` to a *feature* branch is allowed (that's the rebase-feature-branch-onto-base-then-update-the-PR flow), but a force-push of any kind to a ref named `main` or `dev` is blocked.
 
@@ -414,15 +386,42 @@ The guard is a pre-execution *lexical* policy control, not an OS sandbox. It pro
   predecessor (`tools/tests/test_ci_topology.py`) was deleted along with the
   jobs it described, which is how five dead contexts survived the #1500
   re-platform unnoticed. See `docs/ci/CI_PIPELINE.md`.
-- **Structured gate artifacts** (issue #1355, ADR-090 amendment). `bin/policy --json <path>`
-  and `GC_VALE_JSON` make the policy and Vale child gates emit a structured artifact at their
-  own boundary, so the `/implement` layer reads that artifact rather than re-running a gate or
-  parsing combined console output. The verdict vocabulary those artifacts feed is closed, and a
-  gate that could not be evaluated (a crashed child, a parser error, a timeout) is
-  `not_evaluable` rather than a failure, so an infrastructure problem never reads as a defect in
-  the change. The measurement projection that consumed these verdicts went with the backend
-  (issue #1500); the artifacts and the distinction survive because the review-station retry
-  contract still depends on them.
+- **Live branch-protection reconciliation** (`make branch-protection-check`,
+  issue #1155 / GC-P031 / ADR-091). The gate above compares two files in the
+  repository; this one compares the same baseline against the protection GitHub
+  actually enforces, which is a separate fact that had already diverged (live
+  `main` had strict status checks off while the baseline declared them on).
+  `.github/branch-protection-baseline.json` now declares each protected branch's
+  complete intended policy - required contexts and strictness plus the
+  pull-request, review, conversation-resolution, force-push, deletion, and
+  admin-bypass settings - and `bin/policy` asserts offline that every branch
+  declares exactly the governed fields at every mapping level - the baseline root,
+  the branch set, `required_status_checks`, `review_policy`, and the
+  bypass-principal collections - with their declared types
+  (`ci-required-context-baseline-malformed`), and that the two pinned values hold:
+  `strict` (`ci-required-context-not-strict`) and
+  `changes_land_via_pull_request` (`ci-required-context-pull-request-required`).
+  Only those two are pinned; flipping several of the others is a tightening, and a
+  gate that fails a tightening points the wrong way. The declaration, its schema,
+  and the single validating loader both halves read live in
+  `tools/policy/branch_protection_baseline.py`, so neither gate can compare a
+  value whose declared type was never checked; the pinned-value policy is in
+  `tools/policy/branch_protection_fields.py`. Value agreement against live state
+  is `tools/ci/branch_protection_compare.py`'s job behind the repository-bound,
+  read-only adapter in `tools/ci/check_branch_protection.py`, reported per branch
+  and field; it exits 0 on a match, 1 on drift, and 2 when a branch could not be
+  evaluated, and it never reports drift on a branch it could not read. Required
+  contexts are compared with the App bound to each one, and the review policy
+  includes the principals allowed to bypass a required pull request - both are
+  authorization-bearing, so comparing names and scalars alone would attest a
+  boundary that is not enforced.
+  It is **not** part of `make policy`: reading branch protection needs repository
+  administration permission, which is not a grantable GitHub Actions
+  `permissions:` scope, so in CI it could only skip silently - so it is an
+  explicitly invoked gate that always enforces when run. It is read-only;
+  reconciling live protection uses GitHub's narrow
+  `PATCH .../protection/required_status_checks` endpoint or the UI, never the
+  full-document `PUT`.
 - `make policy` is the common path for Claude, Codex, and CI; it runs the policy
   tool tests, the MCP ESLint gate (`make mcp-lint`), `bin/policy`, and Vale. The CI
   `policy` job runs the same `make mcp-lint` target as a required step, so an ESLint
@@ -502,9 +501,9 @@ the mechanics below.
   maintains a `chore(main): release X.Y.Z` PR that regenerates `CHANGELOG.md`
   from the Conventional Commit history and bumps any product-version mirrors
   declared in `release-please-config.json`'s `extra-files` to match
-  `.release-please-manifest.json`. That list is currently empty: the Gradle and
-  npm manifests it once named went with the re-platform, and the MCP server,
-  citation, and dependency versions are independent, not product mirrors. A
+  `.release-please-manifest.json`. The mirrors are the `grndctl` package version in
+  `mcp/ground-control/package.json` and `package-lock.json` (issue #1587); citation
+  and dependency versions are independent, not product mirrors. A
   human merges that PR the same way any
   other PR is merged - releases are cut by merging it, never by hand-tagging
   or hand-editing `CHANGELOG.md`.
@@ -515,10 +514,16 @@ the mechanics below.
 - **`main` to `dev` stays in sync.** `.github/workflows/sync-main-to-dev.yml`
   opens a back-merge PR after the release PR merges (main is ahead of dev by
   exactly the release commit); a human merges that too.
-- **Merging the release PR only cuts a release.** It tags `vX.Y.Z` and publishes
-  the GitHub Release. There is nothing to deploy: Ground Control ships as the MCP
-  server that a driver launches from the consuming checkout, so there is no image,
-  host, or running service behind a release.
+- **Merging the release PR cuts and publishes a release.** It tags `vX.Y.Z`,
+  publishes the GitHub Release, and the `publish-npm` job publishes the MCP server
+  and the workflow skills to npm as `grndctl` (issue #1587) with provenance, using
+  npm trusted publishing. Hosts install with `npm install -g grndctl`, point their
+  MCP config at `grndctl mcp`, and run `grndctl install-skills`; upgrading is
+  `npm update -g grndctl`. Agents therefore run a released version, never whatever
+  branch a Ground Control checkout happens to have checked out. The `NPM_TOKEN`
+  repository secret only bootstraps the first publish (npm cannot configure a
+  trusted publisher before the package exists); delete it once trusted publishing
+  is configured.
 
 See ADR-063 ("2026-07-15 Amendment: Release Please Ownership") for the full
 decision record.
@@ -683,6 +688,8 @@ Repo-local scripts live under `scripts/` (bash) and `bin/` (Python). The ones yo
 |---------|---------|
 | `scripts/bootstrap-claude-workflow.sh` | Wire the Claude-Code-only surfaces from `~/.claude/`: the `.claude/skills/<name>/` skills (symlinked - edit takes effect live) and the `WORKFLOW_HOOKS` allowlist under `.claude/hooks/` (**copied** as real files so runtime does not depend on which branch this repo is checked out to). Idempotent; safe to re-run. Pass `--dry-run` to preview, `--force` to clobber non-matching host content. The hook allowlist is explicit, so generic host-local hooks (for example, `block-break-system-packages.sh`) are left alone. Re-run after editing a hook file in the repo to push the new version into `~/.claude/hooks/`. Does **not** touch the `skills/<name>/` agent-neutral skills - that's `bin/install-skills.sh`'s job. |
 | `bin/install-skills.sh` | Install the agent-neutral `skills/<name>/` skills into `~/.claude/skills/<name>`, `~/.codex/skills/<name>`, `~/.codex/prompts/<name>.md` (legacy alias), and `~/.cursor/skills/<name>`. Claude/Codex symlink by default; Cursor always hard-copies (`scripts/test-cursor-skill-symlink.sh`). Pass `--copy` to hard-copy every target, `--dry-run` to preview, `--no-codex` / `--no-cursor` to skip those targets, `--force` to overwrite divergent host content. Idempotent; refuses to clobber unmanaged host targets without `--force`. |
+| `bin/install-ground-control.sh` | The general Ground Control host installer: the agent-neutral `skills/<name>/` skills plus the host-wide verification dispatcher. Skill installation is delegated verbatim to `bin/install-skills.sh`, so that script keeps its contract and its flags (`--copy`, `--no-codex`, `--no-cursor`, `--claude-dir`, and the rest) pass straight through. The dispatcher is installed as real **copies** at `~/.local/bin/gc-test-dispatch` and `${XDG_DATA_HOME:-~/.local/share}/ground-control/gc_dispatch/`, never a symlink into this checkout. Pass `--dry-run` to preview, `--force` to overwrite divergent host content, `--no-skills` or `--no-dispatcher` to install only one half. Idempotent. |
+| `bin/gc-test-dispatch` | The host-wide verification dispatcher (GC-O016, [ADR-096](../architecture/adrs/096-host-wide-verification-dispatcher.md)). Wraps a verification command so it is admitted against a shared per-user CPU budget before it runs. See [Host-wide verification dispatch](#host-wide-verification-dispatch). |
 | `bin/policy` | Run the repo-native policy guardrails (ADR sync, requirement-spec frontmatter, the `/implement` execution and workflow contracts, repo identity, version mirrors, file size, the repository-map freshness gate, and the PR-body contract). Invoked by `make policy` and CI. |
 | `bin/adr-guard` | ADR-specific policy checks run standalone. |
 | `bin/check-pr-body` | Validate a PR body against the required template. |
@@ -694,12 +701,17 @@ After cloning this repo onto a new host (or after any `rm -rf ~/.claude/skills/`
 
 ```
 scripts/bootstrap-claude-workflow.sh   # .claude/skills/* skills + the WORKFLOW_HOOKS allowlist under .claude/hooks/
-bin/install-skills.sh                  # skills/* (agent-neutral) into ~/.claude/skills, ~/.codex/skills, ~/.codex/prompts, ~/.cursor/skills
+bin/install-ground-control.sh          # skills/* (agent-neutral) + the host-wide verification dispatcher
 ```
+
+`bin/install-ground-control.sh` is the general, agent-neutral entry point: it runs
+`bin/install-skills.sh` for the skills and then installs `gc-test-dispatch`. Run
+`bin/install-skills.sh` directly when you want the skills alone; it remains the
+canonical skill installer and is unchanged.
 
 `scripts/bootstrap-claude-workflow.sh` walks:
 - `.claude/skills/*/` - every skill directory gets a matching `~/.claude/skills/<name>` **symlink**. Editing a skill in the repo takes effect immediately in the next session.
-- `.claude/hooks/` - only the hooks listed in the script's `WORKFLOW_HOOKS` allowlist (`git-merge-guard.py`, `block-defer-language.py`, `log-skill-call.sh`, `verify-implementation.sh`) are installed as **real file copies** at `~/.claude/hooks/<name>`. Editing a hook in the repo requires re-running this script to push the new version out. Repo-scoped hooks (`protect_files.sh`, `verify-extra.sh`) stay where they are because they're wired via `$CLAUDE_PROJECT_DIR` in `.claude/settings.json`, not via `~/.claude/`.
+- `.claude/hooks/` - only the hooks listed in the script's `WORKFLOW_HOOKS` allowlist (`git-merge-guard.py`, `block-defer-language.py`, `block-implement-worktree.py`) are installed as **real file copies** at `~/.claude/hooks/<name>`. Editing a hook in the repo requires re-running this script to push the new version out. The repo-scoped `protect_files.sh` hook stays where it is because it is wired via `$CLAUDE_PROJECT_DIR` in `.claude/settings.json`, not via `~/.claude/`. The unregistered Stop-hook and skill-call-log copies were retired by issue #1303; repository policy and the `/implement` mechanical gates are their authoritative replacements.
 
 `bin/install-skills.sh` symlinks each `skills/<name>/` directory into `~/.claude/skills/<name>`, `~/.codex/skills/<name>`, and `~/.codex/prompts/<name>.md`, and **hard-copies** into `~/.cursor/skills/<name>`. Pass `--no-codex` if Codex isn't on the host, or `--no-cursor` if Cursor CLI isn't on the host. Re-run after pulling to refresh Cursor copies; Claude/Codex symlinks update live.
 
@@ -740,6 +752,108 @@ agent "/implement 123"
 ```
 
 **CLI permissions** live in [`.cursor/cli.json`](../.cursor/cli.json) (project override). For long autonomous runs, pass `--force` if approval prompts would block git/gh/make/MCP calls. The Cursor CLI driver runs every step on the parent session (Codex-style); see the Cursor CLI section in `skills/implement/SKILL.md`.
+
+## Host-wide verification dispatch
+
+Ground Control coordinates verification inside one checkout and one MCP server
+process. Nothing coordinates between them, so two `/implement` runs in different
+repositories, or in linked worktrees of the same repository, can each reach their
+completion and pre-commit boundaries correctly and launch a full test suite at the
+same moment on the same machine. Both runs are individually compliant; their
+combined worker count is not.
+
+`gc-test-dispatch` admits a verification command against a shared per-user CPU
+budget and then runs that exact command. It is a wrapper, not a gate: it never
+skips a test, reuses a prior pass, caches a result, weakens pre-commit, or
+substitutes for the completion, policy, continuous-integration, or SonarCloud
+authorities. See GC-O016 and
+[ADR-096](../architecture/adrs/096-host-wide-verification-dispatcher.md).
+
+### Wrapping a consumer repository's commands
+
+Demand is declared by the repository, in the dispatcher arguments it embeds in the
+`.ground-control.yaml` commands it already has. There is no new configuration
+field, and the dispatcher never reads repository configuration.
+
+```yaml
+workflow:
+  completion_command: gc-test-dispatch --profile completion --cpu 8 --min-cpu 2 --xdist -- make test
+  precommit_command: gc-test-dispatch --profile precommit --cpu 2 -- pre-commit run
+  policy_command: gc-test-dispatch --profile policy --cpu 2 -- make policy
+```
+
+| Argument | Meaning |
+|----------|---------|
+| `--profile <name>` | Names the workload in the recorded measurements. Lowercase letters, digits, `.`, `-`, and `_`. |
+| `--cpu N` | Requested capacity, default `1`, bounds `[1, 1024]`. |
+| `--min-cpu N` | Smallest grant the workload accepts, default the value of `--cpu`. Set it below `--cpu` for a suite that can usefully run narrower rather than wait. |
+| `--xdist` | Sets `PYTEST_XDIST_AUTO_NUM_WORKERS` to the granted capacity, for a suite that runs pytest with `-n auto`. Without it no environment value changes. |
+| `-- <command>` | Everything after `--` is the command, run directly as an argument vector. No shell, no rewriting. |
+
+The command keeps its own standard input, output, and error. Its exit status is
+returned unchanged, and when the command is killed by a signal the dispatcher
+terminates the same way, so a shell or a CI runner sees the real cause.
+
+### Host configuration
+
+Capacity belongs to the machine's owner, not to a repository. It lives in
+`${XDG_CONFIG_HOME:-~/.config}/ground-control/dispatch.json`, which must be owned
+by the invoking user and not writable by group or other:
+
+```json
+{
+  "cpu_capacity": 8,
+  "max_queue_wait_seconds": 1800,
+  "stale_lease_seconds": 21600
+}
+```
+
+Every key is optional. Without the file, capacity defaults to the process's
+effective CPU affinity, so a `cgroup` or `taskset` confined host is respected
+rather than measured by its raw processor count. No flag and no repository
+setting can raise these values; an unknown key or an out-of-range value is
+refused rather than ignored.
+
+Admission is strict first-in-first-out over an advisory-locked per-user ledger in
+`$XDG_RUNTIME_DIR/ground-control/dispatch`, or under
+`${XDG_STATE_HOME:-~/.local/state}/ground-control/dispatch` when no runtime
+directory is set. It is never placed in a world-writable directory such as
+`/tmp`: this ledger is the host's admission authority, and a predictable path
+under a shared directory is one another account can pre-create or race. An entry
+is granted the lesser of its
+request and the remaining capacity whenever at least its minimum fits, and later
+work is backfilled from what the entry ahead of it leaves, so a two-core check
+runs beside a six-core suite. The walk stops at the first entry that does not fit,
+so a large suite is not starved by a stream of small ones. When the wait exceeds
+`max_queue_wait_seconds` the command does **not** run and the dispatcher exits
+`75`, so an over-subscribed host produces a visible failure rather than a silent
+skip.
+
+Each run appends one bounded record to `metrics.jsonl` in that directory and
+prints one `gc-test-dispatch:` summary line to stderr, carrying the profile,
+requested and granted capacity, host capacity, queue time, execution time, and
+outcome. Those are local operational diagnostics for tuning demand profiles. They
+are not an issue-thread record (ADR-029), not step telemetry (ADR-036), and never
+a result any gate reads back as evidence. No command, working directory,
+environment, or output is persisted.
+
+### The repo-local `/implement` addendum
+
+Wrapping the configured commands covers the completion, policy, and pre-commit
+boundaries, because Ground Control runs those commands verbatim. Step 5 targeted
+tests are different: the agent chooses those commands from the change in front of
+it, so no configuration field can express them. A consumer repository that wants
+them dispatched adds a short repository-local `/implement` addendum saying so, for
+example:
+
+> Step 5 targeted tests run through `gc-test-dispatch --profile targeted --cpu 2
+> --min-cpu 1 -- <the narrowest test command>`. Discretionary full-suite runs
+> during edit iteration remain prohibited; the repository-wide completion and
+> policy commands run only at their own boundaries.
+
+Keep it to invocation guidance. An addendum must not restate, relax, or reorder a
+gate: GC-O007 and the ADR-021 / ADR-027 / ADR-029 ordering are unchanged by the
+dispatcher, and Ground Control carries no consumer-specific branch.
 
 ## Test tooling beyond unit tests
 

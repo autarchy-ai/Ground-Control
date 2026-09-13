@@ -16,7 +16,7 @@
 // owning how one attempt runs and how its verdict is parsed; see
 // architecture/notes/unobserved-station-recovery-preflight.md.
 
-/** Canonical station ids, matching the ADR-090 station ids the reviewers already emit. */
+/** Canonical reviewer ids shared by the retry and issue-thread observation ledgers. */
 export const REVIEW_STATION_IDS = Object.freeze(["codex_review", "test_quality_review"]);
 
 /**
@@ -44,7 +44,7 @@ export const NON_VERDICT_RETRY_LIMIT_MIN = 0;
 export const NON_VERDICT_RETRY_LIMIT_MAX = 2;
 export const NON_VERDICT_RETRY_LIMIT_DEFAULT = 1;
 
-/** The station-result axis value for an attempt that rendered no verdict (ADR-090). */
+/** The station-result value for an attempt that rendered no verdict. */
 const NOT_EVALUABLE = "not_evaluable";
 
 /**
@@ -82,15 +82,15 @@ export function classifyStationAttempt(envelope, { cancelled = false } = {}) {
 /**
  * The station-result axis value for a classified attempt, or null when this was not an attempt.
  *
- * Three distinctions matter here, and collapsing any of them corrupts a different signal:
+ * Three distinctions matter here, and collapsing any of them corrupts recovery state:
  *
  * - `fail` is reserved for a gate that inspected the change and rejected it. An outage must never
- *   reach it, or an infrastructure problem enters the rework signal as a defect in the change.
+ *   reach it, or the repair path incorrectly asks for a code fix.
  * - `not_evaluable` is reserved for a station that actually executed and rendered no verdict.
  *   A refusal that happened *before* the reviewer ran (cap reached, invalid input, authorization)
  *   is not an attempt at all, and a failure to post a verdict that was already rendered is
- *   transport recovery, not a missing observation. Both return null: counting them would report
- *   rework that never occurred and open observation obligations for gates that need none.
+ *   transport recovery, not a missing observation. Both return null so the issue-thread ledger
+ *   opens obligations only for a reviewer that actually ran without rendering a verdict.
  * - `cancelled` is its own axis value. The station did execute, so it is a real attempt, but the
  *   caller abandoned it — it is not evidence that the gate cannot be observed.
  */
@@ -146,8 +146,8 @@ export function resolveNonVerdictRetryLimit(reviewerBlock) {
  *
  * The retry boundary wraps one complete station attempt, never a slice, poll, or durable write:
  * partial work from an incomplete attempt is discarded with that attempt rather than merged into a
- * later verdict. Each attempt is reported separately so the caller can record it as its own
- * ADR-090 station attempt; collapsing them would hide the rework.
+ * later verdict. Each attempt is reported separately so the caller can bind an unobserved retry
+ * to the correct issue-thread obligation and attempt ordinal.
  *
  * @returns {Promise<{envelope: any, observed: boolean, attempts: Array<object>}>}
  */

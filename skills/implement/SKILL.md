@@ -69,9 +69,7 @@ For each agent or script/agent band:
    review, polling, or context containment. A driver may delegate when the user
    explicitly requests it or runtime circumstances independently justify it,
    but delegation is outside this routing contract.
-3. When telemetry is enabled, record one event for the band rather than one
-   event per mechanical sub-step.
-4. Reject a successful envelope that reports only instruction reading,
+3. Reject a successful envelope that reports only instruction reading,
    inspection, planning, acknowledgment, or partial progress. Validate the
    primary-owned execution contract, then merge the remaining cached state.
 
@@ -166,7 +164,7 @@ Steps 3.5, 12, 13, 14, 18, 19 are intentional tombstones (Step 3.5 GRC screening
 Routing is opt-in per repo via `routing.enabled` in `.ground-control.yaml`
 (default `false`) and advisory in every mode. The `tier` annotation on each
 step file is the provider-neutral capability hint; the resolver maps it to a
-model identifier for telemetry and future runtime selection, but it does not
+model identifier for cost planning and future runtime selection, but it does not
 choose an executor.
 
 **Claude tier mapping** (canonical): `low` → `claude-haiku-4-5`, `medium` → `claude-sonnet-5`, `high` → `claude-opus-4-8`.
@@ -180,7 +178,3 @@ Ground Control does not use it to force delegation.
 `agent "/implement <issue-number | requirement-uid>"`. Skill discovery uses
 `bin/install-skills.sh`; Ground-Control repos also ship a project wrapper at
 `.cursor/skills/implement/SKILL.md`.
-
-## Telemetry (ADR-036)
-
-Step telemetry is retired (issue #1500): the ADR-061 projection it recorded into lived in the removed backend, so `telemetry.enabled` is `false`, the orchestrator makes no telemetry call, and nothing is recorded per step. Telemetry was always operational measurement only - it never gated any phase, never replaced the issue thread as the durable record, and never fed back into the cycle-cap counter, so its absence changes no control flow. Pre-existing `.gc/telemetry/*.jsonl` files are inert historical artifacts; they are gitignored, nothing writes them, and the local summarizer that read them was removed in #1507.

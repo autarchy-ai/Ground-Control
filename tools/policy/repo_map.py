@@ -35,7 +35,7 @@ MAP_HEADING = "repository map"
 MAP_EXCLUDED_DIRS: dict[str, str] = {
     ".claude": "Claude Code runtime adapter/config, not a source surface",
     ".cursor": "Cursor runtime adapter/config, not a source surface",
-    ".gc": "Ground Control local run config (plan rules, telemetry), tooling not source",
+    ".gc": "Ground Control local run config and artifacts, tooling not source",
     ".serena": "Serena code-index tool config",
     ".vale": "Vale prose-lint styles",
 }

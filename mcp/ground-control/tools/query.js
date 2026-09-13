@@ -5,7 +5,10 @@ import { z } from "zod";
 import {
   CODEX_REVIEW_HARD_CAP,
   CODEX_REVIEW_PREPUSH_HARD_CAP,
+  EXACT_REQUIREMENT_UID_RE,
+  GITHUB_REPO_RE,
   KNOWLEDGE_SOURCE_TYPES,
+  REQUIREMENT_SCOPE_OPERATIONS,
   TEST_QUALITY_REVIEW_HARD_CAP,
   buildCodexReviewOverrideCapDescription,
   buildCodexReviewOverrideReasonDescription,
@@ -16,6 +19,7 @@ import {
   runCodexArchitecturePreflight,
   runCodexReview,
   runPostImplementationPlan,
+  runUpdateIssueRequirements,
   runTestQualityReview,
   startAsyncJob,
   writeKnowledgeInbox,
@@ -64,6 +68,42 @@ export function registerQuery(server, ctx) {
           repoRoot: args.repo_path,
           labels: args.labels,
           extraBody: args.extra_body,
+        }), null, 2));
+      } catch (e) { return err(e); }
+    },
+  );
+
+  server.tool(
+    "gc_update_issue_requirements",
+    "Set the in-scope requirement UID list in an existing GitHub issue's `## Requirements` section - the section /implement parses as the run's scope. " +
+    "This is the only supported way to change that section; no skill or agent runs `gh` to edit an issue body (ADR-027). " +
+    "operation='add' unions the UIDs onto the current scope and can never remove one. operation='remove' subtracts only the named UIDs and is restricted to a UID that " +
+    "requires a durable authorization comment on that issue from a user with repository write access, reading exactly " +
+    "'/ground-control authorize-scope-removal <issue> <UID>...' for that exact UID set. Nothing an agent can do to the checkout authorizes a narrowing, because the requirement " +
+    "this tool exists to add is by construction absent from the integration branch. There is no replace mode. Every UID remaining in the result must resolve to docs/requirements/<UID>/requirement.md whose frontmatter id " +
+    "matches its directory, or the whole operation is refused with no edit. The write is bounded to that section: surrounding sections, section prose, and line " +
+    "endings are preserved, and the result is verified by re-parsing it with the same extractor the gates read. Re-running with the same UID set is a no-op that " +
+    "performs no write and leaves the body's content hash unchanged. The destination repository is the pinned MCP launch workspace (GC-P026); an optional `repo` " +
+    "is a validated assertion against it, never an alternate destination. It edits the issue body only and posts no comment or marker. The whole read-modify-write runs under a " +
+    "workspace lease so concurrent calls cannot interleave and drop one another's UIDs; a contended lease refuses rather than writing unserialized. Requirement-file containment " +
+    "is verified against the opened descriptor, so the server must run on a host exposing /proc/self/fd - where it does not, the write is refused rather than checked more weakly.",
+    {
+      repo_path: z.string().describe("Absolute path to the target Git repository; must be the MCP launch workspace"),
+      issue_number: z.number().int().positive(),
+      operation: z.enum(REQUIREMENT_SCOPE_OPERATIONS).describe("add unions onto current scope; remove needs a repository writer's authorization comment naming this exact UID set"),
+      requirement_uids: z.array(z.string().regex(EXACT_REQUIREMENT_UID_RE)).min(1).max(50)
+        .describe("Requirement UIDs to add or remove; never empty, and duplicates are refused"),
+      repo: z.string().regex(GITHUB_REPO_RE).optional()
+        .describe("Optional owner/repo assertion; validated against the authorized checkout and rejected on mismatch, never used as an alternate destination"),
+    },
+    async ({ repo_path, issue_number, operation, requirement_uids, repo }) => {
+      try {
+        return ok(JSON.stringify(await runUpdateIssueRequirements({
+          repoPath: repo_path,
+          issueNumber: issue_number,
+          operation,
+          requirementUids: requirement_uids,
+          repo,
         }), null, 2));
       } catch (e) { return err(e); }
     },

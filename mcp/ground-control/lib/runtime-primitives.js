@@ -7,6 +7,7 @@
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { CLAUDE_MODEL_BY_TIER, DEFAULT_IMPLEMENT_ROUTING_STAGES, ROUTING_STAGE_NAME_RE, ROUTING_TIERS } from "./repo-vocabulary.js";
+import { boundedOutputTail, describeChildProcessState, formatOutputTail } from "./command-failure-diagnostics.js";
 
 // execFileWithInput and the GC_CODEX_TIMEOUT_MS parsing/bounds live in
 // model-subprocess.js (issue #1518, split out to stay under the 500-LOC file
@@ -31,16 +32,20 @@ export function formatCommandFailure(command, error) {
   const details = [];
   if (error.code === "ENOENT") {
     details.push(`${command} is not installed or not available on PATH`);
-  } else if (error.message) {
-    details.push(error.message);
+  } else {
+    if (error.message) details.push(error.message);
+    const state = describeChildProcessState(error);
+    if (state) details.push(state);
   }
 
-  const stderr = error.stderr?.trim();
-  const stdout = error.stdout?.trim();
-  if (stderr) {
-    details.push(`stderr: ${stderr}`);
-  } else if (stdout) {
-    details.push(`stdout: ${stdout}`);
+  // Both streams, each tail-anchored (issue #1568). Reporting only stderr when
+  // it is non-empty let a single unrelated warning line hide the entire stdout
+  // trace, and an untruncated stream let a downstream head-anchored cap keep
+  // nothing but the engine's startup banner — between them, a killed 20-minute
+  // worker returned no evidence of what it was actually doing.
+  for (const [label, raw] of [["stderr", error.stderr], ["stdout", error.stdout]]) {
+    const line = formatOutputTail(label, boundedOutputTail(raw));
+    if (line) details.push(line);
   }
 
   return details.join(" | ");
@@ -154,8 +159,6 @@ function suggestedYamlPackagingSection() {
     "#   #   implementation:",
     "#   #     tier: medium",
     "#   #     model: claude-sonnet-5",
-    "# telemetry:",
-    "#   enabled: false",
     "",
   ];
 }

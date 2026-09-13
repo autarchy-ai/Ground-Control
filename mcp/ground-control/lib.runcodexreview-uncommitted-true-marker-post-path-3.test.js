@@ -147,8 +147,8 @@ process.stdin.on("end", () => {
             stdout: JSON.stringify({ nameWithOwner: "fake/repo" }),
           },
           {
-            argv_prefix: ["pr", "view", "520", "--json", "closingIssuesReferences"],
-            stdout: JSON.stringify({ closingIssuesReferences: [{ number: 998 }] }),
+            argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"],
+            stdout: JSON.stringify({ number: 520, body: "Closes #998", head: { sha: "abc1234" } }),
           },
           {
             // Phase markers are believed only from an author with repository permission.
@@ -219,8 +219,8 @@ process.stdin.on("end", () => {
             stdout: JSON.stringify({ nameWithOwner: "fake/repo" }),
           },
           {
-            argv_prefix: ["pr", "view", "520", "--json", "closingIssuesReferences"],
-            stdout: JSON.stringify({ closingIssuesReferences: [{ number: 998 }] }),
+            argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"],
+            stdout: JSON.stringify({ number: 520, body: "Closes #998", head: { sha: "abc1234" } }),
           },
           {
             // Phase markers are believed only from an author with repository permission.
@@ -283,8 +283,8 @@ process.stdin.on("end", () => {
             stdout: JSON.stringify({ nameWithOwner: "fake/repo" }),
           },
           {
-            argv_prefix: ["pr", "view", "520", "--json", "closingIssuesReferences"],
-            stdout: JSON.stringify({ closingIssuesReferences: [{ number: 998 }] }),
+            argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"],
+            stdout: JSON.stringify({ number: 520, body: "Closes #998", head: { sha: "abc1234" } }),
           },
           {
             // Phase markers are believed only from an author with repository permission.
@@ -296,8 +296,8 @@ process.stdin.on("end", () => {
             stdout: JSON.stringify([[{ id: 1, body: planMarker, user: { login: "tester" } }]]),
           },
           {
-            argv_prefix: ["pr", "view", "520", "--json", "headRefOid"],
-            stdout: JSON.stringify({ headRefOid: "abc1234" }),
+            argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"],
+            stdout: JSON.stringify({ number: 520, body: "", head: { sha: "abc1234" } }),
           },
           {
             argv_prefix: ["api", "--method", "POST"],
@@ -349,8 +349,8 @@ process.stdin.on("end", () => {
             stdout: JSON.stringify({ nameWithOwner: "fake/repo" }),
           },
           {
-            argv_prefix: ["pr", "view", "520", "--json", "closingIssuesReferences"],
-            stdout: JSON.stringify({ closingIssuesReferences: [{ number: 998 }] }),
+            argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/pulls/520"],
+            stdout: JSON.stringify({ number: 520, body: "Closes #998", head: { sha: "abc1234" } }),
           },
           {
             // Phase markers are believed only from an author with repository permission.

@@ -49,7 +49,7 @@ describe("loadServerEnv — the launch-directory .env is the only source", () =>
   });
 
   it("REMOVES an inherited owned variable that .env does not declare", () => {
-    withCwd("GC_BASE_URL=https://example.invalid\n", (cwd) => {
+    withCwd("GC_CODEX_TIMEOUT_MS=120000\n", (cwd) => {
       const env = { SONAR_TOKEN: "from-shell", CLAUDE_CONFIG_DIR: "/home/u/.claude" };
       loadServerEnv(env, { cwd });
       assert.equal("SONAR_TOKEN" in env, false);
@@ -106,10 +106,10 @@ describe("loadServerEnv — the launch-directory .env is the only source", () =>
   });
 
   it("skips comments and blank lines and strips one matching quote pair", () => {
-    withCwd("# a comment\n\nGC_BASE_URL='https://example.invalid'\nGC_CODEX_REVIEW_PARALLEL=\"2\"\nnot-a-pair\n", (cwd) => {
+    withCwd("# a comment\n\nGC_CODEX_TIMEOUT_MS='120000'\nGC_CODEX_REVIEW_PARALLEL=\"2\"\nnot-a-pair\n", (cwd) => {
       const env = {};
       loadServerEnv(env, { cwd });
-      assert.deepEqual(env, { GC_BASE_URL: "https://example.invalid", GC_CODEX_REVIEW_PARALLEL: "2" });
+      assert.deepEqual(env, { GC_CODEX_TIMEOUT_MS: "120000", GC_CODEX_REVIEW_PARALLEL: "2" });
     });
   });
 

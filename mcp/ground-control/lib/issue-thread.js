@@ -178,6 +178,13 @@ export function hashIssueThreadPayload(body, comments) {
   }
   return h.digest("hex");
 }
+// Targeted invalidation for a writer that changes the issue body out from under the
+// cache (issue #1569). Without it a caller passing the pre-edit hash gets
+// `{unchanged: true}` and reads its own stale scope back. Lives here, at the cache
+// owner, so nothing else reaches into the private map or starts a second cache.
+export function invalidateIssueThreadCacheEntry(repoRoot, issueNumber) {
+  _issueThreadCache.delete(_issueThreadCacheKey(repoRoot, issueNumber));
+}
 export function resetIssueThreadCacheForTest() {
   _issueThreadCache.clear();
 }

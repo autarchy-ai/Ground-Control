@@ -126,7 +126,10 @@ function _registerGcCodexJob(server) {
       "activity and byte counts) so a slow-but-healthy verification sweep is distinguishable from a dead job; " +
       "it is observability only, never a liveness or cancellation guarantee. " +
       "Dispatch on result.next_action exactly as for the synchronous originating tool. A failed or cancelled " +
-      "job returns ok=false. action='cancel' aborts only jobs whose complete execution path supports it; " +
+      "job returns ok=false; a failed one carries a bounded, head-and-tail-preserving `message` and, when the " +
+      "failing tool attached one, a bounded `diagnostics` object of scalars and string lists — for a killed " +
+      "architecture preflight that names the checkout paths the failed run already wrote, so a retry does not " +
+      "silently build on partial output. action='cancel' aborts only jobs whose complete execution path supports it; " +
       "review-cycle and mechanical jobs currently return job_not_cancellable and continue to their ordinary terminal result. " +
       "Jobs are reaped 30 minutes after they finish; a poll for an unknown or expired job_id returns " +
       "error='job_not_found'. For a review-cycle job, refresh and reconcile the authoritative issue thread before " +

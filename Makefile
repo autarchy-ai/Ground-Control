@@ -1,4 +1,4 @@
-.PHONY: ground-control-mcp-install mcp-test mcp-lint graphify vale-install vale-lint \
+.PHONY: ground-control-mcp-install mcp-test mcp-lint docs graphify vale-install vale-lint \
        policy policy-tests hooks devmain ci-timings help
 
 # Ground Control is the MCP server for the /implement workflow over repo-local
@@ -41,9 +41,6 @@ vale-lint: vale-install ## Run Vale on .md docs changed vs BASE_REF, incl. uncom
 	  echo "vale-lint: Vale not installed at .tools/vale/current/vale; run 'make vale-install'" >&2; \
 	  exit 1; \
 	fi; \
-	if [ -n "$$GC_VALE_JSON" ]; then \
-	  .tools/vale/current/vale --config=.vale.ini --output=JSON $$CHANGED_DOCS > "$$GC_VALE_JSON" || true; \
-	fi; \
 	.tools/vale/current/vale --config=.vale.ini $$CHANGED_DOCS
 
 # --- Repo policy ---
@@ -53,7 +50,7 @@ policy-tests: ## Run unit tests for repo policy tooling
 
 policy: policy-tests mcp-lint vale-lint ## Run repo-native policy checks shared by Claude and Codex
 	@BASE_REF="$${BASE_REF:-origin/dev}"; \
-	python3 bin/policy --base "$$BASE_REF" --skip-pr-body $${GC_POLICY_JSON:+--json "$$GC_POLICY_JSON"}
+	python3 bin/policy --base "$$BASE_REF" --skip-pr-body
 
 # --- Repo workflow helpers ---
 
@@ -67,6 +64,14 @@ devmain: ## Open the dev -> main promotion PR titled so the PR-title gate passes
 
 ci-timings: ## Measure CI wall clock and time-to-first-failure from recent runs (ADR-091)
 	python3 tools/ci/measure_ci_timings.py
+
+branch-protection-check: ## Compare live main/dev protection with the versioned baseline (GC-P031)
+	python3 -m tools.ci.check_branch_protection
+
+docs: ## Build the public docs (Read the Docs) with warnings as errors into docs/public/_build
+	python3 -m venv docs/public/_build/venv
+	docs/public/_build/venv/bin/pip install -q -r docs/public/requirements.txt
+	docs/public/_build/venv/bin/sphinx-build -W --keep-going -b html docs/public docs/public/_build/html
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \

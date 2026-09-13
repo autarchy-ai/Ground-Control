@@ -6,7 +6,6 @@
 
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { sonarGateFindings } from "../gate-finding-adapters.js";
 import { _sleepMs } from "./doc-coverage.js";
 import { ensureGitRepo } from "./grc-legacy-compat-4.js";
 import { authorizeWatcherRepoRead } from "./watcher-repo-authorization.js";
@@ -388,12 +387,6 @@ async function readSonarGate({ repoRoot, projectKey, prNumber, token, pollInterv
     fetched_at: new Date().toISOString(),
   });
 
-  // The measurement projection is built here, at the boundary that owns the full issue and
-  // hotspot lists (issue #1355). Building it from `issues_summary.top_issues` instead would cap
-  // the record at ten and report a truncated count as a complete one; the raw arrays never leave
-  // this function.
-  const measurement = sonarGateFindings(issues, hotspots);
-
   return {
     ok: true,
     skipped: false,
@@ -402,8 +395,6 @@ async function readSonarGate({ repoRoot, projectKey, prNumber, token, pollInterv
     issues_summary: summarizeSonarIssues(issues),
     hotspots_summary: summarizeSonarHotspots(hotspots),
     full_issue_export_path: exportPath,
-    measurement_findings: measurement.findings,
-    measurement_findings_dropped: measurement.dropped,
   };
 }
 
@@ -461,7 +452,7 @@ export async function runWatchSonarAnalysis({
   if (notProduced) return notProduced;
 
   // Read at call time and passed only in the Authorization header - never argv,
-  // telemetry, an export, or a returned envelope (ADR-036). The value reaches
+  // a log, an export, or a returned envelope. The value reaches
   // process.env from the launch directory's .env and nowhere else
   // (lib/server-env.js), so the message names that one file: an operator, not
   // the agent, repairs this state, and it is read at startup (issue #1562).

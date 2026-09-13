@@ -2,11 +2,18 @@
 
 ## Status
 
-accepted
+Superseded (issue #1303)
 
 ## Date
 
 2026-07-26
+
+> **Supersession (2026-09-11):** Every persistent measurement owner named by
+> this logical model was removed by #1500, and issue #1303 deletes the surviving
+> emitters, adapters, and workflow hooks. Gate results continue to be enforced
+> at their owning policy, MCP, CI, Sonar, and human boundaries; they are not
+> projected into a second measurement plane. This historical model is not a
+> current gate or implementation contract.
 
 ## Context
 

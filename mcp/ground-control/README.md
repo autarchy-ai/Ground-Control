@@ -23,17 +23,15 @@ package it is talking to. `server-version.test.js` spawns the server and
 asserts the handshake matches the package, which keeps the two from drifting.
 
 This version covers the published tool surface: tool names, input schemas, and
-result envelopes. It is independent of the repo product version that Release
-Please owns (GC-P027), and it is not a mirror of any other version in the repo.
+result envelopes. It is the `grndctl` npm package version, which Release Please
+owns (GC-P027, issue #1587): it is derived from Conventional Commit history, so
+the change's commit type sets the bump.
 
-Bump `mcp/ground-control/package.json` in the same pull request as the change
-it describes, and commit the matching `package-lock.json` update:
-
-| Change to the tool surface | Bump |
-| --- | --- |
-| Remove or rename a tool, remove or narrow an input field, make an optional input required, or remove a result field or change its type | MAJOR |
-| Add a tool, add an optional input field, or add a result field | MINOR |
-| Fix a defect, or reword a description, without changing the contract | PATCH |
+| Change to the tool surface | Conventional Commit | Bump |
+| --- | --- | --- |
+| Remove or rename a tool, remove or narrow an input field, make an optional input required, or remove a result field or change its type | `feat!:` / `fix!:` or a `BREAKING CHANGE:` footer | MAJOR |
+| Add a tool, add an optional input field, or add a result field | `feat:` | MINOR |
+| Fix a defect, or reword a description, without changing the contract | `fix:` | PATCH |
 
 Clients read `serverInfo.version` after `initialize` and gate on the major
 component: a client written against major version *N* keeps working across
@@ -43,28 +41,27 @@ is unrelated to this version.
 
 ## Setup
 
-Add to your MCP client config (`.claude/settings.json`, project `.mcp.json`, or
-the equivalent for your driver):
+Install and set up repositories with the `grndctl` package; see the
+[documentation](../../docs/public/index.md):
 
-```json
-{
-  "mcpServers": {
-    "ground-control": {
-      "command": "node",
-      "args": ["/path/to/Ground-Control/mcp/ground-control/index.js"]
-    }
-  }
-}
+```bash
+npm install -g grndctl
+grndctl install-skills
+grndctl init      # in each repository: confirm settings, review changes, then write
+grndctl doctor
 ```
 
-That is the whole required configuration. The server needs no environment
-variables and no reachable service to start. Most tools work with none of the
-variables below set; the ones that need a credential refuse and name it, so
-provisioning is a decision you make per repository rather than an inheritance
-you get by accident.
+The server always runs from the installed package (`grndctl mcp`), never from a
+checkout. To run unreleased code deliberately, `npm link` from `mcp/ground-control`
+in a clone.
 
-Install dependencies once with `make ground-control-mcp-install` (`npm ci` in
-`mcp/ground-control`). The Codex-backed tools additionally require the Codex CLI
+The server needs no environment variables and no reachable service to start.
+Most tools work with none of the variables below set; the ones that need a
+credential refuse and name it, so provisioning is a decision you make per
+repository rather than an inheritance you get by accident.
+
+For development in a clone, install dependencies with `make ground-control-mcp-install`
+(`npm ci` in `mcp/ground-control`). The Codex-backed tools additionally require the Codex CLI
 on `PATH`, and the GitHub-writing tools require an authenticated `gh`.
 
 ### Optional environment
@@ -92,9 +89,6 @@ both the template and the code.
 
 | Variable | Effect when set |
 |---|---|
-| `GC_BASE_URL` | Enables workflow-run lifecycle measurement emission to that sink. Unset (the default) disables the emitter entirely - the server never attempts the call. |
-| `GROUND_CONTROL_API_TOKEN` | Bearer token for that measurement emission, when the sink requires one. |
-| `GROUND_CONTROL_PACK_REGISTRY_ADMIN_TOKEN` | Legacy token, preferred over the above for the two cross-project measurement rollups. |
 | `GC_CODEX_TIMEOUT_MS` | Per-invocation timeout for Codex-backed tools, within the bounds in `lib/model-subprocess.js`. |
 | `GC_CODEX_REVIEW_PARALLEL` | Runs the core and security reviewers concurrently when set to `2`. |
 | `GC_CODEX_REVIEW_MAX_DIFF_BYTES` | Diff-slice budget for a review cycle (see diff transport below). |
@@ -117,7 +111,7 @@ takes effect on the next server start.
 
 ## Tool surface
 
-The server registers **31 tools**. They are the `/implement`, `/quickfix`,
+The server registers **32 tools**. They are the `/implement`, `/quickfix`,
 `/integrate`, and `/review` workflow mechanics plus the coding-agent/reviewer separation - there is
 no entity CRUD surface and no ad-hoc REST escape hatch, because there is no
 backend behind them to read. Requirements and ADRs are read and written as repo
@@ -133,6 +127,8 @@ is checked rather than assumed.
 
 Registration lives in `mcp/ground-control/tools/*.js`; each tool is a zod input
 schema plus a thin handler delegating to `lib.js`.
+The complete keep/delete and placement record is in
+[`docs/architecture/SURVIVING_GATES.md`](../../docs/architecture/SURVIVING_GATES.md).
 
 **Repository context and issue entry (`tools/query.js`)**
 
@@ -140,6 +136,7 @@ schema plus a thin handler delegating to `lib.js`.
 |---|---|
 | `gc_get_repo_ground_control_context` | Read and validate the repo's `.ground-control.yaml`; returns workflow commands, routing, docs paths, and inlined plan rules |
 | `gc_create_github_issue` | Create a GitHub issue from a repo-local requirement and link it back |
+| `gc_update_issue_requirements` | Set the in-scope requirement UID list in an existing issue's `## Requirements` section; `add` unions, `remove` needs a repository writer's authorization comment, nothing else in the body moves |
 | `gc_remember` | Capture a knowledge-base entry under the repo's configured knowledge directory |
 | `gc_post_implementation_plan` | Post the Step 4 plan to the issue thread; requires the preflight marker |
 | `gc_close_issue_after_merge` | Idempotent post-merge issue close, gated on the PR actually being merged |
@@ -207,13 +204,16 @@ enforcement layer every driver shares.
 For cross-repo workflow automation, define Ground Control context in a
 `.ground-control.yaml` file at the repo root. At minimum it declares
 `schema_version: 1` and a `project` identifier; optional sections include
-`workflow`, `sonarcloud`, `rules`, `knowledge`, `routing`, `telemetry`, plus the
+`workflow`, `sonarcloud`, `rules`, `knowledge`, `routing`, plus the
 workflow-packaging fields added in ADR-027: `docs.{adr_dir,
 architecture_overview, coding_standards, workflow_reference, knowledge_base}`,
 `example_paths.{source, test}`, `requirements.uid_examples`, and
 `cross_cutting_concerns.description`. A legacy `grc.*` block from a
 pre-ADR-089 config is tolerated and ignored - never validated, parsed, or
 returned.
+
+The legacy `telemetry` key is accepted for consumer compatibility but ignored;
+the backend projection and every emitter were retired by issues #1500 and #1303.
 
 `gc_get_repo_ground_control_context` reads and validates this file and is the
 only reader of it (ADR-027); the skills render their prose against the fields it

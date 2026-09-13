@@ -117,10 +117,16 @@ describe("async job registry (gc_codex_job, issues #937 and #1473)", () => {
   });
 
   it("bounds and scrubs an unexpected job rejection", async () => {
-    const { startAsyncJob, pollAsyncJob, _resetAsyncJobsForTest } = await import("./lib.js");
+    const { FAILURE_MESSAGE_MAX, startAsyncJob, pollAsyncJob, _resetAsyncJobsForTest } =
+      await import("./lib.js");
     _resetAsyncJobsForTest();
     const sensitiveError = new Error(`token=${"ghp_" + "a".repeat(36)}`);
-    const oversizedError = new Error("x".repeat(2000));
+    // Issue #1568: the bound must keep both ends. The head names the failure;
+    // the tail carries the child-process state and output tails the failing
+    // tool appends after it, which the former head-only slice always dropped.
+    const oversizedError = new Error(
+      `HEAD codex exec blew up${"x".repeat(FAILURE_MESSAGE_MAX)}TAIL state: code=ETIMEDOUT`,
+    );
     const sensitive = startAsyncJob(
       "codex_review",
       () => Promise.reject(sensitiveError),
@@ -134,8 +140,10 @@ describe("async job registry (gc_codex_job, issues #937 and #1473)", () => {
     oversizedError.message = "mutated after rejection";
     assert.equal(pollAsyncJob(sensitive.job_id).message, "<redacted>");
     const oversizedMessage = pollAsyncJob(oversized.job_id).message;
-    assert.equal(oversizedMessage.length, 600);
-    assert.match(oversizedMessage, /…$/);
+    assert.ok(oversizedMessage.length <= FAILURE_MESSAGE_MAX);
+    assert.match(oversizedMessage, /^HEAD codex exec blew up/);
+    assert.match(oversizedMessage, /TAIL state: code=ETIMEDOUT$/);
+    assert.match(oversizedMessage, /…\[\d+ chars elided\]…/);
   });
 
   it("cancelAsyncJob aborts cancellable review work and the job ends cancelled", async () => {
@@ -323,5 +331,48 @@ describe("async job registry (gc_codex_job, issues #937 and #1473)", () => {
     const { startAsyncJob, _resetAsyncJobsForTest } = await import("./lib.js");
     _resetAsyncJobsForTest();
     assert.throws(() => startAsyncJob("codex_review", null), /runFn must be a function/);
+  });
+
+  // Issue #1568: a killed preflight attaches structured diagnostics — including
+  // the checkout paths it mutated before dying — to its error. The failed
+  // envelope has to carry them, bounded, or an operator sees only "job_failed".
+  it("a failed job surfaces its bounded diagnostics alongside the message", async () => {
+    const { startAsyncJob, pollAsyncJob, _resetAsyncJobsForTest } = await import("./lib.js");
+    _resetAsyncJobsForTest();
+    const start = startAsyncJob("architecture_preflight", () => {
+      const error = new Error("Codex architecture preflight failed: timed out");
+      error.diagnostics = {
+        stage: "architecture_preflight",
+        timed_out: true,
+        changed_file_count: 2,
+        changed_files: ["docs/architecture/index.md", "mkdocs.yml"],
+        engine_output: { unbounded: "object graphs are dropped" },
+      };
+      return Promise.reject(error);
+    });
+    await flush();
+
+    const polled = pollAsyncJob(start.job_id);
+
+    assert.equal(polled.status, "failed");
+    assert.equal(polled.diagnostics.stage, "architecture_preflight");
+    assert.equal(polled.diagnostics.timed_out, true);
+    assert.deepEqual(polled.diagnostics.changed_files, [
+      "docs/architecture/index.md",
+      "mkdocs.yml",
+    ]);
+    assert.ok(!("engine_output" in polled.diagnostics));
+  });
+
+  it("a failed job without diagnostics omits the field entirely", async () => {
+    const { startAsyncJob, pollAsyncJob, _resetAsyncJobsForTest } = await import("./lib.js");
+    _resetAsyncJobsForTest();
+    const start = startAsyncJob("codex_review", () => Promise.reject(new Error("boom")));
+    await flush();
+
+    const polled = pollAsyncJob(start.job_id);
+
+    assert.equal(polled.status, "failed");
+    assert.ok(!("diagnostics" in polled));
   });
 });

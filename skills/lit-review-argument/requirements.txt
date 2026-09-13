@@ -23,8 +23,14 @@ argdown-feedback @ git+https://github.com/debatelab/argdown-feedback@0bd882ea1a2
 cryptography>=50.0.0
 orjson>=3.11.5
 gradio>=6.15.1
+idna>=3.15
 joserfc>=1.6.8
-mcp>=1.28.1
+# `mcp` is capped as well as floored: fastmcp-slim 3.3.1 (the package that
+# pulls it in) requires `mcp<2.0`, so mcp 2.x can never enter the installed
+# tree. Declaring the cap keeps this file honest about the resolution the
+# lock actually has, and stops resolver-based scanners from reporting the
+# mcp 2.x dependency tree (httpx2/httpcore2) that is never installed here.
+mcp>=1.28.1,<2.0
 nltk>=3.10.3
 pillow>=12.3.0
 pydantic-settings>=2.14.2

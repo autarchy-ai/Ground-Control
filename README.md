@@ -21,7 +21,7 @@ for code+docs comprehension when an agent wants it, it is not required.
 
 ## What the MCP server does
 
-The surviving tool surface (~27 tools, down from 215) is exactly what the
+The surviving tool surface (32 tools, down from 215) is exactly what the
 `/implement` workflow needs, and every tool operates over `gh`/`git`/files, no
 backend:
 
@@ -51,12 +51,12 @@ this is the ownership map.
 
 | Path | What lives here |
 |------|-----------------|
-| `mcp/` | The MCP servers. `mcp/ground-control/` is the only running service (Node.js ES modules); see the [MCP server reference](mcp/ground-control/README.md). `mcp/citation/` is a separate research companion. |
+| `mcp/` | The MCP servers. `mcp/ground-control/` is the only running service (Node.js ES modules), published to npm as `grndctl`; see the [MCP server reference](mcp/ground-control/README.md). `mcp/citation/` is a separate research companion. |
 | `skills/` | Agent-neutral workflow skills. The gated `/implement` loop lives in [`skills/implement/`](skills/implement/); the [development workflow](docs/DEVELOPMENT_WORKFLOW.md) explains it. |
-| `docs/` | Requirements (`docs/requirements/<UID>/requirement.md`), the [architecture overview](docs/architecture/ARCHITECTURE.md), [coding standards](docs/CODING_STANDARDS.md), and the [knowledge base](docs/knowledge/). |
+| `docs/` | The public user documentation ([`docs/public/`](docs/public/), built by Read the Docs), requirements (`docs/requirements/<UID>/requirement.md`), the [architecture overview](docs/architecture/ARCHITECTURE.md), [coding standards](docs/CODING_STANDARDS.md), and the [knowledge base](docs/knowledge/). |
 | `architecture/` | Architecture Decision Records ([`architecture/adrs/`](architecture/adrs/)) and the machine-enforced [ADR policy](architecture/policies/adr-policy.json). |
 | `tools/` | Repo-native policy checks ([`tools/policy/`](tools/policy/)) and their tests, plus CI, Sonar, and release tooling. Run by `make policy`. |
-| `bin/` | Executable entry points for the gates ([`bin/policy`](bin/policy), `bin/adr-guard`, `bin/check-pr-body`). |
+| `bin/` | Executable entry points: the gates ([`bin/policy`](bin/policy), `bin/adr-guard`, `bin/check-pr-body`), the host installers (`bin/install-ground-control.sh`, `bin/install-skills.sh`), and the host-wide verification dispatcher (`bin/gc-test-dispatch`). |
 | `scripts/` | Developer and CI shell helpers ([`scripts/`](scripts/)): hook install, bootstrap, PR-body checks. |
 | `.github/` | GitHub Actions [workflows](.github/workflows/), issue/PR templates, `CODEOWNERS`, and the branch-protection baseline. |
 
@@ -66,27 +66,35 @@ kept in sync with the tracked directory tree by a policy gate
 (`tools/policy/repo_map.py`, GC-P029 /
 [ADR-095](architecture/adrs/095-repository-map-freshness-gate.md)).
 
-## Getting started
-
-**Prerequisites:** Node.js 20+, `gh` CLI (authenticated), `git`.
+## Install
 
 ```bash
-git clone https://github.com/autarchy-ai/Ground-Control.git
-cd Ground-Control
-make ground-control-mcp-install   # npm ci in mcp/ground-control
+npm install -g grndctl      # Node.js 22+, with gh signed in
+grndctl install-skills      # /implement, /quickfix, /integrate, /review
 ```
 
-The server is configured in `.mcp.json` and works automatically with Claude
-Code (and Codex / Cursor per ADR-027). See the
-[MCP server docs](mcp/ground-control/README.md) for the full tool reference.
-
-## Development
+Then, in each repository agents should work in:
 
 ```bash
+grndctl init                # confirm the detected settings, review the changes, then write
+grndctl doctor              # check the machine and the repository
+```
+
+Restart your agent session and run `/implement <issue-number>`. The
+[documentation](docs/public/index.md) covers installation, repository setup,
+configuration, and upgrading.
+
+## Developing Ground Control
+
+To work on Ground Control itself, clone it and see [CONTRIBUTING](CONTRIBUTING.md):
+
+```bash
+make ground-control-mcp-install   # npm ci in mcp/ground-control
 make mcp-test     # MCP node --test suite (primary test gate)
 make mcp-lint     # ESLint on the MCP server (also run by `make policy`)
 make policy       # repo-native ADR/workflow/spec guardrails + MCP lint + Vale
 make vale-lint    # prose lint on changed docs
+make docs         # build the public docs with warnings as errors
 make graphify     # (optional) rebuild the disposable Graphify index
 ```
 
@@ -96,6 +104,7 @@ Run `make help` to see all targets.
 
 | Document | Description |
 |----------|-------------|
+| [User documentation](docs/public/index.md) | Install, repository setup, configuration, upgrading (published on Read the Docs) |
 | [MCP Server](mcp/ground-control/README.md) | Tool reference, workflows |
 | [Development Workflow](docs/DEVELOPMENT_WORKFLOW.md) | The `/implement` loop |
 | [Coding Standards](docs/CODING_STANDARDS.md) | Style and testing policy |
