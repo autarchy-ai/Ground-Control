@@ -6,6 +6,7 @@ a contract is stated once and read in one place.
 
 | Question | Reference |
 |----------|-----------|
+| How do I install Ground Control and set up a repository? | [`docs/public/`](public/index.md) (published on Read the Docs): `npm install -g grndctl`, `grndctl init`, `grndctl doctor` |
 | How do I run the gated `/implement` loop, and what does each phase gate? | [`docs/DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) |
 | What runs, and where is the trust boundary? | [`docs/architecture/ARCHITECTURE.md`](architecture/ARCHITECTURE.md) |
 | Which gates survived the MCP-only re-platform, where are they enforced, and which shadow checks were retired? | [`docs/architecture/SURVIVING_GATES.md`](architecture/SURVIVING_GATES.md) |

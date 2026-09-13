@@ -1,14 +1,48 @@
 {
-  "name": "ground-control-mcp",
-  "version": "1.2.0",
-  "private": true,
+  "name": "grndctl",
+  "version": "1.1.0",
+  "description": "Ground Control: the MCP server and workflow skills for gated agentic development (/implement, /quickfix, /review).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/autarchy-ai/Ground-Control.git",
+    "directory": "mcp/ground-control"
+  },
+  "homepage": "https://github.com/autarchy-ai/Ground-Control#readme",
   "type": "module",
   "main": "index.js",
+  "bin": {
+    "grndctl": "bin/grndctl.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "bin/",
+    "index.js",
+    "server-runtime.js",
+    "lib.js",
+    "gc-implement-mechanical.js",
+    "gc-integrate.js",
+    "knowledge_ingest.js",
+    "knowledge_ingest_cli.js",
+    "lib/",
+    "tools/",
+    "implement/",
+    "gc-integrate/",
+    "knowledge_ingest/",
+    "skills/",
+    "templates/",
+    "!**/*.test.js",
+    "!**/*.test-helpers.js"
+  ],
   "scripts": {
     "start": "node index.js",
     "test": "node scripts/run-node-tests.mjs $(ls *.test.js | grep -v '^openapi-contract\\.')",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "prepack": "node scripts/bundle-skills.mjs",
+    "postpack": "node scripts/bundle-skills.mjs --clean"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

@@ -1,4 +1,4 @@
-.PHONY: ground-control-mcp-install mcp-test mcp-lint graphify vale-install vale-lint \
+.PHONY: ground-control-mcp-install mcp-test mcp-lint docs graphify vale-install vale-lint \
        policy policy-tests hooks devmain ci-timings help
 
 # Ground Control is the MCP server for the /implement workflow over repo-local
@@ -67,6 +67,11 @@ ci-timings: ## Measure CI wall clock and time-to-first-failure from recent runs 
 
 branch-protection-check: ## Compare live main/dev protection with the versioned baseline (GC-P031)
 	python3 -m tools.ci.check_branch_protection
+
+docs: ## Build the public docs (Read the Docs) with warnings as errors into docs/public/_build
+	python3 -m venv docs/public/_build/venv
+	docs/public/_build/venv/bin/pip install -q -r docs/public/requirements.txt
+	docs/public/_build/venv/bin/sphinx-build -W --keep-going -b html docs/public docs/public/_build/html
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \

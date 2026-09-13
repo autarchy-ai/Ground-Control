@@ -9,7 +9,7 @@ start PostgreSQL or run Gradle, it is stale (see the
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 22+
 - `gh` CLI, authenticated (`gh auth status`)
 - `git`
 - Python 3 (for the repo policy tooling)
@@ -33,6 +33,9 @@ make mcp-test                     # node --test suite (primary gate)
 make policy                       # repo-native guardrails + MCP lint + Vale
 ```
 
+To try your changes in an agent session, `npm link` from `mcp/ground-control` so the
+`grndctl` command runs your clone. Agents otherwise run the published package.
+
 ### Makefile targets
 
 | Target | Description |
@@ -44,6 +47,7 @@ make policy                       # repo-native guardrails + MCP lint + Vale
 | `make policy-tests` | Python unit tests for the policy tooling |
 | `make vale-lint` | Prose lint on changed docs |
 | `make hooks` | Activate + verify commit-time hooks for this clone |
+| `make docs` | Build the public docs (Read the Docs) with warnings as errors |
 | `make graphify` | (Optional) rebuild the disposable Graphify index |
 | `make help` | List all targets |
 
