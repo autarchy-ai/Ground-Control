@@ -7,9 +7,20 @@
 // head-OID-bound checks, linked/closing issues, and review metadata — comes back
 // with explicit completeness flags so a large, binary, or access-limited diff is
 // never silently presented as fully reviewed.
+//
+// Every read is REST (issue #1586). GraphQL's hourly budget is shared by every
+// agent on the token and drains without warning, so the one GraphQL read left —
+// unresolved review threads, which REST does not expose — is optional: its
+// failure marks `discussions` unavailable and never fails the snapshot.
 
 import { realpathSync } from "node:fs";
-import { getPullRequestClosingIssues } from "./grc-legacy-compat-3.js";
+import {
+  deriveReviewDecision,
+  fetchCommitCheckRollup,
+  fetchPullRequest,
+  ghRestJson,
+  parseClosingIssueReferences,
+} from "./github-rest.js";
 import { authorizeImplementRepoRoot, ensureGitRepo, resolveMcpLaunchWorkspaceAuthorization } from "./grc-legacy-compat-4.js";
 import { execFile } from "./runtime-primitives.js";
 import {
@@ -19,7 +30,6 @@ import {
   assertRepoAssertionMatches,
   ghFailure,
   refusal,
-  runReviewGh,
   runReviewGhJson,
   runReviewGhPaginated,
   validatePrNumber,
@@ -30,14 +40,6 @@ import {
 // The PR body is premise evidence; bound it so a huge body cannot bloat the
 // snapshot, and report truncation as an incompleteness reason.
 const PR_REVIEW_BODY_BYTE_CAP = 16384;
-
-const PR_VIEW_FIELDS = [
-  "number", "title", "body", "state", "url", "isCrossRepository",
-  "mergeStateStatus", "mergedAt", "headRefName", "headRefOid", "baseRefName",
-  "baseRefOid", "headRepository", "headRepositoryOwner", "author",
-  "reviewDecision", "reviews", "closingIssuesReferences", "maintainerCanModify",
-  "statusCheckRollup",
-].join(",");
 
 function capPatch(file, maxPatchBytes) {
   if (typeof file.patch !== "string") {
@@ -121,6 +123,41 @@ function summarizeChecks(rollup, headOid) {
   };
 }
 
+// Checks bound to the head OID. An unreadable rollup is missing evidence
+// (→ incomplete), never an empty, passing check set.
+async function collectChecks(repoRoot, owner, name, headOid, commandRunner) {
+  if (headOid == null) return { ...summarizeChecks([], null), checks_available: false };
+  try {
+    const rollup = await fetchCommitCheckRollup(repoRoot, `${owner}/${name}`, headOid, { execFile: commandRunner });
+    return { ...summarizeChecks(rollup, headOid), checks_available: true };
+  } catch {
+    return { ...summarizeChecks([], headOid), checks_available: false };
+  }
+}
+
+async function collectReviews(repoRoot, owner, name, prNumber, commandRunner) {
+  try {
+    const raw = await ghRestJson(
+      repoRoot,
+      `/repos/${owner}/${name}/pulls/${prNumber}/reviews?per_page=100`,
+      { execFile: commandRunner, paginate: true },
+    );
+    // A PENDING review is the viewer's unsubmitted draft, invisible to everyone else.
+    const submitted = raw.filter((r) => r?.state !== "PENDING");
+    return {
+      available: true,
+      decision: deriveReviewDecision(submitted),
+      entries: submitted.map((r) => ({
+        author: r.user?.login ?? null,
+        state: r.state ?? null,
+        submitted_at: r.submitted_at ?? null,
+      })),
+    };
+  } catch {
+    return { available: false, decision: null, entries: [] };
+  }
+}
+
 async function collectRequiredContexts(repoRoot, owner, name, baseRef, commandRunner) {
   try {
     const data = await runReviewGhJson(
@@ -169,22 +206,12 @@ async function enrichIssue(repoRoot, owner, name, number, relationship, commandR
   }
 }
 
-async function collectLinkedIssues(repoRoot, owner, name, prNumber, body, closingRefs, commandRunner) {
-  const closingNumbers = new Set(
-    (Array.isArray(closingRefs) ? closingRefs : []).map((r) => r.number).filter(Number.isInteger),
-  );
-  // Authoritative closing references come from the linked-branch resolver, not
-  // the model-editable PR body.
-  let resolved = [];
-  let resolverFailed = false;
-  try {
-    resolved = await getPullRequestClosingIssues(repoRoot, prNumber);
-  } catch {
-    resolved = [];
-    resolverFailed = true;
-  }
-  for (const n of resolved) closingNumbers.add(n);
-
+async function collectLinkedIssues(repoRoot, owner, name, body, commandRunner) {
+  // Closing references are GitHub's closing keywords in the PR body, the same
+  // rule GitHub applies at merge. Issues linked only through the PR sidebar are
+  // visible solely to GraphQL and are not listed. Each candidate is post-merge
+  // closure input the maintainer classifies, never an automatic close.
+  const closingNumbers = new Set(parseClosingIssueReferences(body, owner, name));
   const crossRefs = crossReferencedIssueNumbers(body, closingNumbers);
   const plan = [
     ...[...closingNumbers].map((n) => [n, "closing_reference"]),
@@ -196,10 +223,9 @@ async function collectLinkedIssues(repoRoot, owner, name, prNumber, body, closin
     const issue = await enrichIssue(repoRoot, owner, name, number, relationship, commandRunner);
     if (issue != null) issues.push(issue);
   }
-  // An unavailable closing-issue resolution or an unreadable individual issue is
-  // missing evidence and must surface in completeness (codex cycle-3 F4).
+  // An unreadable individual issue is missing evidence and must surface in
+  // completeness (codex cycle-3 F4).
   const incompleteReasons = [
-    ...(resolverFailed ? ["closing_issue_resolution_unavailable"] : []),
     ...(issues.some((i) => i.unavailable) ? ["some_linked_issues_unavailable"] : []),
     ...(closingNumbers.size + crossRefs.length > plan.length ? ["linked_issue_list_truncated"] : []),
   ];
@@ -212,7 +238,9 @@ async function collectLinkedIssues(repoRoot, owner, name, prNumber, body, closin
 
 // Unresolved review-thread evidence (the outstanding discussion the reviewer
 // must weigh). Bounded; an unavailable read participates in completeness rather
-// than being silently dropped (codex cycle-2 F3, #1535).
+// than being silently dropped (codex cycle-2 F3, #1535). Thread resolution state
+// exists only in GraphQL, so this is the lane's one GraphQL read, and a failure
+// (including an exhausted GraphQL budget) degrades to `available: false`.
 async function collectDiscussions(repoRoot, owner, name, prNumber, commandRunner) {
   const query = "query($o:String!,$n:String!,$pr:Int!){repository(owner:$o,name:$n){"
     + "pullRequest(number:$pr){reviewThreads(first:100){totalCount nodes{isResolved isOutdated "
@@ -273,19 +301,17 @@ async function resolveReviewCheckout(input, workspaceAuthorizationResolver) {
 }
 
 async function fetchPrView(repoRoot, owner, name, prNumber, commandRunner) {
+  let pr;
   try {
-    const { stdout } = await runReviewGh(
-      repoRoot,
-      ["pr", "view", String(prNumber), "--repo", `${owner}/${name}`, "--json", PR_VIEW_FIELDS],
-      commandRunner,
-    );
-    return { ok: true, pr: JSON.parse(stdout) };
+    pr = await fetchPullRequest(repoRoot, owner, name, prNumber, { execFile: commandRunner });
   } catch (error) {
     return ghFailure(error, "pr_review_pr_unavailable", `Pull request #${prNumber} could not be read`);
   }
+  if (pr == null) return refusal("pr_review_pr_unavailable", `Pull request #${prNumber} could not be read`);
+  return { ok: true, pr };
 }
 
-function buildPrIdentity(pr, owner, name, prNumber, headOid) {
+function buildPrIdentity(pr, owner, name, prNumber, headOid, reviewDecision) {
   return {
     repo: `${owner}/${name}`,
     pr_number: prNumber,
@@ -305,7 +331,7 @@ function buildPrIdentity(pr, owner, name, prNumber, headOid) {
     cross_repository: pr.isCrossRepository === true,
     head_repository_deleted: pr.headRepository == null,
     maintainer_can_modify: pr.maintainerCanModify === true,
-    review_decision: pr.reviewDecision ?? null,
+    review_decision: reviewDecision,
     captured_at: new Date().toISOString(),
   };
 }
@@ -321,11 +347,13 @@ function boundBody(body) {
   return { prBody: value, bodyTruncated: truncated };
 }
 
-function computeIncompleteReasons({ fileResult, headOid, required, linked, bodyTruncated, discussions }) {
+function computeIncompleteReasons({ fileResult, headOid, checks, required, linked, reviews, bodyTruncated, discussions }) {
   return [
     ...fileResult.incomplete_reasons,
     ...(headOid == null ? ["head_oid_unresolved"] : []),
+    ...(checks.checks_available ? [] : ["checks_unavailable"]),
     ...(required.required_contexts_available ? [] : ["required_check_set_unavailable"]),
+    ...(reviews.available ? [] : ["reviews_unavailable"]),
     ...linked.incomplete_reasons,
     ...(bodyTruncated ? ["pr_body_truncated"] : []),
     ...(discussions.available ? [] : ["review_discussions_unavailable"]),
@@ -349,22 +377,20 @@ export async function runGetPrReviewContext(input, {
   const { pr } = prResult;
 
   const headOid = typeof pr.headRefOid === "string" ? pr.headRefOid.toLowerCase() : null;
-  const identity = buildPrIdentity(pr, owner, name, prNumber, headOid);
 
   const fileResult = await collectFiles(repoRoot, owner, name, prNumber, maxFiles, maxPatchBytes, commandRunner);
   if (fileResult.error) return fileResult.error;
 
-  const checks = summarizeChecks(pr.statusCheckRollup, headOid);
+  const checks = await collectChecks(repoRoot, owner, name, headOid, commandRunner);
   const required = await collectRequiredContexts(repoRoot, owner, name, pr.baseRefName, commandRunner);
-  const linked = await collectLinkedIssues(repoRoot, owner, name, prNumber, pr.body, pr.closingIssuesReferences, commandRunner);
-  const reviews = (Array.isArray(pr.reviews) ? pr.reviews : []).map((r) => ({
-    author: r.author?.login ?? null,
-    state: r.state ?? null,
-    submitted_at: r.submittedAt ?? null,
-  }));
+  const linked = await collectLinkedIssues(repoRoot, owner, name, pr.body, commandRunner);
+  const reviews = await collectReviews(repoRoot, owner, name, prNumber, commandRunner);
+  const identity = buildPrIdentity(pr, owner, name, prNumber, headOid, reviews.decision);
   const discussions = await collectDiscussions(repoRoot, owner, name, prNumber, commandRunner);
   const { prBody, bodyTruncated } = boundBody(pr.body);
-  const incompleteReasons = computeIncompleteReasons({ fileResult, headOid, required, linked, bodyTruncated, discussions });
+  const incompleteReasons = computeIncompleteReasons({
+    fileResult, headOid, checks, required, linked, reviews, bodyTruncated, discussions,
+  });
 
   return {
     ok: true,
@@ -376,7 +402,7 @@ export async function runGetPrReviewContext(input, {
     files: fileResult.files,
     checks: { ...checks, ...required },
     linked_issues: linked.linked_issues,
-    reviews,
+    reviews: reviews.entries,
     discussions,
     completeness: { complete: incompleteReasons.length === 0, reasons: incompleteReasons },
   };

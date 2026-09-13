@@ -6,13 +6,20 @@
 
 const SHA = "a".repeat(40);
 
-/** A REST pull-request payload for `{ number, state, mergedAt, url, baseRefName, mergeCommitOid, ... }`. */
+/**
+ * A REST pull-request payload for `{ number, state, mergedAt, url, baseRefName, mergeCommitOid, ... }`.
+ *
+ * `headOwner` other than `owner` makes a fork PR; `headRepoDeleted` models a deleted fork, whose
+ * `head.repo` GitHub returns as null.
+ */
 export function restPullRequest({
   owner = "fake", name = "repo", number, state = "OPEN", mergedAt = null, url = null,
-  baseRefName = "dev", headRefName = `${number}-branch`, headRefOid = SHA, mergeCommitOid = null,
+  baseRefName = "dev", baseRefOid = null, headRefName = `${number}-branch`, headRefOid = SHA, mergeCommitOid = null,
   title = `PR ${number}`, body = "", author = "fake",
+  headOwner = owner, headRepoDeleted = false, mergeableState = null, maintainerCanModify = false,
 }) {
   const repo = { name, full_name: `${owner}/${name}`, owner: { login: owner } };
+  const headRepo = headRepoDeleted ? null : { name, full_name: `${headOwner}/${name}`, owner: { login: headOwner } };
   return {
     number,
     state: mergedAt || state === "CLOSED" ? "closed" : "open",
@@ -21,9 +28,11 @@ export function restPullRequest({
     title,
     body,
     user: { login: author },
-    base: { ref: baseRefName, repo },
-    head: { ref: headRefName, sha: headRefOid, repo },
+    base: { ref: baseRefName, sha: baseRefOid, repo },
+    head: { ref: headRefName, sha: headRefOid, repo: headRepo },
     merge_commit_sha: mergeCommitOid,
+    mergeable_state: mergeableState,
+    maintainer_can_modify: maintainerCanModify,
   };
 }
 

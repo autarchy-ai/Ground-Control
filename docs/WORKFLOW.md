@@ -38,3 +38,9 @@ Skill lanes are agent-neutral and run from Claude Code, Codex, or Cursor CLI
 `/integrate` prepares a queue of approved pull requests, and `/review` reviews one
 contributor pull request. `docs/DEVELOPMENT_WORKFLOW.md` describes each lane and the
 boundaries between them.
+
+Every lane reaches GitHub through the MCP server over REST. GitHub's GraphQL budget is
+shared by every agent on the same token and can run out without warning, so GraphQL is
+used only where REST has no equivalent: review-thread ids and resolution for
+`gc_codex_verify_finding`, and the `/review` lane's unresolved-thread summary. That summary
+is optional and reports itself unavailable instead of failing the review.

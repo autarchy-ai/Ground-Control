@@ -24,13 +24,13 @@ import {
   readImplementGitOid,
   runImplementGit,
 } from "./codex-workflow-2.js";
+import { fetchPullRequest } from "./github-rest.js";
 import { getOwnerRepo } from "./grc-legacy-compat-3.js";
 import { resolveMcpLaunchWorkspaceAuthorization } from "./grc-legacy-compat-4.js";
 import { execFile } from "./runtime-primitives.js";
 import {
   PR_REVIEW_ACTIONS,
   refusal,
-  runReviewGh,
   validateAuthorization,
   validatePrNumber,
   validateRepoPath,
@@ -39,23 +39,17 @@ import {
 import { runRemediationPublish } from "./pr-review-remediate-publish.js";
 import { assertRemediationConfirmed, resolveActorRepoPermission } from "./pr-review-confirm.js";
 
-const LIVE_PR_FIELDS = [
-  "state", "headRefName", "headRefOid", "baseRefName", "baseRefOid",
-  "isCrossRepository", "headRepository", "maintainerCanModify", "mergedAt", "url",
-].join(",");
-
-// Read the live PR through the injected runner. Returns a normalized identity or
-// a structured refusal — never a raw gh error.
+// Read the live PR over REST through the injected runner (issue #1586: the
+// shared GraphQL budget must not gate remediation). Returns a normalized
+// identity or a structured refusal — never a raw gh error.
 export async function readLivePullRequest(repoRoot, owner, name, prNumber, commandRunner) {
-  let pr;
+  let pr = null;
   try {
-    const { stdout } = await runReviewGh(
-      repoRoot,
-      ["pr", "view", String(prNumber), "--repo", `${owner}/${name}`, "--json", LIVE_PR_FIELDS],
-      commandRunner,
-    );
-    pr = JSON.parse(stdout);
+    pr = await fetchPullRequest(repoRoot, owner, name, prNumber, { execFile: commandRunner });
   } catch {
+    pr = null;
+  }
+  if (pr == null) {
     return { ok: false, refusal: refusal("pr_remediation_pr_unavailable", `Pull request #${prNumber} could not be read`) };
   }
   return {
@@ -73,6 +67,17 @@ export async function readLivePullRequest(repoRoot, owner, name, prNumber, comma
       url: pr.url ?? null,
     },
   };
+}
+
+// Only an open PR is remediable. Pushing to the head branch of a merged or
+// closed PR changes nothing that will ship and would strand the commits.
+export function assertPullRequestOpen(live) {
+  if (live.state === "OPEN") return { ok: true };
+  return refusal(
+    "pr_remediation_pr_not_open",
+    `The pull request is ${String(live.state).toLowerCase()}; only an open pull request can be remediated`,
+    { pr_state: live.state, next_action: "stop_the_pull_request_is_not_open" },
+  );
 }
 
 // The reviewed branch/base/cross-repo identity must still describe the live PR
@@ -293,6 +298,9 @@ export async function runRemediatePullRequest(input, {
   const liveResult = await readLivePullRequest(repoRoot, owner, name, prNumber, commandRunner);
   if (!liveResult.ok) return liveResult.refusal;
   const { live } = liveResult;
+
+  const open = assertPullRequestOpen(live);
+  if (!open.ok) return open;
 
   const refsCurrent = assertReviewedRefsCurrent(reviewedIdentity, live);
   if (!refsCurrent.ok) return refsCurrent;

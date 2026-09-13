@@ -3,6 +3,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  deriveReviewDecision,
+  fetchCommitCheckRollup,
   listIssueCrossReferencedPullNumbers,
   listPullRequestsForHead,
   normalizeRestPullRequest,
@@ -32,6 +34,82 @@ describe("normalizeRestPullRequest", () => {
       number: 8, state: "open", base: { ref: "dev", repo: repo("o/r") }, head: { ref: "x", sha: "s", repo: repo("fork/r") },
     });
     assert.equal(pr.isCrossRepository, true);
+  });
+
+  it("treats a deleted head repository as a deleted fork, as GraphQL does", () => {
+    const pr = normalizeRestPullRequest({
+      number: 9, state: "open", base: { ref: "dev", repo: repo("o/r") }, head: { ref: "x", sha: "s", repo: null },
+    });
+    assert.equal(pr.isCrossRepository, true);
+    assert.equal(pr.headRepository, null);
+  });
+
+  it("maps the review-lane identity fields onto the GraphQL-era names (issue #1586)", () => {
+    const pr = normalizeRestPullRequest({
+      number: 10, state: "open", mergeable_state: "behind", maintainer_can_modify: true,
+      base: { ref: "dev", sha: "b1", repo: repo("o/r") }, head: { ref: "x", sha: "h1", repo: repo("o/r") },
+    });
+    assert.equal(pr.mergeStateStatus, "BEHIND");
+    assert.equal(pr.baseRefOid, "b1");
+    assert.equal(pr.maintainerCanModify, true);
+    // List endpoints omit mergeable_state; an unrecognized value is not passed through either.
+    assert.equal(normalizeRestPullRequest({ number: 11, state: "open" }).mergeStateStatus, null);
+    assert.equal(normalizeRestPullRequest({ number: 12, state: "open", mergeable_state: "weird" }).mergeStateStatus, null);
+    assert.equal(normalizeRestPullRequest({ number: 13, state: "open" }).maintainerCanModify, false);
+  });
+});
+
+describe("deriveReviewDecision", () => {
+  const review = (login, state) => ({ user: { login }, state });
+
+  it("lets a change request outrank approvals", () => {
+    assert.equal(deriveReviewDecision([review("a", "APPROVED"), review("b", "CHANGES_REQUESTED")]), "CHANGES_REQUESTED");
+  });
+
+  it("uses each reviewer's latest decision, which a later comment does not reset", () => {
+    const reviews = [review("a", "CHANGES_REQUESTED"), review("a", "APPROVED"), review("a", "COMMENTED")];
+    assert.equal(deriveReviewDecision(reviews), "APPROVED");
+  });
+
+  it("clears a dismissed decision and reports REVIEW_REQUIRED without a standing one", () => {
+    assert.equal(deriveReviewDecision([review("a", "CHANGES_REQUESTED"), review("a", "DISMISSED")]), "REVIEW_REQUIRED");
+    assert.equal(deriveReviewDecision([review("a", "COMMENTED")]), "REVIEW_REQUIRED");
+    assert.equal(deriveReviewDecision(null), "REVIEW_REQUIRED");
+  });
+});
+
+describe("fetchCommitCheckRollup", () => {
+  const responses = {
+    "/repos/o/r/commits/abc/check-runs?per_page=100": [{
+      check_runs: [{ name: "build", status: "completed", conclusion: "success", completed_at: "t", details_url: "https://github.com/o/r/actions/runs/5/job/1" }],
+    }],
+    "/repos/o/r/commits/abc/status": { statuses: [{ context: "legacy", state: "pending" }] },
+    "/repos/o/r/actions/runs/5": { name: "CI" },
+  };
+  const recorder = () => {
+    const paths = [];
+    const execFile = async (bin, args) => {
+      const path = args.find((arg) => arg.startsWith("/repos/"));
+      paths.push(path);
+      return { stdout: JSON.stringify(responses[path]) };
+    };
+    return { paths, execFile };
+  };
+
+  it("returns check runs and status contexts in the GraphQL rollup shape", async () => {
+    const { paths, execFile } = recorder();
+    const rollup = await fetchCommitCheckRollup("/repo", "o/r", "abc", { execFile });
+    assert.deepEqual(rollup, [
+      { __typename: "CheckRun", name: "build", workflowName: null, status: "COMPLETED", conclusion: "SUCCESS", completedAt: "t" },
+      { __typename: "StatusContext", context: "legacy", state: "PENDING" },
+    ]);
+    assert.ok(!paths.some((path) => path.includes("/actions/runs/")), "workflow names are read only on request");
+  });
+
+  it("adds each Actions check run's workflow name on request", async () => {
+    const { execFile } = recorder();
+    const rollup = await fetchCommitCheckRollup("/repo", "o/r", "abc", { execFile, withWorkflowNames: true });
+    assert.equal(rollup[0].workflowName, "CI");
   });
 });
 
