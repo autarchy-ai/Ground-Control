@@ -377,6 +377,9 @@ function _absorbReviewThreadPage(threads, wanted, result) {
   }
 }
 
+// GraphQL by necessity (issue #1586): REST review comments carry no review-thread
+// node id, and `resolveReviewThread` accepts only that id, so there is no REST
+// path from a comment to the thread gc_codex_verify_finding resolves.
 export async function enrichCommentsWithThreadIds({ repoRoot, owner, name, prNumber, commentIds }) {
   if (!commentIds || commentIds.length === 0) {
     return new Map();

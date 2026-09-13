@@ -641,3 +641,26 @@ corrections are appended. Requirement-free runs, the single human merge touchpoi
 the issue-thread durable-record model are unchanged. This amendment supersedes the
 requirement-file mutation ordering in the 2026-06-22 issue #963 amendment; its separation
 between pre-merge readiness and post-merge authoritative completion remains in force.
+
+**2026-09-13 (issue #1586, maintainer review lane off GraphQL).** The issue #1535
+review lane now reads GitHub over REST, like the `/implement` workflow after issue
+#1584. GraphQL's hourly budget is shared by every agent on the token, and GitHub's
+rate-limit endpoint does not report it as exhausted, so a drained budget had failed the
+read-only review and blocked remediation while REST was healthy. `gc_get_pr_review_context`
+reads the pull request, reviews, head-commit check runs and status contexts, and
+body-keyword closing references over REST. Its review decision is derived from each
+reviewer's latest decisive review. The unresolved-review-thread summary is the lane's
+only GraphQL read, because GitHub exposes thread resolution state only there. That read
+is optional: its failure marks `discussions` unavailable, which is a completeness reason,
+and never fails the snapshot. Unreadable checks or reviews are completeness reasons too,
+never an empty clean set.
+
+`gc_remediate_pull_request` re-validates the reviewed identity against the REST pull
+request. A deleted fork, whose REST head repository is null, still counts as
+cross-repository and is refused. The tool now also refuses a merged or closed pull request
+(`pr_remediation_pr_not_open`) before the trusted-host confirmation or any mutation.
+Before this amendment only the optional post-push comment checked PR state, so a merged
+PR's branch could still receive a remediation push. `enrichCommentsWithThreadIds` and
+`resolveReviewThread` stay on GraphQL because REST has no review-thread id or resolution
+endpoint. The read-only default, the no-issue-thread-record rule, and the user-owned
+merge are unchanged.

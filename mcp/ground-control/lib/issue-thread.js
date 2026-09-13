@@ -100,6 +100,8 @@ export function parseCodexVerifyTail(stdout) {
   }
   return { status: "unresolved", reply };
 }
+// GraphQL by necessity (issue #1586): GitHub exposes review-thread resolution
+// only as the `resolveReviewThread` mutation; REST has no equivalent endpoint.
 export async function resolveReviewThread(repoRoot, threadId) {
   const mutation = `
     mutation($threadId:ID!) {
