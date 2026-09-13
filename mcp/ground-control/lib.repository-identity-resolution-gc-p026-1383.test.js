@@ -142,9 +142,9 @@ process.exit(0);
     }
   });
 
-  it("createGitHubIssue ignores a stale process.env.GH_REPO and pins --repo to the checkout origin", async () => {
+  it("createGitHubIssue ignores a stale process.env.GH_REPO and pins the REST path to the checkout origin", async () => {
     const { createGitHubIssue } = await import("./lib.js");
-    const shim = ghShim("https://github.com/good/repo/issues/1\n");
+    const shim = ghShim('{"number":1,"html_url":"https://github.com/good/repo/issues/1"}');
     const repoDir = gitRepoWithOrigin("good/repo");
     try {
       const result = await withEnv(
@@ -155,9 +155,8 @@ process.exit(0);
       assert.equal(result.number, 1);
       assert.ok(shim.called(), "gh should have been invoked");
       const argv = shim.argv();
-      const repoIdx = argv.indexOf("--repo");
-      assert.ok(repoIdx >= 0, "gh argv must contain --repo");
-      assert.equal(argv[repoIdx + 1], "good/repo", "--repo must be the checkout-derived slug");
+      // REST issue creation (issue #1584): the repository is pinned in the endpoint path.
+      assert.deepEqual(argv.slice(0, 4), ["api", "--method", "POST", "/repos/good/repo/issues"]);
       assert.doesNotMatch(argv.join(" "), /evil\/evil/, "GH_REPO must never leak into the gh argv");
     } finally {
       shim.cleanup();
@@ -219,7 +218,7 @@ process.exit(0);
     }
   });
 
-  it("getIssueContext returns parsed gh JSON and pins --repo to the checkout, ignoring GH_REPO", async () => {
+  it("getIssueContext returns the REST issue and pins the path to the checkout, ignoring GH_REPO", async () => {
     const { getIssueContext } = await import("./lib.js");
     const shim = ghShim('{"number":5,"title":"x","body":"y"}');
     const repoDir = gitRepoWithOrigin("good/repo");
@@ -232,9 +231,8 @@ process.exit(0);
       assert.deepEqual(result, { number: 5, title: "x", body: "y" });
       assert.ok(shim.called(), "gh should have been invoked");
       const argv = shim.argv();
-      const repoIdx = argv.indexOf("--repo");
-      assert.ok(repoIdx >= 0, "gh argv must contain --repo");
-      assert.equal(argv[repoIdx + 1], "good/repo", "--repo must be the checkout-derived slug");
+      // REST issue read (issue #1584): the repository is pinned in the endpoint path.
+      assert.deepEqual(argv, ["api", "/repos/good/repo/issues/5"]);
       assert.doesNotMatch(argv.join(" "), /evil\/evil/, "GH_REPO must never leak into the gh argv");
     } finally {
       shim.cleanup();

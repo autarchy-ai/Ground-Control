@@ -22,7 +22,7 @@ describe("createGitHubIssueFromRequirement (issue #1500)", () => {
     const ghShim = `#!/usr/bin/env node
 const fs = require("node:fs");
 fs.writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)));
-process.stdout.write("https://github.com/o/r/issues/${number}\\n");
+process.stdout.write(JSON.stringify({ number: ${number}, html_url: "https://github.com/o/r/issues/${number}" }));
 process.exit(0);
 `;
     writeFileSync(join(binDir, "gh"), ghShim, { mode: 0o755 });
@@ -94,15 +94,17 @@ process.exit(0);
       // gh was invoked with a derived title/body — never the literal "undefined".
       assert.ok(shim.ghCalled(), "gh should have been called");
       const argv = shim.ghArgv();
-      const title = argv[argv.indexOf("--title") + 1];
-      const body = argv[argv.indexOf("--body") + 1];
+      // REST issue creation (issue #1584): fields are `-f key=value` pairs on a pinned path.
+      const field = (key) => argv.filter((arg) => arg.startsWith(`${key}=`)).map((arg) => arg.slice(key.length + 1));
+      const [title] = field("title");
+      const [body] = field("body");
       assert.equal(title, "AGT-001 — Agent Orchestration / ReAct Planning Layer");
       assert.notEqual(body, "undefined");
       assert.ok(body.includes("## Requirements"));
       assert.ok(body.includes("- AGT-001 — Agent Orchestration / ReAct Planning Layer"));
       assert.ok(body.includes("## Notes"));
-      assert.deepEqual(argv.slice(argv.indexOf("--repo"), argv.indexOf("--repo") + 2), ["--repo", "o/r"]);
-      assert.equal(argv[argv.indexOf("--label") + 1], "requirement,wave-1");
+      assert.deepEqual(argv.slice(0, 4), ["api", "--method", "POST", "/repos/o/r/issues"]);
+      assert.deepEqual(field("labels[]"), ["requirement", "wave-1"]);
     } finally {
       shim.cleanup();
       rmSync(repoDir, { recursive: true, force: true });

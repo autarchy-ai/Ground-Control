@@ -100,19 +100,16 @@ export async function createGitHubIssue({ title, body, labels, repo, repoRoot })
       throw new Error(`Supplied repo '${repo}' does not match the checkout's origin remote '${slug}'; refusing to create the issue at a mismatched repository.`);
     }
   }
-  const args = ["issue", "create", "--title", title, "--body", body, "--repo", slug];
-  if (labels && labels.length > 0) {
-    args.push("--label", labels.join(","));
-  }
+  // REST issue creation; `gh issue create` spent the shared GraphQL budget (issue #1584).
+  const args = ["api", "--method", "POST", `/repos/${slug}/issues`, "-f", `title=${title}`, "-f", `body=${body}`];
+  for (const label of labels ?? []) args.push("-f", `labels[]=${label}`);
 
   const { stdout } = await execFile("gh", args);
-  const url = stdout.trim();
-  const match = url.match(/\/issues\/(\d+)$/);
-  if (!match) {
-    throw new Error(`Could not parse issue number from gh output: ${url}`);
+  const created = JSON.parse(stdout);
+  if (!Number.isInteger(created?.number) || typeof created?.html_url !== "string") {
+    throw new Error(`GitHub REST issue creation returned no issue number: ${stdout.slice(0, 200)}`);
   }
-  const number = Number.parseInt(match[1], 10);
-  return { url, number };
+  return { url: created.html_url, number: created.number };
 }
 export async function authorizeRequestedRequirementUid(
   { repoPath, issueNumber, requestedRequirementUid },
@@ -191,11 +188,13 @@ export async function getIssueContext(issueNumber, repo, { cwd } = {}) {
     }
   }
 
-  const args = ["issue", "view", String(issueNumber), "--json", "number,title,body", "--repo", slug];
+  // REST issue read; `gh issue view` spent the shared GraphQL budget (issue #1584).
+  const args = ["api", `/repos/${slug}/issues/${issueNumber}`];
 
   try {
     const { stdout } = await execFile("gh", args, { cwd });
-    return JSON.parse(stdout);
+    const issue = JSON.parse(stdout);
+    return { number: issue.number, title: issue.title, body: issue.body ?? "" };
   } catch (error) {
     return {
       number: issueNumber,

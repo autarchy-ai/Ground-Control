@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { runAssertCompletion } from "./lib.js";
+import { restPullRequest } from "./github-rest.test-helpers.js";
 
 function reqFile({ id, status, traceability = [] }) {
   const trace = traceability.length > 0 ? ["", "## Traceability", "", ...traceability] : [];
@@ -38,19 +39,13 @@ function commitReqRepo(uid, content) {
 }
 
 // A gh shim serving the routes runAssertCompletion(post_merge) touches: owner/repo,
-// the issue timeline (PR merged, mergeCommit.oid=<oid>, baseRefName), the issue body
+// the REST issue timeline and PR record (PR merged, merge_commit_sha=<oid>, base ref), the issue body
 // (with a Requirements section), an empty comments page, and the final-report POST.
 function writeGhShim(dir, { oid, issueBody, issueNumber, comments = [] }) {
-  const graphqlPayload = {
-    data: { repository: { issue: { timelineItems: { nodes: [
-      { __typename: "CrossReferencedEvent", source: {
-        __typename: "PullRequest", number: 42, state: "MERGED",
-        mergedAt: "2026-09-03T00:00:00Z", url: "https://github.com/fake/repo/pull/42",
-        baseRefName: "dev", mergeCommit: { oid },
-      } },
-    ] } } } },
-  };
-  const cfg = { oid, issueBody, issueNumber, graphqlPayload, comments };
+  const restPull = restPullRequest({
+    number: 42, state: "MERGED", mergedAt: "2026-09-03T00:00:00Z", baseRefName: "dev", mergeCommitOid: oid,
+  });
+  const cfg = { oid, issueBody, issueNumber, restPull, comments };
   const cfgPath = join(dir, "cfg.json");
   writeFileSync(cfgPath, JSON.stringify(cfg));
   const src = `#!/usr/bin/env node
@@ -60,7 +55,9 @@ const argv = process.argv.slice(2);
 const has = (s) => argv.includes(s);
 if (argv[0] === "api" && argv[1] === "user") { process.stdout.write("fake\\n"); process.exit(0); }
 if (argv[0] === "repo" && argv[1] === "view") { process.stdout.write(JSON.stringify({ nameWithOwner: "fake/repo" })); process.exit(0); }
-if (argv[0] === "api" && argv[1] === "graphql") { process.stdout.write(JSON.stringify(cfg.graphqlPayload)); process.exit(0); }
+const restPath = argv.find((a) => typeof a === "string" && a.startsWith("/repos/fake/repo/")) || "";
+if (/\\/issues\\/\\d+\\/timeline/.test(restPath)) { process.stdout.write(JSON.stringify([[{ event: "cross-referenced", source: { issue: { number: 42, pull_request: {}, repository: { full_name: "fake/repo" } } } }]])); process.exit(0); }
+if (/\\/pulls\\/\\d+$/.test(restPath)) { process.stdout.write(JSON.stringify(cfg.restPull)); process.exit(0); }
 if (argv[0] === "api" && argv[1] === "--method" && argv[2] === "POST") { process.stdout.write(JSON.stringify({ id: 9001, html_url: "https://github.com/fake/repo/issues/" + cfg.issueNumber + "#issuecomment-9001" })); process.exit(0); }
 const permEndpoint = argv.find((a) => typeof a === "string" && a.includes("/collaborators/") && a.endsWith("/permission"));
 if (permEndpoint) { process.stdout.write("write\\n"); process.exit(0); }

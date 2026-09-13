@@ -1,6 +1,6 @@
 import { realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { GIT_OBJECT_ID_RE, IMPLEMENT_CHECKOUT_MODES, REQUIREMENT_UID_GATE_ENV_VAR, implementNetworkGitEnvironment, sanitizedImplementGitEnvironment, validateImplementBranchName } from "./codex-workflow.js";
+import { GIT_OBJECT_ID_RE, IMPLEMENT_CHECKOUT_MODES, REQUIREMENT_UID_GATE_ENV_VAR, implementNetworkGitEnvironment, validateImplementBranchName } from "./codex-workflow.js";
 import { extractGhErrorMessage } from "./grc-legacy-compat-2.js";
 import { assertSafeImplementCheckoutConfiguration, authorizeImplementRepoRoot, ensureGitRepo, readGitIdentity, resolveMcpLaunchWorkspaceAuthorization } from "./grc-legacy-compat-4.js";
 import { isSafeGitRefName, resolveWorkflowPrecommitCommand } from "./repo-context.js";
@@ -67,6 +67,50 @@ function validatePreparedImplementCheckout({
   return { ok: true };
 }
 
+async function gitRefExists(repoRoot, ref, commandRunner) {
+  try {
+    await runImplementGit(repoRoot, ["show-ref", "--verify", "--quiet", ref], commandRunner);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Create or switch the issue branch with git alone (issue #1584).
+ *
+ * This used `gh issue develop`, which goes through GitHub GraphQL: when the account's shared
+ * GraphQL budget ran out, no agent could start work even though git and REST were healthy. The
+ * branch is reused when it exists locally or on origin; otherwise it starts from the freshly fetched
+ * integration branch. Publish pushes it and the PR body links the issue, so no GitHub-side branch
+ * link is needed.
+ */
+async function checkoutIssueBranch(repoRoot, baseBranch, branchName, commandRunner) {
+  if (await gitRefExists(repoRoot, `refs/heads/${branchName}`, commandRunner)) {
+    await runImplementGit(repoRoot, ["switch", branchName], commandRunner);
+    return;
+  }
+  await runImplementGit(
+    repoRoot,
+    ["fetch", "--no-tags", "origin", `+refs/heads/${baseBranch}:refs/remotes/origin/${baseBranch}`],
+    commandRunner,
+  );
+  try {
+    await runImplementGit(
+      repoRoot,
+      ["fetch", "--no-tags", "origin", `+refs/heads/${branchName}:refs/remotes/origin/${branchName}`],
+      commandRunner,
+    );
+  } catch {
+    // The issue branch does not exist on origin yet; it starts from the integration branch.
+  }
+  if (await gitRefExists(repoRoot, `refs/remotes/origin/${branchName}`, commandRunner)) {
+    await runImplementGit(repoRoot, ["switch", "-c", branchName, "--track", `origin/${branchName}`], commandRunner);
+    return;
+  }
+  await runImplementGit(repoRoot, ["switch", "--no-track", "-c", branchName, `origin/${baseBranch}`], commandRunner);
+}
+
 export async function runPrepareImplementBranch({
   repoPath,
   invocationRoot,
@@ -76,6 +120,7 @@ export async function runPrepareImplementBranch({
   checkoutMode = "same_checkout",
 }, {
   workspaceAuthorizationResolver = resolveMcpLaunchWorkspaceAuthorization,
+  commandRunner = execFile,
 } = {}) {
   const inputValidation = validatePrepareImplementBranchInput({
     invocationRoot,
@@ -114,16 +159,7 @@ export async function runPrepareImplementBranch({
   }
   try {
     await assertSafeImplementCheckoutConfiguration(repoRoot);
-    await execFile(
-      "gh",
-      [
-        "issue", "develop", String(issueNumber),
-        "--checkout",
-        "--base", baseBranch,
-        "--name", branchName,
-      ],
-      { cwd: pinnedRoot, env: sanitizedImplementGitEnvironment() },
-    );
+    await checkoutIssueBranch(pinnedRoot, baseBranch, branchName, commandRunner);
   } catch (error) {
     return {
       ok: false,
