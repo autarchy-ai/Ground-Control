@@ -14,7 +14,7 @@ version = release
 
 extensions = ["myst_parser", "sphinx_copybutton"]
 myst_heading_anchors = 3
-exclude_patterns = ["_build", "requirements.txt"]
+exclude_patterns = ["_build", "requirements.txt", "requirements.in"]
 
 html_theme = "furo"
 html_title = "Ground Control"
