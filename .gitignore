@@ -277,5 +277,6 @@ docs/notes
 .vale/styles/*
 !.vale/styles/GoogleProject/
 
-# Workflow skills bundled into the grndctl package at pack time (issue #1587).
+# Workflow skills and the .env template bundled into the grndctl package at pack time (issue #1587).
 mcp/ground-control/skills/
+mcp/ground-control/templates/

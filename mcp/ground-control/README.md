@@ -51,8 +51,28 @@ grndctl install-skills      # copies /implement, /quickfix, /integrate, /review 
 Upgrade with `npm update -g grndctl` (then re-run `grndctl install-skills` and
 restart your agent sessions). `grndctl --version` prints the installed version.
 
-Add to your MCP client config (`.claude/settings.json`, project `.mcp.json`, or
-the equivalent for your driver):
+Then set up each repository from its root:
+
+```bash
+grndctl init      # confirm each detected value, review the file changes, then write
+grndctl doctor    # check the host and this repository, with the fix for anything wrong
+```
+
+`grndctl init` touches only the repository it runs in. It proposes values
+detected from the checkout (project, GitHub repository from `origin`, base
+branch, test/completion/lint/format commands from Makefile targets or
+`package.json` scripts, SonarCloud keys from `sonar-project.properties`, ADR
+directory) and shows where each came from; you accept or edit every one, and
+nothing is written until you confirm the previewed changes. It creates
+`.ground-control.yaml` (never rewriting an existing one), adds or updates only
+the `ground-control` entry in `.mcp.json`, creates `.env` from the template when
+it is missing (never changing existing values), and makes sure `.env` is
+gitignored. For scripts, `grndctl init --non-interactive` requires every value as
+an explicit flag and never falls back to a detected value; `--dry-run` previews
+without writing.
+
+`grndctl init` writes this MCP client config for you; the equivalent by hand
+(`.claude/settings.json`, project `.mcp.json`, or your driver's config) is:
 
 ```json
 {

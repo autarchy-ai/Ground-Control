@@ -111,7 +111,14 @@ merging the release PR publishes `mcp/ground-control` to npm as `grndctl`, with
 the repository's workflow skills bundled at pack time. Hosts install it with
 `npm install -g grndctl`, configure `grndctl mcp` as the MCP command, copy the
 skills with `grndctl install-skills`, and upgrade with `npm update -g grndctl`.
-Upgrading is the host operator's decision.
+Upgrading is the host operator's decision. `grndctl init` sets up one
+repository at a time: it proposes detected values with their evidence, requires
+the operator to confirm or edit each one and then the previewed file changes, and
+writes only that repository's `.ground-control.yaml` (never rewriting an existing
+one), its `ground-control` `.mcp.json` entry, a missing `.env` from the template,
+and the `.env` ignore rule. A non-interactive run requires every value as an
+explicit flag and never falls back to detection. `grndctl doctor` checks the host
+and the repository without writing anything.
 
 Release Please owns the package version: `mcp/ground-control/package.json` and
 its lockfile are declared `extra-files` mirrors, so the independent MCP-server

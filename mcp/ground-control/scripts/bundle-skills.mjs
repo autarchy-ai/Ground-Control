@@ -1,18 +1,26 @@
-// Copy the repository's workflow skills into this package before it is packed (issue #1587), so
-// one published version carries the server and the skills that drive it. `--clean` removes the
-// copy again after packing; the bundled directory is never committed.
+// Copy the repository's workflow skills and the `.env` template into this package before it is
+// packed (issue #1587), so one published version carries the server, the skills that drive it, and
+// the template `grndctl init` seeds. `--clean` removes the copies again after packing; neither
+// bundled path is ever committed.
 
-import { cpSync, existsSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const source = fileURLToPath(new URL("../../../skills/", import.meta.url));
-const target = fileURLToPath(new URL("../skills/", import.meta.url));
+const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+const packageRoot = fileURLToPath(new URL("../", import.meta.url));
+const skillsSource = `${repoRoot}skills/`;
+const envSource = `${repoRoot}.env.example`;
 
-rmSync(target, { recursive: true, force: true });
+rmSync(`${packageRoot}skills`, { recursive: true, force: true });
+rmSync(`${packageRoot}templates`, { recursive: true, force: true });
 if (!process.argv.includes("--clean")) {
-  if (!existsSync(source)) {
-    process.stderr.write(`bundle-skills: ${source} not found; pack from a Ground Control repository checkout\n`);
-    process.exit(1);
+  for (const source of [skillsSource, envSource]) {
+    if (!existsSync(source)) {
+      process.stderr.write(`bundle-skills: ${source} not found; pack from a Ground Control repository checkout\n`);
+      process.exit(1);
+    }
   }
-  cpSync(source, target, { recursive: true });
+  cpSync(skillsSource, `${packageRoot}skills`, { recursive: true });
+  mkdirSync(`${packageRoot}templates`, { recursive: true });
+  cpSync(envSource, `${packageRoot}templates/env.example`);
 }

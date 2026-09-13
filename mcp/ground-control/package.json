@@ -32,6 +32,7 @@
     "gc-integrate/",
     "knowledge_ingest/",
     "skills/",
+    "templates/",
     "!**/*.test.js",
     "!**/*.test-helpers.js"
   ],
