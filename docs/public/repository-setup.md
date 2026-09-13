@@ -12,7 +12,8 @@ grndctl init
 `init` detects a value for each setting and shows where it came from, such as
 `github_repo [acme/widgets] (git remote origin)`. Press Enter to accept a value or
 type a replacement. It then shows every file change and writes nothing until you
-confirm.
+confirm. If the repository already has a `.ground-control.yaml`, `init` keeps it and
+asks for no settings; it only updates `.mcp.json` and `.env`.
 
 | File | What `init` does |
 | --- | --- |

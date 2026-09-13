@@ -27,3 +27,9 @@ edited locally untouched unless you pass `--force`. Use `--no-codex` or `--no-cu
 to skip an agent you don't use, and `--dry-run` to preview.
 
 Next: [set up a repository](repository-setup.md).
+
+## If your agent can't find `grndctl`
+
+Agents start the server by running `grndctl` from the `PATH` set in your shell profile.
+If an agent reports `grndctl` not found, add npm's global bin directory
+(`$(npm prefix -g)/bin`) to `PATH` in that profile, then restart the agent.

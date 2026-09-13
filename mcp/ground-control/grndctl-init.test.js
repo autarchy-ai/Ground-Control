@@ -201,6 +201,20 @@ describe("runInit", () => {
     }
   });
 
+  it("asks for no settings when the repository already has a .ground-control.yaml", async () => {
+    const dir = repo({ files: { ".ground-control.yaml": "schema_version: 1\nproject: widgets\n" } });
+    try {
+      const { ask, asked } = scriptedAsk(["y"]);
+      const code = await runInit([], { cwd: dir, ask, print: () => {}, interactive: true });
+      assert.equal(code, 0);
+      assert.deepEqual(asked, ["\nWrite these changes? [y/N]: "]);
+      assert.equal(readFileSync(join(dir, ".ground-control.yaml"), "utf8"), "schema_version: 1\nproject: widgets\n");
+      assert.equal(JSON.parse(readFileSync(join(dir, ".mcp.json"), "utf8")).mcpServers["ground-control"].command, "grndctl");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("writes nothing on a dry run", async () => {
     const dir = repo();
     try {

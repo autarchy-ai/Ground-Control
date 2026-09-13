@@ -215,6 +215,36 @@ export function renderPlan(changes) {
   return lines.join("\n");
 }
 
+/**
+ * The confirmed settings, or null when they are invalid.
+ *
+ * An existing `.ground-control.yaml` is kept as it is, so there is nothing to ask: prompting for
+ * settings init would then ignore would misrepresent what it is about to do.
+ */
+async function collectValues(args, { cwd, ask, print, nonInteractive }) {
+  if (existsSync(join(cwd, ".ground-control.yaml"))) {
+    print("Keeping the existing .ground-control.yaml, so there are no settings to confirm.");
+    return {};
+  }
+  let values;
+  if (nonInteractive) {
+    const fromFlags = valuesFromFlags(args);
+    if (fromFlags.missing.length > 0) {
+      print(`--non-interactive needs every value as a flag; missing: ${fromFlags.missing.join(", ")}`);
+      return null;
+    }
+    values = fromFlags.values;
+  } else {
+    values = await confirmValues(ask, await detectRepoFacts(cwd), print);
+  }
+  const errors = validateValues(values);
+  if (errors.length > 0) {
+    print(errors.join("\n"));
+    return null;
+  }
+  return values;
+}
+
 export function initUsage() {
   return [
     "usage: grndctl init [--dry-run] [--non-interactive <flags>]",
@@ -235,22 +265,8 @@ export async function runInit(args, { cwd = process.cwd(), ask, print = console.
     print("grndctl init confirms every value, so it needs a terminal. For scripts, pass every value as a flag with --non-interactive.");
     return 2;
   }
-  let values;
-  if (nonInteractive) {
-    const fromFlags = valuesFromFlags(args);
-    if (fromFlags.missing.length > 0) {
-      print(`--non-interactive needs every value as a flag; missing: ${fromFlags.missing.join(", ")}`);
-      return 2;
-    }
-    values = fromFlags.values;
-  } else {
-    values = await confirmValues(ask, await detectRepoFacts(cwd), print);
-  }
-  const errors = validateValues(values);
-  if (errors.length > 0) {
-    print(errors.join("\n"));
-    return 2;
-  }
+  const values = await collectValues(args, { cwd, ask, print, nonInteractive });
+  if (values === null) return 2;
   const changes = await planInit(cwd, values);
   print(renderPlan(changes));
   if (args.includes("--dry-run")) return 0;
