@@ -55,6 +55,10 @@ function captureDeps(overrides = {}) {
     getContext: async () => ({ status: "ok", workflow: { base_branch: "dev", completion_command: "make check" } }),
     authorizeRequirementUid: async () => ({ ok: true, requirementUid: null }),
     runGit: async (repoRoot, argv, commandRunner) => commandRunner("git", ["-C", repoRoot, ...argv], { cwd: repoRoot }),
+    commit: async (repoRoot, argv, commandRunner) => {
+      await commandRunner("git", ["-C", repoRoot, "commit", ...argv], { cwd: repoRoot });
+      return { ok: true };
+    },
     execFile: git.exec,
     preCommit: async () => ({ stdout: "" }),
     synchronize: async (input) => (input.action === "start"

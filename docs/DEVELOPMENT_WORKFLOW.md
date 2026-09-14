@@ -903,6 +903,9 @@ where `/implement` was invoked. The lane does not create a worktree or migrate
 execution to another checkout. The server pins both the checkout and GitHub
 repository identity at launch, rejects later origin drift, and runs checkout
 with hooks and caller-selected executable Git configuration disabled.
+Commits follow the host's signing configuration. The server refuses a checkout
+that selects its own signing program, and a required signature that fails
+returns `implement_commit_signing_failed` without creating a commit.
 `gc_mark_implement_issue_picked_up` then owns label creation/application and
 the pickup comment; agents do not perform those GitHub writes directly.
 
