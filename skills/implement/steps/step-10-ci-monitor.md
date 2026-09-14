@@ -29,7 +29,7 @@ Sonar polling remains server-side and raw logs remain there. (Issues #934 and
 
 2. Read the CI result inside the completed mechanical envelope:
    - `conclusion: "success"` → CI passed. Advance to Step 11.
-   - `conclusion: "queued_too_long"` → no runner accepted the job within 5 minutes. Record the runner outage as an open execution obligation. This is a hard external dependency, so escalate it with the run URL and a concrete request to restore/check the runner pool (`gh api /repos/<owner>/<repo>/actions/runners`); resume CI monitoring after restoration.
+   - `conclusion: "queued_too_long"` → the run named by `run_id`/`url` waited more than 5 minutes for its first runner with no job started. A run that shows `queued` between jobs is not reported this way. Record the runner outage as an open execution obligation. This is a hard external dependency, so escalate it with the run URL and a concrete request to restore/check the runner pool (`gh api /repos/<owner>/<repo>/actions/runners`); resume CI monitoring after restoration.
    - `conclusion: "timed_out"` → record an open execution obligation with the run URL and evidence. Diagnose/retry when safe; escalate only when the timeout is a hard external dependency or requires user authority.
    - `conclusion: "failure"` (or `"cancelled"` / `"action_required"` / `"startup_failure"`) → CI failed. The envelope's `failed_steps[]` and `log_summary` (bounded UTF-8, from the tail of `gh run view --log-failed`) tell you which step + what to look at. Raw logs stay server-side; if you need to drill in, the `run_id` lets a separate `gh run view --log-failed` call retrieve them later.
 
@@ -45,8 +45,8 @@ Sonar polling remains server-side and raw logs remain there. (Issues #934 and
   "status": "ok",
   "cached_for_next_step": {
     "ci_conclusion": "success" | "queued_too_long" | "timed_out" | "failure",
-    "ci_run_id": <int>,
-    "ci_url": "<URL>",
+    "ci_run_id": <int> | null,
+    "ci_url": "<URL>" | null,
     "failed_steps_count": <int>
   }
 }

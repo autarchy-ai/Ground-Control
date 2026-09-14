@@ -102,7 +102,7 @@ process.exit(2);
           argv_prefix: [
             "--repo", "test-owner/test-repo",
             "run", "view", "123",
-            "--json", "status,conclusion,databaseId,url,createdAt,updatedAt,jobs",
+            "--json", "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs",
           ],
           stdout: JSON.stringify({
             status: "completed",
@@ -145,7 +145,7 @@ process.exit(2);
           argv_prefix: [
             "--repo", "test-owner/test-repo",
             "run", "view", "456",
-            "--json", "status,conclusion,databaseId,url,createdAt,updatedAt,jobs",
+            "--json", "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs",
           ],
           stdout: JSON.stringify({
             status: "completed",
@@ -211,7 +211,7 @@ process.exit(2);
           argv_prefix: [
             "--repo", "test-owner/test-repo",
             "run", "view", "789",
-            "--json", "status,conclusion,databaseId,url,createdAt,updatedAt,jobs",
+            "--json", "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs",
           ],
           stdout: JSON.stringify({
             status: "completed",
@@ -264,7 +264,7 @@ process.exit(2);
           argv_prefix: [
             "--repo", "test-owner/test-repo",
             "run", "view", "111",
-            "--json", "status,conclusion,databaseId,url,createdAt,updatedAt,jobs",
+            "--json", "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs",
           ],
           stdout: JSON.stringify({
             status: "completed", conclusion: "success", databaseId: 111,
@@ -275,7 +275,7 @@ process.exit(2);
           argv_prefix: [
             "--repo", "test-owner/test-repo",
             "run", "view", "222",
-            "--json", "status,conclusion,databaseId,url,createdAt,updatedAt,jobs",
+            "--json", "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs",
           ],
           stdout: JSON.stringify({
             status: "completed", conclusion: "failure", databaseId: 222,
@@ -301,6 +301,7 @@ process.exit(2);
         });
         assert.equal(r.conclusion, "failure");
         assert.equal(r.run_id, 222, "must point at the run that actually failed");
+        assert.equal(r.url, "https://example.test/runs/222", "url must name the same run as run_id");
         assert.ok(
           r.failed_steps.some((s) => s.step_name === "Vale prose lint"),
           "failure detail must come from the failing run",

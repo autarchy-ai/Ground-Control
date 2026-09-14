@@ -401,6 +401,18 @@ This is a correctness fix inside the workflow tool surface. It adds no
 defines is unchanged: the fix needs no repo-specific workflow filename because
 head SHA identifies the triggered set on its own.
 
+Issue #1581 corrected two defects in the same watcher. It reported
+`queued_too_long` when the least advanced run read `queued` after five minutes
+of watching, but a run's status reads `queued` again between jobs while `needs:`
+dependents wait for a runner, so healthy runs past five minutes failed the gate.
+The queued cap now applies per run, to the time since the run's latest attempt
+started, and only while none of its jobs has started; a started run is bounded
+by the total cap alone. The envelopes also mixed runs: `run_id` came from the
+first watched run while `status` and `url` came from another, and success named
+an arbitrary member of the set. Each envelope now takes those fields from the
+run the conclusion is about, a success over several runs reports `run_id` and
+`url` as null, and `runs` lists every watched run.
+
 ## 2026-09-14 amendment: issue-thread record tools bind to the launch workspace
 
 The privileged side-effect boundary above makes repository resolution an MCP
