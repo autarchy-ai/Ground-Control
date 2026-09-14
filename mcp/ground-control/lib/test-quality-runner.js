@@ -28,23 +28,38 @@ export const TEST_QUALITY_REVIEW_MARKER_PREFIX =
   "<!-- gc:test-quality-review-cycle";
 const TEST_QUALITY_REVIEW_MARKER_RE =
   /<!--\s*gc:test-quality-review-cycle\s+issue="(\d+)"\s+branch="((?:[^"\\]|\\.)*)"\s+cycle="(\d+)"[^]*?-->/g;
-export function parseTestQualityReviewCycleMarkers(commentBodies, issueNumber) {
-  if (!Array.isArray(commentBodies)) return 0;
-  let count = 0;
-  for (const body of commentBodies) {
-    if (typeof body !== "string") continue;
-    for (const m of body.matchAll(TEST_QUALITY_REVIEW_MARKER_RE)) {
-      const markerIssue = Number.parseInt(m[1], 10);
-      if (markerIssue !== issueNumber) continue;
-      try {
-        JSON.parse(`"${m[2]}"`);
-      } catch {
-        continue;
-      }
-      count += 1;
+const TEST_QUALITY_FINDINGS_MARKER_RE =
+  /^<!-- gc:test-quality-review-findings issue="(\d+)" branch="((?:[^"\\]|\\.)*)" cycle="(\d+)" -->/;
+/** The `{branch, cycle}` of every well-formed cycle marker for this issue in one body. */
+export function parseTestQualityReviewCycleMarkerEntries(body, issueNumber) {
+  if (typeof body !== "string") return [];
+  const entries = [];
+  for (const m of body.matchAll(TEST_QUALITY_REVIEW_MARKER_RE)) {
+    if (Number.parseInt(m[1], 10) !== issueNumber) continue;
+    try {
+      entries.push({ branch: JSON.parse(`"${m[2]}"`), cycle: Number.parseInt(m[3], 10) });
+    } catch {
+      // A malformed branch attribute is not a marker this server wrote.
     }
   }
-  return count;
+  return entries;
+}
+export function parseTestQualityReviewCycleMarkers(commentBodies, issueNumber) {
+  if (!Array.isArray(commentBodies)) return 0;
+  return commentBodies.reduce(
+    (count, body) => count + parseTestQualityReviewCycleMarkerEntries(body, issueNumber).length,
+    0,
+  );
+}
+/** The `{issueNumber, cycle, branch}` a findings record opens with, or null. Anchored to the start. */
+export function parseTestQualityReviewFindingsMarker(body) {
+  const match = typeof body === "string" ? body.match(TEST_QUALITY_FINDINGS_MARKER_RE) : null;
+  if (match == null) return null;
+  try {
+    return { issueNumber: Number(match[1]), branch: JSON.parse(`"${match[2]}"`), cycle: Number(match[3]) };
+  } catch {
+    return null;
+  }
 }
 export function evaluateTestQualityReviewCycleCap({
   priorCount,

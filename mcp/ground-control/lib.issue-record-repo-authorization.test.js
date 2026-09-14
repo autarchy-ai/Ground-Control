@@ -23,6 +23,7 @@ import {
   runPostDecisionRecord,
   runPostFinalReport,
   runPostImplementationPlan,
+  runReconcileStationObservation,
   runReviewCapDisposition,
   runTestQualityReview,
   runTestQualityReviewCycle,
@@ -154,6 +155,16 @@ const PINNED_SURFACES = [
     tool: "gc_assert_completion",
     prefix: "completion",
     call: (repoPath, opts) => runAssertCompletion({ ...COMPLETION_PAYLOAD, repoPath, phase: "pre_merge" }, opts),
+  },
+  {
+    tool: "gc_reconcile_station_observation",
+    prefix: "station_observation_reconcile",
+    call: (repoPath, opts) => runReconcileStationObservation({
+      repoPath,
+      issueNumber: 1583,
+      obligationId: "STATION-OBS-CODEX-REVIEW-C1",
+      findingsRecordUrl: "https://github.com/fake/launch/issues/1583#issuecomment-9001",
+    }, opts),
   },
 ];
 

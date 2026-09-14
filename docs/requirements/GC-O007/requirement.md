@@ -6,7 +6,7 @@ type: FUNCTIONAL
 priority: MUST
 wave: 2
 created_at: 2026-04-05T18:56:23.312401Z
-updated_at: 2026-09-11T00:00:00Z
+updated_at: 2026-09-14T00:00:00Z
 ---
 
 # GC-O007 — Gated Agentic Development Loop
@@ -153,6 +153,15 @@ Ground Control's value proposition depends on agents maintaining traceability an
 - TESTS → TEST `mcp/ground-control/lib.requirement-identity.test.js` (Strict requirement identity: raw frontmatter id, symlinked-ancestor refusal (#1569))
 - DOCUMENTS → DOCUMENTATION `architecture/notes/issue-requirements-section-writer-preflight.md` (Issue #1569 codex architecture preflight binding-guardrails note)
 - IMPLEMENTS → GITHUB_ISSUE `1569` (Issue #1569 — an MCP tool that writes an issue's Requirements section)
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/station-observation-seam.js` (Cycle wrapper carries an observation opened by an earlier invocation into its first attempt (#1582))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/station-observation-evidence.js` (Pure binding of a stranded station observation to the verdict record its cycle marker consumed (#1582))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/station-observation-reconcile.js` (gc_reconcile_station_observation: leased, trusted reobserved recovery plus the completion recovery diagnostic (#1582))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/tools/station-observation.js` (Thin zod registration of gc_reconcile_station_observation (#1582))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/assert-completion.js` (recoverable_station_observations on the open-obligation refusal (#1582))
+- TESTS → TEST `mcp/ground-control/lib.station-observation-seam-recovery.test.js` (Cross-invocation observation recovery in the cycle wrapper (#1582))
+- TESTS → TEST `mcp/ground-control/gc-implement-contract.station-observation-evidence.test.js` (Derived record/marker pairing, ambiguity, and forgery refusal for both stations (#1582))
+- TESTS → TEST `mcp/ground-control/gc-reconcile-station-observation.test.js` (Shifter #2123 thread replay: diagnostic, reconcile, ledger clear, idempotence, lease, refusals (#1582))
+- IMPLEMENTS → GITHUB_ISSUE `1582` (Issue #1582 — trusted recovery for stranded station-observation obligations)
 
 ## Historical traceability
 

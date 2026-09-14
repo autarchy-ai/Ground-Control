@@ -410,10 +410,19 @@ export function evaluateExecutionObligations(events) {
   }
   const open = [...states.entries()]
     .filter(([, state]) => state.status === "open")
-    .map(([id]) => id)
-    .sort();
+    .sort(([a], [b]) => (a < b ? -1 : Number(a > b)))
+    .map(([id, state]) => ({
+      obligation_id: id,
+      schema_version: state.schema_version,
+      kind: state.kind,
+      station: state.station,
+      cycle: state.cycle,
+    }));
   return {
-    open_obligation_ids: open,
+    open_obligation_ids: open.map((obligation) => obligation.obligation_id),
+    // Replayed identity of each open obligation, so a caller can tell a station observation it can
+    // recover (issue #1582) from a problem obligation without re-parsing the thread.
+    open_obligations: open,
     clear: open.length === 0,
   };
 }
