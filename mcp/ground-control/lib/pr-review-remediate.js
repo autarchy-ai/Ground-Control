@@ -187,12 +187,13 @@ export async function readMergeState(repoRoot, commandRunner) {
   return { inProgress, unmergedPaths };
 }
 
-// Resolves `{ headAfter }`, or `{ failure }` when a host-required signature could
-// not be produced (issue #1580); the merge state stays preserved for a retry.
-async function commitMerge(repoRoot, commandRunner) {
+// Commit the staged integration merge and return `result` with the new head, or
+// the named refusal when a host-required signature could not be produced (issue
+// #1580); the merge state then stays preserved for a retry.
+async function commitMerge(repoRoot, commandRunner, result) {
   const committed = await runImplementCommit(repoRoot, ["--no-edit"], commandRunner);
-  if (!committed.ok) return { failure: committed };
-  return { headAfter: await readImplementGitOid(repoRoot, "HEAD", commandRunner) };
+  if (!committed.ok) return committed;
+  return { ...result, head_oid_after: await readImplementGitOid(repoRoot, "HEAD", commandRunner) };
 }
 
 async function runSyncBase(repoRoot, reviewed, live, commandRunner, contextResolver) {
@@ -224,9 +225,7 @@ async function runSyncBase(repoRoot, reviewed, live, commandRunner, contextResol
         { unmerged_files: merge.unmergedPaths, next_action: "resolve_conflicts_stage_them_then_call_sync_base_again" },
       );
     }
-    const merged = await commitMerge(repoRoot, commandRunner);
-    if (merged.failure) return merged.failure;
-    return { ok: true, action: "sync_base", outcome: "merged_conflicts_resolved", head_oid_after: merged.headAfter };
+    return commitMerge(repoRoot, commandRunner, { ok: true, action: "sync_base", outcome: "merged_conflicts_resolved" });
   }
 
   // A fresh integration merge needs a clean tree: merging over unrelated
@@ -262,12 +261,9 @@ async function runSyncBase(repoRoot, reviewed, live, commandRunner, contextResol
     }
     return refusal("pr_remediation_merge_failed", `The integration merge failed: ${error.message}`);
   }
-  const merged = await commitMerge(repoRoot, commandRunner);
-  if (merged.failure) return merged.failure;
-  return {
-    ok: true, action: "sync_base", outcome: "merged_clean",
-    head_oid_after: merged.headAfter, fetched_base_sha: fetched.fetchedBaseSha,
-  };
+  return commitMerge(repoRoot, commandRunner, {
+    ok: true, action: "sync_base", outcome: "merged_clean", fetched_base_sha: fetched.fetchedBaseSha,
+  });
 }
 
 export async function runRemediatePullRequest(input, {

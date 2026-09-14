@@ -252,6 +252,6 @@ describe("checkout-selected signing programs are refused (#1580)", () => {
     await git("config", "--local", "core.hooksPath", join(dir, ".git", "hooks"));
     await git("config", "extensions.worktreeConfig", "true");
     await git("config", "--worktree", "core.hooksPath", join(dir, ".git", "hooks"));
-    await assertSafeImplementCheckoutConfiguration(dir);
+    await assert.doesNotReject(assertSafeImplementCheckoutConfiguration(dir));
   });
 });
