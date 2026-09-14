@@ -253,10 +253,14 @@ async function stageCommitAndPushFeature(args, deps, { repoRoot, branchName, con
     } catch (error) {
       return commandFailure(action, "precommit", error);
     }
+    let committed;
     try {
-      await deps.runGit(repoRoot, ["commit", "-m", args.commitMessage], deps.execFile);
+      committed = await deps.commit(repoRoot, ["-m", args.commitMessage], deps.execFile);
     } catch (error) {
       return commandFailure(action, "commit", error);
+    }
+    if (!committed.ok) {
+      return failure(action, committed.error, committed.message, committed.next_action, { failed_stage: "commit" });
     }
     const committedJournal = recordPublishJournal(deps, gitDir, { phase: "feature_committed" });
     if (committedJournal) return committedJournal;

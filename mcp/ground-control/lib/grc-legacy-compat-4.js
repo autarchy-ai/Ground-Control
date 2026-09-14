@@ -160,41 +160,68 @@ const DANGEROUS_GIT_CONFIG_KEY_RES = [
   /^include(?:if\..*)?\.path$/i,
   /^url\..*\.(?:insteadof|pushinsteadof)$/i,
   /^remote\..*\.(?:proxy|uploadpack|receivepack)$/i,
+  // Signing programs (issue #1580): commits follow the host's signing config, so
+  // the checkout must not choose the program that config runs.
+  /^gpg\.program$/i,
+  /^gpg\.[^.]+\.program$/i,
+  /^gpg\..*\.defaultkeycommand$/i,
 ];
+
+// Scopes the checkout itself controls. `git config --local` does not read a
+// worktree's config.worktree (extensions.worktreeConfig), so both are listed.
+const CHECKOUT_CONFIG_SCOPES = new Set(["local", "worktree"]);
 
 function isDangerousGitConfigKey(key) {
   return DANGEROUS_GIT_CONFIG_KEY_RES.some((re) => re.test(key));
 }
 
-export async function assertSafeImplementCheckoutConfiguration(repoRoot) {
+async function readCheckoutScopedConfigKeys(repoRoot) {
   const { stdout } = await execFile(
     "git",
-    ["-C", repoRoot, "config", "--local", "--name-only", "--get-regexp", ".*"],
+    ["-C", repoRoot, "config", "--show-scope", "--name-only", "--get-regexp", ".*"],
   ).catch((error) => {
     if (error.code === 1) return { stdout: "" };
     throw error;
   });
-  let configuredDangerousKeys = stdout
+  return stdout
     .split(/\r?\n/)
-    .map((key) => key.trim())
-    .filter((key) => key !== "" && isDangerousGitConfigKey(key));
-  if (configuredDangerousKeys.some((key) => key.toLowerCase() === "core.hookspath")) {
-    const [{ stdout: hooksPath }, { stdout: gitDir }, { stdout: gitCommonDir }] = await Promise.all([
-      execFile("git", ["-C", repoRoot, "config", "--local", "--path", "--get", "core.hooksPath"]),
-      execFile("git", ["-C", repoRoot, "rev-parse", "--absolute-git-dir"]),
-      execFile("git", ["-C", repoRoot, "rev-parse", "--git-common-dir"]),
-    ]);
-    if (isDefaultImplementHooksPath({
+    .map((line) => {
+      const [scope, key = ""] = line.split("\t");
+      return { scope, key: key.trim() };
+    })
+    .filter(({ scope, key }) => CHECKOUT_CONFIG_SCOPES.has(scope) && key !== "");
+}
+
+// A checkout may keep the default hooks directory in any scope it controls; any
+// other hooks path is caller-controlled code.
+async function checkoutHooksPathsAreDefault(repoRoot, scopes) {
+  const [{ stdout: gitDir }, { stdout: gitCommonDir }] = await Promise.all([
+    execFile("git", ["-C", repoRoot, "rev-parse", "--absolute-git-dir"]),
+    execFile("git", ["-C", repoRoot, "rev-parse", "--git-common-dir"]),
+  ]);
+  const hooksPaths = await Promise.all([...scopes].map((scope) =>
+    execFile("git", ["-C", repoRoot, "config", `--${scope}`, "--path", "--get-all", "core.hooksPath"])));
+  return hooksPaths
+    .flatMap(({ stdout }) => stdout.split(/\r?\n/).filter((line) => line.trim() !== ""))
+    .every((hooksPath) => isDefaultImplementHooksPath({
       repoRoot,
       hooksPath: hooksPath.trim(),
       gitDir: gitDir.trim(),
       gitCommonDir: gitCommonDir.trim(),
-    })) {
-      configuredDangerousKeys = configuredDangerousKeys.filter(
-        (key) => key.toLowerCase() !== "core.hookspath",
-      );
-    }
-  }
+    }));
+}
+
+export async function assertSafeImplementCheckoutConfiguration(repoRoot) {
+  const dangerousEntries = (await readCheckoutScopedConfigKeys(repoRoot))
+    .filter(({ key }) => isDangerousGitConfigKey(key));
+  const hooksPathScopes = new Set(dangerousEntries
+    .filter(({ key }) => key.toLowerCase() === "core.hookspath")
+    .map(({ scope }) => scope));
+  const hooksPathsAreDefault = hooksPathScopes.size > 0
+    && await checkoutHooksPathsAreDefault(repoRoot, hooksPathScopes);
+  const configuredDangerousKeys = [...new Set(dangerousEntries
+    .filter(({ key }) => !(hooksPathsAreDefault && key.toLowerCase() === "core.hookspath"))
+    .map(({ key }) => key))];
   if (configuredDangerousKeys.length > 0) {
     throw new Error(
       `caller-controlled executable Git configuration is not permitted: ${configuredDangerousKeys.join(", ")}`,

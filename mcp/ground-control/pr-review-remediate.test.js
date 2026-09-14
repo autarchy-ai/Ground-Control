@@ -128,7 +128,10 @@ function runner(spec = {}) {
         return { stdout: "" };
       case "ls-files":
         return { stdout: mergeInProgress ? s.unmerged.map((p) => `100644 x 1\t${p}`).join("\n") : "" };
-      case "commit": committed = true; mergeInProgress = false; return { stdout: "" };
+      case "config": return { stdout: "true\n" }; // commit.gpgSign, read only after a failed commit
+      case "commit":
+        if (s.signingFails) { const e = new Error("commit failed"); e.stderr = "fatal: failed to write commit object"; throw e; }
+        committed = true; mergeInProgress = false; return { stdout: "" };
       case "push":
         if (s.pushThrows) { const e = new Error("rejected"); e.stderr = "non-fast-forward"; throw e; }
         return { stdout: "" };
@@ -369,6 +372,11 @@ describe("runRemediatePullRequest — sync_base (stale-base handling)", () => {
     const ops = r.calls_ref.filter(([c]) => c === "git").map(([, a]) => gitOp(a)[0]);
     assert.ok(ops.includes("commit"));
   });
+
+  it("names a failed host-required merge signature (#1580)", async () => {
+    const out = await runner({ mergeHead: true, unmerged: [], signingFails: true }).run(baseInput("sync_base"));
+    assert.equal(out.error, "implement_commit_signing_failed");
+  });
 });
 
 const STAGED = "M  src/a.js\n";
@@ -391,6 +399,13 @@ describe("runRemediatePullRequest — publish", () => {
     assert.deepEqual(pushArgs.slice(-2), ["origin", "HEAD:refs/heads/contributor-branch"]);
     // A lease compare-and-swap, never a blind force.
     assert.ok(!pushArgs.includes("--force") && !pushArgs.includes("-f"));
+  });
+
+  it("names a failed host-required signature and does not push (#1580)", async () => {
+    const r = runner({ status: STAGED, ancestor: true, signingFails: true });
+    const out = await r.run(publishInput());
+    assert.equal(out.error, "implement_commit_signing_failed");
+    assert.ok(!r.calls_ref.some(([c, a]) => c === "git" && gitOp(a)[0] === "push"));
   });
 
   it("refuses to publish while an integration merge is still in progress", async () => {

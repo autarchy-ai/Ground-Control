@@ -17,6 +17,7 @@ import {
   readImplementGitOid,
   runImplementGit,
 } from "./codex-workflow-2.js";
+import { runImplementCommit } from "./implement-commit.js";
 import { detectSensitiveBodyContent, extractGhErrorMessage } from "./grc-legacy-compat-2.js";
 import { GITHUB_ISSUE_COMMENT_BODY_MAX, rejectReservedMarkerSequence } from "./repo-vocabulary.js";
 import { refusal, runReviewGh, runReviewGhPaginated } from "./pr-review-shared.js";
@@ -123,11 +124,13 @@ export async function runRemediationPublish({ repoRoot, owner, name, prNumber, i
       { next_action: "call_sync_base_again" });
   }
 
+  let committed;
   try {
-    await runImplementGit(repoRoot, ["commit", "-m", input.commitMessage], commandRunner);
+    committed = await runImplementCommit(repoRoot, ["-m", input.commitMessage], commandRunner);
   } catch (error) {
     return refusal("pr_remediation_commit_failed", error.message);
   }
+  if (!committed.ok) return committed;
   const headAfter = await readImplementGitOid(repoRoot, "HEAD", commandRunner);
 
   // Fork PRs are refused before publish, so the destination is the authorized

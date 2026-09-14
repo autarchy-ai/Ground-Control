@@ -1010,3 +1010,19 @@ over several runs no longer names an arbitrary member as the CI result: it
 reports `run_id` and `url` as null, and every envelope carries `runs[]` with
 each watched run's id, workflow, status, conclusion, and URL. The caps, their
 defaults, and the bounded log-summary contract are unchanged.
+
+**2026-09-14 (issue #1580, host commit signing at the implement Git boundary).**
+The implement Git boundary passed `-c commit.gpgSign=false` on every call, so
+publish, base-sync merge, and PR-remediation commits were unsigned even when the
+host configuration required signatures, and nothing reported it. The override is
+removed: these commits follow the host's global `commit.gpgSign`, `gpg.format`,
+and `user.signingKey`. System configuration stays excluded as before. Refusing
+caller-selected executable Git configuration now also covers the keys that
+choose a signing program: `gpg.program`, `gpg.<format>.program`, and
+`gpg.ssh.defaultKeyCommand`. The checkout-configuration guard reads both the
+local and the worktree scope, because `git config --local` does not read a
+worktree's `config.worktree`, which let a checkout with
+`extensions.worktreeConfig` set any refused key unseen. Git never replaces a
+required signature with an unsigned commit. When the signature cannot be
+produced, publish, base-sync completion, and remediation return
+`implement_commit_signing_failed`, no commit is created, and nothing is pushed.

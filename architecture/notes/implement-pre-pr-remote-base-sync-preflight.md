@@ -319,8 +319,9 @@ ActorHolder, or frontend change belongs in this work.
   names, or a caller claim.
 - **Git process execution:** do not use a shell, command interpolation, Git
   aliases, caller-provided merge flags, hooks, custom merge drivers, editors,
-  signing programs, or interactive prompts. Allow only the host-controlled
-  credential path needed for fetch and push. Scrub command failures before
+  checkout-selected signing programs, or interactive prompts. Allow only the
+  host-controlled credential path needed for fetch and push, and the host's own
+  commit-signing configuration (issue #1580). Scrub command failures before
   returning them.
 - **Secret and OS exposure:** authentication remains in the host environment
   or credential store. Do not return the raw origin URL, environment, Git
