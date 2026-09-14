@@ -28,7 +28,7 @@ Present the mapping as a checklist with the requirement UID (or `issue`) as the 
 
 Do not proceed until every clause and criterion is checked off.
 
-Traceability reconciliation (IMPLEMENTS / TESTS links) and the `DRAFT → ACTIVE` status transitions are intentionally NOT done here. They land in **Phase E (Steps 15–16), after the PR merges** (issue #963), so Ground Control state never runs ahead of the actual code that ships - a reviewed-but-abandoned PR leaves the requirement DRAFT and unlinked.
+Traceability reconciliation (IMPLEMENTS / TESTS links) and the `DRAFT → ACTIVE` status transitions are intentionally NOT done here. They are made by **Steps 15–16 after implementation and before the completion gate and publish**, as requirement-file edits in the delivery diff (issue #1541, superseding the #963 post-merge ordering), so they are reviewed in and become authoritative through the merged PR. A reviewed-but-abandoned PR therefore leaves the target branch's requirement DRAFT and unlinked.
 
 ## Return contract
 

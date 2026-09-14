@@ -240,6 +240,25 @@ function buildHeaderLine({ modeLabel, cycleNumber, cap, issueNumber, prNumber, b
         (branch ? ` (branch \`${branch}\`)` : "")
     : `**gc_codex_review** — cycle ${cycleNumber} of ${cap} (${modeLabel}) on PR #${prNumber} (issue #${issueNumber})`;
 }
+const PRE_PUSH_FINDINGS_HEADER_RE = /^\*\*gc_codex_review\*\* — cycle (\d+) of \d+ \(pre-push\) on issue #(\d+)/;
+const PRE_PUSH_FINDINGS_BRANCH_RE = /^ \(branch `([^`]*)`\)$/;
+/**
+ * The `{issueNumber, cycle, branch}` a pre-push findings record's primary comment opens with, or null.
+ *
+ * Bound to the whole first line, exactly as buildHeaderLine renders it: a continuation chunk's
+ * header, or the same text quoted later in a comment, is not the record itself.
+ */
+export function parseCodexPrePushFindingsHeader(body) {
+  if (typeof body !== "string") return null;
+  const newline = body.indexOf("\n");
+  const firstLine = newline < 0 ? body : body.slice(0, newline);
+  const match = PRE_PUSH_FINDINGS_HEADER_RE.exec(firstLine);
+  if (match == null) return null;
+  const rest = firstLine.slice(match[0].length);
+  const branch = rest === "" ? null : PRE_PUSH_FINDINGS_BRANCH_RE.exec(rest)?.[1];
+  if (branch === undefined) return null;
+  return { cycle: Number(match[1]), issueNumber: Number(match[2]), branch };
+}
 function chunkText(text, chunkSize) {
   if (typeof text !== "string" || text === "") return [""];
   const chunks = [];

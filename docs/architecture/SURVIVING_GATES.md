@@ -2,7 +2,7 @@
 
 This is the current enforcement inventory after the #1500 MCP-only re-platform
 and the issue #1303 reconciliation. It covers repository policy, local hooks,
-GitHub Actions and protection, `/implement`, and all 32 registered MCP tools.
+GitHub Actions and protection, `/implement`, and all 33 registered MCP tools.
 Historical ADR text is not evidence that a gate still exists.
 
 ## Placement doctrine
@@ -147,6 +147,7 @@ requirement-scope, and PR-review tools were already bound the same way.
 | `gc_post_decision_record` | gate/support | Renders and posts fix/wontfix/not-applicable decisions with bounded rationale. `wontfix` is not self-authorizing. |
 | `gc_record_execution_obligation` | gate/support | Persists a real surfaced finding/repair obligation on the issue thread; it cannot be silently dropped between attempts. |
 | `gc_authorize_execution_obligation_wontfix` | gate/support | Converts an obligation only from explicit user authorization bound to that record. Missing/ambiguous authority refuses. |
+| `gc_reconcile_station_observation` | gate/support | Resolves only a `station_observation` obligation, only as `reobserved`, and only when trusted records on the thread prove its station's verdict and cycle marker for that cycle followed the opening. No disposition or claim is accepted. |
 | `gc_render_pr_body` | gate/evidence | Renders canonical sections and derives Release Please versus fragment mode from the target repo. Caller-selected mode mismatch refuses. |
 | `gc_synchronize_implement_branch` | gate/support | Merges the latest integration base into the feature branch and rechecks the tree under OID/lease bounds. Conflicts return to the agent. |
 | `gc_create_synchronized_implement_pr` | gate/support | Creates/updates only after synchronization evidence and title/body validation. No direct unsynchronized PR path. |

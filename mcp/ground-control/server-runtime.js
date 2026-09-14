@@ -10,7 +10,7 @@
 // TOOL SURFACE (issue #1500 re-platform)
 // ============================================================================
 //
-// The MCP server over repo-local files (issue #1500) exposes 32 tools that
+// The MCP server over repo-local files (issue #1500) exposes 33 tools that
 // back the /implement, /quickfix, /integrate, and /review workflow mechanics
 // plus the coding-agent<->reviewer separation. There is no backend, database, or
 // generic entity CRUD surface — requirements and ADRs are read/edited as
@@ -36,6 +36,7 @@
 //   tools/integrate.js           — gc_integration_manager (GC-O011)
 //   tools/pr-review.js           — gc_get_pr_review_context,
 //                                   gc_remediate_pull_request (maintainer /review lane, #1535)
+//   tools/station-observation.js — gc_reconcile_station_observation (stranded observation recovery, #1582)
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -44,6 +45,7 @@ import { registerPostDecisionRecord } from "./tools/post-decision-record.js";
 import { registerReviewCapDisposition } from "./tools/review-cap-disposition.js";
 import { registerPrReview } from "./tools/pr-review.js";
 import { registerIntegrate } from "./tools/integrate.js";
+import { registerStationObservation } from "./tools/station-observation.js";
 import pkg from "./package.json" with { type: "json" };
 
 // The version advertised to clients in the initialize handshake is sourced from
@@ -57,6 +59,7 @@ registerPostDecisionRecord(server);
 registerReviewCapDisposition(server);
 registerPrReview(server);
 registerIntegrate(server);
+registerStationObservation(server);
 
 // ============================================================================
 // Startup

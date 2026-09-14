@@ -31,26 +31,31 @@ export function deriveIssueNumberFromBranch(branchName) {
   if (!Number.isInteger(n) || n <= 0) return null;
   return n;
 }
+/** The `{branch, cycle}` of every well-formed pre-push cycle marker for this issue in one body. */
+export function parseCodexReviewPrePushCycleMarkerEntries(body, issueNumber) {
+  if (typeof body !== "string") return [];
+  const entries = [];
+  for (const m of body.matchAll(CODEX_REVIEW_PREPUSH_MARKER_RE)) {
+    if (Number.parseInt(m[1], 10) !== issueNumber) continue;
+    // Validate branch attr is JSON-decodable so malformed markers don't
+    // pollute counts. The cap never compares it against a specific branch; the
+    // attribute is audit-only context there.
+    let branch;
+    try {
+      branch = JSON.parse(`"${m[2]}"`);
+    } catch {
+      continue;
+    }
+    entries.push({ branch, cycle: Number.parseInt(m[3], 10) });
+  }
+  return entries;
+}
 export function parseCodexReviewPrePushCycleMarkers(commentBodies, issueNumber) {
   if (!Array.isArray(commentBodies)) return 0;
-  let count = 0;
-  for (const body of commentBodies) {
-    if (typeof body !== "string") continue;
-    for (const m of body.matchAll(CODEX_REVIEW_PREPUSH_MARKER_RE)) {
-      const markerIssue = Number.parseInt(m[1], 10);
-      if (markerIssue !== issueNumber) continue;
-      // Validate branch attr is JSON-decodable so malformed markers don't
-      // pollute counts. We don't compare it against any specific branch; the
-      // attribute is audit-only context.
-      try {
-        JSON.parse(`"${m[2]}"`);
-      } catch {
-        continue;
-      }
-      count += 1;
-    }
-  }
-  return count;
+  return commentBodies.reduce(
+    (count, body) => count + parseCodexReviewPrePushCycleMarkerEntries(body, issueNumber).length,
+    0,
+  );
 }
 export function evaluateCodexReviewPrePushCycleCap({
   priorCount,

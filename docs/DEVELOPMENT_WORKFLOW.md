@@ -958,6 +958,46 @@ under `hard_external_dependency`, naming the station, the attempt count, and the
 stable failure classes. It never asks an operator to authorize a `wontfix` for a
 defect nobody observed. `wontfix` authorization is unchanged.
 
+The observation is tracked across invocations, not only across the re-attempts
+of one call (issue #1582). Before its first attempt, the cycle wrapper reads the
+trusted obligation ledger. When an obligation for this station and logical cycle
+is already open, for example one opened by an earlier call that exhausted its
+re-attempts, that first attempt carries it. A verdict rendered by a later,
+separate call therefore writes the `reobserved` resolution in its normal place
+in the write order. An unreadable ledger never stops a working station from
+rendering.
+
+The station-owning cycle wrapper is the normal writer of `reobserved`. If a
+trusted findings record and its matching cycle marker are on the thread without
+the resolution, `gc_reconcile_station_observation` is the sole recovery writer.
+It takes `obligation_id` and `findings_record_url`. It accepts no disposition,
+prose, or verification claim. Under a per-obligation lease, it re-reads the
+pinned repository's thread and posts the same `reobserved` resolution only when
+all of these hold:
+
+- The obligation is an open v2 `station_observation` whose id matches its
+  station and logical cycle.
+- After the most recent opening, the station's cycle marker for that cycle is on
+  the thread.
+- The named comment is exactly the record that marker consumed: the latest
+  primary findings record for the same station, issue, cycle, and branch before
+  the marker. Markers that consume different records are an ambiguous history,
+  and the call refuses.
+- The current MCP identity authored the record and the marker. The opening
+  needs only the trusted ledger's repository permission.
+
+It then replays the trusted ledger to confirm the obligation closed. A repeat
+with the same evidence is an `already_recorded` no-op, also after a lost
+response. It never reruns a reviewer, consumes another cycle, or resolves
+findings from the observed verdict. A findings record without its cycle marker
+stays on the ordinary partial-write retry path.
+
+Readiness does not repair this state. When `gc_assert_completion` refuses on
+open obligations, `recoverable_station_observations` lists each open
+observation the same validation proves, with the record to pass. The
+`next_action` is `reconcile_station_observations_then_retry` when nothing else
+is open.
+
 Measurement follows the same split: every real execution is one ADR-090 station
 attempt, `not_evaluable` for each non-verdict and `pass` or `fail` for the
 observed one. `not_evaluable` stays outside the first-pass-yield and
@@ -987,7 +1027,8 @@ state. The pinned tools are `gc_post_decision_record`,
 `gc_codex_review`, `gc_codex_review_cycle`, `gc_test_quality_review`,
 `gc_test_quality_review_cycle`, `gc_codex_verify_finding`,
 `gc_review_cap_disposition` (plus the auto-grant check the cycle tools run),
-`gc_create_github_issue`, and `gc_get_issue_thread`. Each one refuses another
+`gc_create_github_issue`, `gc_get_issue_thread`, and
+`gc_reconcile_station_observation`. Each one refuses another
 checkout with a structured `<tool>_repo_not_authorized` error before any GitHub
 read or write, and before any review engine starts. The message carries the
 underlying authorization code, for example `implement_repo_not_authorized` or

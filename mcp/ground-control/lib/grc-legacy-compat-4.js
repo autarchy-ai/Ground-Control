@@ -201,8 +201,10 @@ export async function assertSafeImplementCheckoutConfiguration(repoRoot) {
     );
   }
 }
-export async function readTrustedExecutionObligationState(repoRoot, owner, name, issueNumber) {
-  const comments = await readIssueCommentsWithAuthors(repoRoot, owner, name, issueNumber);
+// `preread` lets a caller that must bind further decisions to the same thread snapshot (issue #1582)
+// evaluate the ledger over the comments it already holds instead of a second, possibly newer, read.
+export async function readTrustedExecutionObligationState(repoRoot, owner, name, issueNumber, preread = null) {
+  const comments = preread ?? await readIssueCommentsWithAuthors(repoRoot, owner, name, issueNumber);
   const markerComments = comments
     .map((comment) => ({
       comment,

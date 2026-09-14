@@ -11,6 +11,7 @@
 import { realpathSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import properLockfile from "proper-lockfile";
+import { EXECUTION_OBLIGATION_ID_RE } from "./codex-workflow.js";
 
 // Validate that a caller-supplied path is an absolute, existing directory and
 // return its canonical realpath. `label` names the acquirer so a bad path
@@ -107,6 +108,21 @@ export async function acquireIssueScopeLock(gitDir, { retries = 5 } = {}) {
   return acquireFilesystemLock(canonical, ".gc-issue-scope-lock", {
     retries,
     lockedMessage: `an issue-scope update is already in progress for: ${canonical}`,
+  });
+}
+
+// The station-observation reconciliation lease (issue #1582). Reconciliation reads the thread,
+// decides, and appends a `reobserved` resolution; two concurrent calls for the same obligation
+// would each see it open and each append one. Keyed by issue and obligation so unrelated
+// reconciliations do not contend; the lock file lives in per-worktree Git metadata.
+export async function acquireStationObservationReconcileLock(gitDir, { issueNumber, obligationId, retries = 5 }) {
+  const canonical = canonicalLeaseDirectory("acquireStationObservationReconcileLock", gitDir);
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0 || !EXECUTION_OBLIGATION_ID_RE.test(String(obligationId))) {
+    throw new Error("acquireStationObservationReconcileLock: issueNumber and obligationId must be canonical");
+  }
+  return acquireFilesystemLock(canonical, `.gc-station-observation-${issueNumber}-${obligationId}-lock`, {
+    retries,
+    lockedMessage: `a reconciliation of ${obligationId} is already in progress for: ${canonical}`,
   });
 }
 

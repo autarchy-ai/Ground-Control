@@ -10,6 +10,7 @@ import { runPostFinalReport } from "./doc-coverage-2.js";
 import { readTrustedExecutionObligationState } from "./grc-legacy-compat-4.js";
 import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { runGetIssueThread } from "./issue-thread.js";
+import { findRecoverableStationObservations } from "./station-observation-reconcile.js";
 import { verifyMergedRequirementState } from "./merged-requirement-state.js";
 import { validateFinalReportInput } from "./plan-posting.js";
 import { execFile } from "./runtime-primitives.js";
@@ -40,18 +41,36 @@ async function _readCompletionObligationState(repository, issueNumber, assertion
     };
   }
   if (!obligationState.clear) {
+    // A station observation whose verdict is already on the thread is not work left to do; only its
+    // resolution is missing (issue #1582). Name it, and the tool that records it, so the refusal
+    // does not read as a gate nobody can clear.
+    const recoverable = await findRecoverableStationObservations({
+      repoRoot: repository.repoRoot,
+      owner: repository.owner,
+      name: repository.name,
+      issueNumber,
+      openObligations: obligationState.open_obligations,
+    });
+    const allRecoverable = recoverable.length === obligationState.open_obligation_ids.length;
     return {
       earlyReturn: {
         ok: false,
         error: "completion_open_execution_obligations",
         message:
           `gc_assert_completion refuses readiness/completion while execution obligations remain open: ` +
-          obligationState.open_obligation_ids.join(", "),
+          obligationState.open_obligation_ids.join(", ") +
+          (recoverable.length > 0
+            ? `. Already re-observed but unresolved: ${recoverable.map((r) => r.obligation_id).join(", ")} ` +
+              "- record each with gc_reconcile_station_observation"
+            : ""),
         issue_number: issueNumber,
         open_obligation_ids: obligationState.open_obligation_ids,
+        recoverable_station_observations: recoverable,
         assertions,
         final_report: null,
-        next_action: "fix_and_resolve_open_obligations_then_retry",
+        next_action: allRecoverable
+          ? "reconcile_station_observations_then_retry"
+          : "fix_and_resolve_open_obligations_then_retry",
       },
     };
   }

@@ -98,7 +98,7 @@ non-obvious rationale rather than restating the code.
 
 ## The tool surface
 
-The surviving 32 tools (down from 215 before the re-platform) are exactly what
+The surviving 33 tools (down from 215 before the re-platform) are exactly what
 the `/implement` workflow needs, each operating over `gh` / `git` / files:
 
 - **Orchestration.** `gc_implement_mechanical` drives the mechanical bands (bootstrap,

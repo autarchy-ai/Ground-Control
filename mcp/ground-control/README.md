@@ -111,7 +111,7 @@ takes effect on the next server start.
 
 ## Tool surface
 
-The server registers **32 tools**. They are the `/implement`, `/quickfix`,
+The server registers **33 tools**. They are the `/implement`, `/quickfix`,
 `/integrate`, and `/review` workflow mechanics plus the coding-agent/reviewer separation - there is
 no entity CRUD surface and no ad-hoc REST escape hatch, because there is no
 backend behind them to read. Requirements and ADRs are read and written as repo
@@ -155,6 +155,12 @@ The complete keep/delete and placement record is in
 | `gc_record_execution_obligation` | Append to the execution-obligation ledger |
 | `gc_authorize_execution_obligation_wontfix` | Record the user's authorization to close an obligation unfixed |
 | `gc_codex_job` | Poll or cancel any async review, preflight, or mechanical job |
+
+**Station-observation recovery (`tools/station-observation.js`)**
+
+| Tool | Purpose |
+|---|---|
+| `gc_reconcile_station_observation` | Resolve a stranded `station_observation` obligation as `reobserved` from the station's own findings record and cycle marker already on the thread; accepts no disposition or claim |
 
 **Durable issue-thread records (`tools/post-decision-record.js`)**
 
