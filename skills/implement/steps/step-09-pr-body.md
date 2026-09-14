@@ -60,8 +60,10 @@ tier: low
    `requirement_uids`) so GitHub does not auto-close the issue at merge ahead of
    Phase E's merged-requirement-state validation; the validated
    `gc_close_issue_after_merge` (Step 20) is the sole closer. For a
-   requirement-free run it emits `Closes #<issue-number>` and GitHub auto-closes at
-   merge (issue #1541). Either way the GitHub UI cross-link is wired automatically.
+   requirement-free run it emits `Closes #<issue-number>` (issue #1541), which GitHub
+   honors only when the PR merges into the repository's default branch; a PR on
+   the integration branch leaves the issue open, and Step 20 closes it either way
+   (issue #1601). The GitHub UI cross-link is wired automatically in both cases.
 
 ## Return contract
 

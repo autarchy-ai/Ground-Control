@@ -708,3 +708,16 @@ configuration, environment variable, routing stage, async job, persistence
 store, finding disposition, decision-record vocabulary, or authorization
 hierarchy is introduced. See the issue #1582 amendment in
 `architecture/notes/unobserved-station-recovery-preflight.md`.
+
+**2026-09-14 (issue #1601, post-merge close on a non-default base).** GitHub honors a
+pull request's `Closes #n` keyword only when the pull request merges into the
+repository's default branch. Delivery PRs target the integration branch, so a
+requirement-free run's issue stays open at merge, and the #1541 statement that such
+runs "auto-close at merge" held only for default-branch merges. `gc_close_issue_after_merge`
+is now the close path for requirement-free runs in both authoring lanes: `/implement`
+Step 20 already ran it after the post-merge final report, and `/quickfix` gains Step
+Q20, re-entered after merge from its Step Q19 close comment's `gc:final-report` marker,
+which also satisfies the tool's open-issue gate. The tool's behavior is unchanged. The
+`quickfix-post-merge-close-step` and `workflow-unconditional-auto-close-claim` policy
+checks (`tools/policy/issue_close_contract.py`) require the /quickfix close step and
+reject lane prose that ties `Closes #` to a close without the default-branch condition.

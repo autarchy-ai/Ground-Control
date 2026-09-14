@@ -339,12 +339,13 @@ async function closeIssueIdempotently({ repoRoot, owner, name, issueNumber, pr }
     };
   }
 
-  // The issue is still open — the requirement-backed path, where the PR body uses a
+  // The issue is still open. On the requirement-backed path the PR body uses a
   // non-closing `Refs #n` so GitHub cannot auto-close ahead of validation. Require a
   // trusted final-report marker for THIS PR (proof of merged requirement-state
   // validation), OR a trusted issue-thread override authorizing this PR, before closing
-  // (issue #1541). Requirement-free runs use `Closes #n` and auto-close at merge, so
-  // they reach the already-closed no-op above and never hit this gate.
+  // (issue #1541). A requirement-free run's `Closes #n` closes the issue only when the
+  // PR merged into the default branch; merged into the integration branch, the issue
+  // is still open here and needs the lane's final-report marker like any other (#1601).
   let closeAuthorized;
   try {
     closeAuthorized = await hasTrustedFinalReportMarker(repoRoot, owner, name, issueNumber, pr.number);
