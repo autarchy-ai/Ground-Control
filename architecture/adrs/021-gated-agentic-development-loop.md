@@ -278,3 +278,19 @@ must let it through rather than force a retitle outside the tool. At most one
 `!` is allowed, and only between the type or scope and the colon. The configured
 `workflow.pr_title.types`, `subject_pattern`, and `require_scope` rules apply
 unchanged.
+
+**2026-09-14 (issue #899, no manual pre-commit outside publish).** Phase C's
+single mandatory pre-publish hook boundary stays where issue #1429 put it:
+`gc_implement_mechanical action="publish"` runs `workflow.precommit_command`
+explicitly and then commits. The boundary does not move to the commit-time
+hook, because hook installation is per clone and a repository may not use the
+pre-commit framework at all. What changes is the prose around it. Step 4.4 and
+`/quickfix` Step Q5 now tell the agent not to run `pre-commit` by hand and not
+to commit before `publish`, since a local commit bypasses publish's
+sensitive-path screening and commit-message validation. The
+`implement-manual-precommit-instruction` policy check
+(`tools/policy/verification_boundary_contract.py`) fails when `/implement` or
+`/quickfix` prose names a `pre-commit run` invocation outside Step 7, and the
+existing `implement-verification-boundary-drift` check, now in the same module,
+requires the matching Step 4.4 and Step Q5 tokens. No mandatory gate is added,
+removed, or reordered.

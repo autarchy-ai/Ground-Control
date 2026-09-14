@@ -51,6 +51,13 @@ All tests around touched code must stay green at every step. If any test fails,
 fix the root cause; provenance or apparent unrelatedness is diagnostic context,
 not a reason to leave it broken.
 
+Verify each cycle with the targeted test command, not with the hook chain.
+Do not run `pre-commit` by hand to check the working tree, and do not commit
+between cycles. The Step 7 `publish` action stages the change, runs the single
+mandatory pre-publish hook boundary, and makes the commit behind its
+sensitive-path screening and commit-message validation. A local commit made
+before `publish` skips both (issue #899).
+
 ## Return contract
 
 ```json

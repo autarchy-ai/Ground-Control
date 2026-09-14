@@ -2,13 +2,11 @@ import copy
 import hashlib
 import json
 import re
-import shutil
 import subprocess
 import tempfile
 import unittest
 
 from tools.tests.policy_fixtures import PolicyChecksFixture
-from pathlib import Path
 from unittest import mock
 from unittest.mock import patch
 
@@ -60,22 +58,7 @@ class AdrGuardChecksTest(PolicyChecksFixture):
         self.assertEqual(run_implement_execution_contract(root=REPO_ROOT), [])
     def test_implement_execution_contract_rejects_direct_pr_creation(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            root = Path(tmp_dir)
-            for rel in (
-                "skills/implement/SKILL.md",
-                "skills/implement/_development-principles.md",
-                "skills/implement/steps",
-                ".cursor/skills/implement/SKILL.md",
-                "mcp/ground-control/lib.js",
-                "mcp/ground-control/index.js",
-            ):
-                source = REPO_ROOT / rel
-                target = root / rel
-                target.parent.mkdir(parents=True, exist_ok=True)
-                if source.is_dir():
-                    shutil.copytree(source, target)
-                else:
-                    shutil.copy2(source, target)
+            root = self._implement_contract_root(tmp_dir)
             step9 = root / "skills/implement/steps/step-09-pr-body.md"
             step9.write_text(
                 step9.read_text(encoding="utf-8") + "\n`gh pr create`\n",

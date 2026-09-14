@@ -287,6 +287,7 @@ describe("evaluateCiPollState (issue #934)", () => {
     const r = evaluateCiPollState({
       status: "queued",
       elapsedSeconds: 301,
+      queuedSeconds: 301,
       queuedTimeoutSeconds: 300,
       totalTimeoutSeconds: 2700,
     });
@@ -298,6 +299,7 @@ describe("evaluateCiPollState (issue #934)", () => {
     const r = evaluateCiPollState({
       status: "queued",
       elapsedSeconds: 60,
+      queuedSeconds: 60,
       queuedTimeoutSeconds: 300,
       totalTimeoutSeconds: 2700,
     });
@@ -344,6 +346,7 @@ describe("evaluateCiPollState (issue #934)", () => {
     const r = evaluateCiPollState({
       status: "queued",
       elapsedSeconds: 3000,
+      queuedSeconds: 3000,
       queuedTimeoutSeconds: 300,
       totalTimeoutSeconds: 2700,
     });

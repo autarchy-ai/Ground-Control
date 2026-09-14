@@ -23,6 +23,8 @@ from .cli_safety import (
     safe_cli_path,
 )
 from .implement_scope_contract import check_scope_and_completion_contract
+from .issue_close_contract import check_issue_close_contract
+from .verification_boundary_contract import check_verification_surface_contract
 MCP_LIB_PATH = "mcp/ground-control/lib.js"
 
 
@@ -186,51 +188,6 @@ def _check_core_implement_contract(root: Path) -> list[Violation]:
             "The development principles do not enforce risk-proportionate verification.",
         )
     )
-
-    return violations
-
-
-def _check_verification_surface_contract(root: Path) -> list[Violation]:
-    """Keep verification batching and mandatory boundaries aligned."""
-    violations: list[Violation] = []
-
-    review_rules = (
-        root / "skills/implement/steps/_review-loop-rules.md"
-    ).read_text(encoding="utf-8")
-    review_rules_flat = " ".join(review_rules.split())
-    step5 = (root / "skills/implement/steps/step-05-quality-assurance.md").read_text(
-        encoding="utf-8"
-    )
-    step6 = (root / "skills/implement/steps/step-06-completion-gate.md").read_text(
-        encoding="utf-8"
-    )
-    step6_flat = " ".join(step6.split())
-    step7 = (root / "skills/implement/steps/step-07-stage-precommit.md").read_text(
-        encoding="utf-8"
-    )
-    verification_surface_tokens = (
-        (
-            review_rules_flat,
-            "Do not run `cfg.workflow.completion_command` or "
-            "`cfg.workflow.policy_command` after every small fix",
-        ),
-        (review_rules_flat, "once before leaving the review band on the final post-fix tree"),
-        (step5, "Do not run `pre-commit` here"),
-        (step6_flat, "Run `cfg.workflow.policy_command`"),
-        (step7, "single mandatory pre-publish"),
-        (step7, "cfg.workflow.precommit_command"),
-    )
-    missing_surfaces = [
-        token for surface, token in verification_surface_tokens if token not in surface
-    ]
-    if missing_surfaces:
-        violations.append(
-            Violation(
-                code="implement-verification-boundary-drift",
-                message="/implement verification surfaces disagree on batching or mandatory boundaries.",
-                details=[f"missing token: {token}" for token in missing_surfaces],
-            )
-        )
 
     return violations
 
@@ -423,11 +380,12 @@ def run_implement_execution_contract(root: Path = REPO_ROOT) -> list[Violation]:
         return core_violations
     violations = list(core_violations)
     for check in (
-        _check_verification_surface_contract,
+        check_verification_surface_contract,
         _check_tdd_and_fix_evidence_contract,
         _check_pre_pr_sync_contract,
         _check_pre_pr_sync_order,
         check_scope_and_completion_contract,
+        check_issue_close_contract,
     ):
         violations.extend(check(root))
     return violations

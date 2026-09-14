@@ -237,11 +237,13 @@ export function requestedRequirementUidAuthorization(issueBody, requestedRequire
   }
   return { ok: true, requirementUid: requestedRequirementUid };
 }
-export async function runImplementGit(repoRoot, args, commandRunner = execFile) {
+// Signing follows the host configuration (issue #1580); a checkout-selected
+// signing program is refused by assertSafeImplementCheckoutConfiguration.
+export async function runImplementGit(repoRoot, args, commandRunner = execFile, envOverrides = {}) {
   return commandRunner(
     "git",
-    ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", "-C", repoRoot, ...args],
-    { cwd: repoRoot, env: implementNetworkGitEnvironment() },
+    ["-c", "core.hooksPath=/dev/null", "-C", repoRoot, ...args],
+    { cwd: repoRoot, env: { ...implementNetworkGitEnvironment(), ...envOverrides } },
   );
 }
 export async function authorizeImplementMutationCheckout(repoPath, {

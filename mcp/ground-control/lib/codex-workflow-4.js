@@ -7,6 +7,7 @@
 import { realpathSync } from "node:fs";
 import { assertImplementSyncCheckout, fetchImplementBase, isImplementAncestor, readImplementGitOid, readImplementTreeOid, runImplementFinalTreeGates, runImplementGit } from "./codex-workflow-2.js";
 import { assertImplementMergeAttemptUnchanged } from "./implement-publish-recovery.js";
+import { runImplementCommit } from "./implement-commit.js";
 import { authorizeRequestedRequirementUid } from "./codex-workflow-3.js";
 import { GIT_OBJECT_ID_RE, IMPLEMENT_BASE_SYNC_ACTIONS, newImplementSyncRecordId, validateImplementBranchName } from "./codex-workflow.js";
 import { assertSafeImplementCheckoutConfiguration, authorizeImplementRepoRoot, ensureGitRepo, resolveMcpLaunchWorkspaceAuthorization } from "./grc-legacy-compat-4.js";
@@ -312,11 +313,8 @@ async function prepareMergeHeadCompletion(args) {
   // the boundary is refused without mutation (issue #1495).
   const preCommit = await assertImplementMergeAttemptUnchanged(repoRoot, input, commandRunner);
   if (preCommit) return preCommit;
-  await runImplementGit(
-    repoRoot,
-    ["commit", "-m", `Merge origin/${baseBranch} into ${input.branchName}`],
-    commandRunner,
-  );
+  const committed = await runImplementCommit(repoRoot, ["-m", `Merge origin/${baseBranch} into ${input.branchName}`], commandRunner);
+  if (!committed.ok) return { ...committed, next_action: "repair_the_host_commit_signing_key_or_agent_and_retry_completion" };
   const resultingFeatureSha = await readImplementGitOid(repoRoot, "HEAD", commandRunner);
   return { resultingFeatureSha, verifiedTreeSha, verifiedToolchainDigest };
 }

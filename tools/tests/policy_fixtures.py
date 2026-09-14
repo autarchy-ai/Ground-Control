@@ -33,6 +33,7 @@ class PolicyChecksFixture(unittest.TestCase):
             "skills/implement/SKILL.md",
             "skills/implement/_development-principles.md",
             "skills/implement/steps",
+            "skills/quickfix/SKILL.md",
             ".cursor/skills/implement/SKILL.md",
             "mcp/ground-control/lib.js",
             "mcp/ground-control/index.js",

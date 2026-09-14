@@ -58,6 +58,7 @@ export * from "./lib/codex-workflow-4.js";
 export * from "./lib/filesystem-lease.js";
 export * from "./lib/implement-recovery-journal.js";
 export * from "./lib/implement-publish-recovery.js";
+export * from "./lib/implement-commit.js";
 export * from "./lib/codex-workflow-5.js";
 export * from "./lib/test-quality-runner-2.js";
 export * from "./lib/codex-review-runner.js";
