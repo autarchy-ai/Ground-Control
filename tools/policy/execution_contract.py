@@ -23,6 +23,7 @@ from .cli_safety import (
     safe_cli_path,
 )
 from .implement_scope_contract import check_scope_and_completion_contract
+from .issue_close_contract import check_issue_close_contract
 from .verification_boundary_contract import check_verification_surface_contract
 MCP_LIB_PATH = "mcp/ground-control/lib.js"
 
@@ -384,6 +385,7 @@ def run_implement_execution_contract(root: Path = REPO_ROOT) -> list[Violation]:
         _check_pre_pr_sync_contract,
         _check_pre_pr_sync_order,
         check_scope_and_completion_contract,
+        check_issue_close_contract,
     ):
         violations.extend(check(root))
     return violations

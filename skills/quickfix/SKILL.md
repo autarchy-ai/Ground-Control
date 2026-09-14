@@ -59,7 +59,9 @@ An empty `## Requirements` section (heading present, zero UID bullets) is accept
 
 ### Step Q1: Resolve the Issue and Branch
 
-**Reuses the issue-anchored mechanics of `skills/implement/SKILL.md` Step 1**, but **NOT** its UID classification / requirement-resolution path. Same `gc_get_repo_ground_control_context` call, same `gh issue develop --checkout --base {cfg.workflow.base_branch|default dev} --name <issue>-<short-slug>` invocation, same branch-shape post-check (≤ 50 chars, ASCII-only, `[a-z0-9-]`), same LinkedBranch repair when renaming, same in-progress label + pickup comment.
+**Reuses the issue-anchored mechanics of `skills/implement/SKILL.md` Step 1**, but **NOT** its UID classification / requirement-resolution path. `gc_implement_mechanical action="bootstrap"` loads the repository context, creates or switches the `<issue>-<short-slug>` branch through the same MCP branch boundary (≤ 50 chars, ASCII-only, `[a-z0-9-]`), and applies the in-progress label + pickup comment.
+
+**Post-merge re-entry (issue #1601).** Before bootstrapping, read the issue thread with `gc_get_issue_thread`. When the issue is still open and the thread carries this lane's Step Q19 close comment - its `gc:final-report issue="<n>" pr="<pr>"` marker - for a pull request that has since merged, the run is past Phase D: skip straight to **Step Q20** with that `pr_number` and do not bootstrap again. When that pull request is still open, Phase D is complete and the run stops awaiting the user's merge. A marker for a pull request that was closed without merging, or an issue reopened after that merge, means new work: bootstrap normally.
 
 **Diverges from `/implement` Step 1 on input classification.** `/quickfix` accepts only issue references (plain integer, `#`-prefixed integer, or `issue:N`). If the user passed a requirement UID (anything matching the `<letters>-<letters/digits>` pattern), STOP and tell them to use `/implement <uid>` - the UID lane requires the requirement lifecycle (status transitions, traceability reconciliation) that `/quickfix` intentionally drops. Do NOT invoke the `/implement` UID-to-issue shim from this lane.
 
@@ -157,7 +159,9 @@ are requirement-free), same PR-title validation rules (single conventional-
 commit type + lowercase subject + per-repo override via `workflow.pr_title`),
 same synchronized-record validation through
 `gc_create_synchronized_implement_pr`, and the same `Closes #<issue-number>`
-wiring through the renderer.
+wiring through the renderer. GitHub honors that keyword only when the PR merges
+into the repository's default branch, so it is a cross-link, not the close path;
+Step Q20 closes the issue after merge on every base.
 
 Pass `lane: "quickfix"` plus the `pre_push_reviews` state this run actually
 reached (issue #1551): `"completed"` when the run was invoked with `--review`
@@ -191,11 +195,11 @@ Step 11's sub-step 2a routing applies unchanged, including its `error`-keyed buc
 
 If a `/quickfix` run touches files in a way that warrants requirement transitions, that's a signal the run should have been `/implement`. Surface to the user and re-invoke `/implement <same-issue>` rather than partial-completing the requirement work in the lighter lane.
 
-**Unaffected by `/implement`'s post-merge reconciliation (issue #963).** `/implement` moved its requirement transition, traceability reconciliation, and final report to a new post-merge Phase E. `/quickfix` is **structurally exempt** from that change: it does no transition and no UID reconciliation (this section), so it has nothing to defer past the merge; its closeout posts `gc_post_final_report` with `lane: "quickfix"` directly (not the merge-gated composite `gc_assert_completion`), so the new `completion_pr_not_merged` gate does not apply; and its issue close already runs post-merge through `gc_close_issue_after_merge`. The slim quickfix close comment continues to post pre-merge as the lane's lightweight ready signal.
+**Unaffected by `/implement`'s post-merge reconciliation (issue #963).** `/implement` moved its requirement transition, traceability reconciliation, and final report to a new post-merge Phase E. `/quickfix` is **structurally exempt** from that change: it does no transition and no UID reconciliation (this section), so it has nothing to defer past the merge; its closeout posts `gc_post_final_report` with `lane: "quickfix"` directly (not the merge-gated composite `gc_assert_completion`), so the new `completion_pr_not_merged` gate does not apply; and its issue close runs post-merge at Step Q20 through `gc_close_issue_after_merge`. The slim quickfix close comment continues to post pre-merge as the lane's lightweight ready signal.
 
 ### Step Q18: Clear In-Progress Label (optional best-effort)
 
-The `in-progress` label removal is **optional best-effort** for `/quickfix` (as it is for `/implement` per issue #1103). After Step Q19 posts the close comment, you MAY run `gh issue edit <issue-number> --remove-label in-progress` and skip on failure. The GitHub issue closes via `Closes #<issue-number>` in the PR body (rendered by `gc_render_pr_body` in Step Q9) at PR merge. Do NOT run `gh issue close` from the agent: closing decouples the close event from the merge, and a rolled-back PR would leave a closed issue with no shipped code (GitHub does not re-open on revert).
+The `in-progress` label removal is **optional best-effort** for `/quickfix` (as it is for `/implement` per issue #1103). After Step Q19 posts the close comment, you MAY run `gh issue edit <issue-number> --remove-label in-progress` and skip on failure. The issue closes after merge at Step Q20. Do NOT run `gh issue close` from the agent: an ungated close decouples the close event from the merge, and a rolled-back PR would leave a closed issue with no shipped code (GitHub does not re-open on revert).
 
 ### Step Q19: Lightweight Close Comment (via `gc_post_final_report`)
 
@@ -213,6 +217,18 @@ The slim payload should populate:
 
 **You MUST NOT merge the PR.** Same rule as `/implement` Step 19. The user reviews and merges. Step Q19 runs **before** the merge; any prose suggesting a "merged PR link" is incorrect - at this point the PR is still open by contract.
 
+### Step Q20: Close the Issue After Merge (via `gc_close_issue_after_merge`)
+
+Runs only after the user merges the PR: in the same session when the user reports the merge, or on the post-merge re-entry that Step Q1 detects. Call `gc_close_issue_after_merge` with `repo_path`, `issue_number`, and the merged `pr_number`. The `Closes #<issue-number>` keyword from Step Q9 does not close the issue when the PR merged into the integration branch rather than the repository's default branch (issue #1601), so this step is the lane's closer on every base.
+
+The tool verifies the PR is merged, then closes an open issue only behind a trusted `gc:final-report` marker for that PR; the Step Q19 close comment is that marker. It is idempotent: `already_closed: true` is success.
+
+- `close_pr_not_merged`: the PR is still open or was closed without merging. Stop and wait for the user; never close around it.
+- `close_requirement_state_unverified`: no trusted Step Q19 close comment names this PR. Post it through `gc_post_final_report` with `lane: "quickfix"` and the merged `pr_number`, then retry. A repo-write user's `gc-authorize-merge-state-override pr=<n> <reason>` issue comment is the only other authority.
+- Any other `ok: false` envelope: surface the tool's `message` to the user.
+
+After a successful close, the Step Q18 in-progress label removal applies.
+
 ---
 
 ## What `/quickfix` keeps (non-negotiable)
@@ -227,6 +243,7 @@ Every mechanical guardrail the repo enforces. Adding to this list is a `bin/poli
 - **`gc_render_pr_body`** for the PR body (ADR-036) so `tools/policy/checks.py::check_pr_body` accepts it.
 - **CI + SonarCloud green** before merge handoff.
 - **Configured completion + policy commands clean** before commit (Step Q6), and the **single mandatory pre-publish hook boundary** inside Step Q7's `publish` action.
+- **Post-merge issue close** through `gc_close_issue_after_merge` (Step Q20), never a `Closes #n` keyword alone or a direct `gh issue close`.
 - **User merges, not the agent.**
 
 ## What `/quickfix` drops (compared to `/implement`)
@@ -326,3 +343,12 @@ prohibited. Also hardened the flaky `execFileWithInput` maxBuffer test
 (`mcp/ground-control/lib.execfilewithinput-process-tree-kill.test.js`) to emit
 from an unbounded shell-builtin loop instead of a finite `$(seq …)` burst that
 was flaky under the CI suite's fork pressure.
+
+**2026-09-14 (issue #1601).** Added **Step Q20**: after the user merges, the lane
+closes its issue through `gc_close_issue_after_merge`, and Step Q1 detects the
+post-merge re-entry from the Step Q19 close comment's `gc:final-report` marker.
+GitHub honors `Closes #n` only on a default-branch merge, so a PR merged into
+the integration branch had left every requirement-free `/quickfix` issue open.
+Step Q1 also now names the `bootstrap` action instead of the retired
+`gh issue develop` recipe. The `quickfix-post-merge-close-step` and
+`workflow-unconditional-auto-close-claim` policy checks guard both.
