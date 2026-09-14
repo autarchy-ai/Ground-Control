@@ -125,6 +125,62 @@ class ImplementExecutionChecksTest(PolicyChecksFixture):
                 "implement-verification-boundary-drift",
                 {item.code for item in violations},
             )
+    def test_implement_execution_contract_rejects_manual_precommit_instruction(self):
+        # Issue #899: the publish action owns the only pre-commit invocation, so an
+        # instruction to run it by hand anywhere else in the lanes' prose is drift.
+        for rel in (
+            "skills/implement/steps/step-05-quality-assurance.md",
+            "skills/implement/steps/step-04.4-tdd.md",
+            "skills/implement/SKILL.md",
+            "skills/quickfix/SKILL.md",
+        ):
+            with self.subTest(path=rel), tempfile.TemporaryDirectory() as tmp_dir:
+                root = self._implement_contract_root(tmp_dir)
+                path = root / rel
+                path.write_text(
+                    path.read_text(encoding="utf-8")
+                    + "\nRun `pre-commit run --all-files` before committing.\n",
+                    encoding="utf-8",
+                )
+                violations = run_implement_execution_contract(root=root)
+                manual = [
+                    item for item in violations
+                    if item.code == "implement-manual-precommit-instruction"
+                ]
+                self.assertEqual(len(manual), 1)
+                self.assertEqual(manual[0].details, [f"manual pre-commit instruction in {rel}"])
+
+    def test_implement_execution_contract_rejects_dropped_manual_precommit_boundary_token(self):
+        mutations = (
+            ("skills/implement/steps/step-04.4-tdd.md", "Do not run `pre-commit` by hand"),
+            ("skills/quickfix/SKILL.md", "Do not run `pre-commit` here"),
+        )
+        for rel, anchor in mutations:
+            with self.subTest(path=rel), tempfile.TemporaryDirectory() as tmp_dir:
+                root = self._implement_contract_root(tmp_dir)
+                path = root / rel
+                text = path.read_text(encoding="utf-8")
+                self.assertIn(anchor, text)
+                path.write_text(text.replace(anchor, "Consider pre-commit"), encoding="utf-8")
+                violations = run_implement_execution_contract(root=root)
+                drift = [
+                    item for item in violations
+                    if item.code == "implement-verification-boundary-drift"
+                ]
+                self.assertEqual(len(drift), 1)
+                self.assertIn(f"missing token: {anchor}", drift[0].details)
+
+    def test_implement_execution_contract_accepts_step7_naming_the_default_command(self):
+        violations = run_implement_execution_contract(root=REPO_ROOT)
+        self.assertNotIn(
+            "implement-manual-precommit-instruction",
+            {item.code for item in violations},
+        )
+        self.assertNotIn(
+            "implement-verification-boundary-drift",
+            {item.code for item in violations},
+        )
+
     def test_implement_execution_contract_rejects_dropped_review_batching_token(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = self._implement_contract_root(tmp_dir)

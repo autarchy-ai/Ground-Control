@@ -93,9 +93,9 @@ The full TDD discipline from `skills/implement/SKILL.md` Step 4.4 (write failing
 
 ## Phase B: Quality Gate
 
-### Step Q5: Pre-commit
+### Step Q5: Proportionate Local Verification
 
-**Identical to `skills/implement/SKILL.md` Step 5.** Run the configured pre-publish hook command (`workflow.precommit_command`, default `pre-commit run --all-files`) until clean (up to 5 retries; escalate to user on the sixth failure).
+**Identical to `skills/implement/SKILL.md` Step 5.** Run the narrowest tests that exercise the changed behavior, widening only for shared, cross-cutting, or security-sensitive changes. Do not run `pre-commit` here, and do not commit locally: Step Q7's `publish` action owns the single mandatory pre-publish hook boundary (`workflow.precommit_command`), commits behind its sensitive-path screening, and returns a hook failure as repair evidence for up to 5 attempts before escalation (issue #899).
 
 ### Step Q6: Completion Gate
 
@@ -226,7 +226,7 @@ Every mechanical guardrail the repo enforces. Adding to this list is a `bin/poli
 - **PR-title rules** (issue #901). Single conventional-commit type + lowercase subject; per-repo override via `workflow.pr_title`. Load-bearing under Release Please (GC-P027, issue #1399): CI (`.github/workflows/pr-title.yml`) enforces the same contract, since Release Please derives `CHANGELOG.md` and the version bump from Conventional Commit history rather than a per-PR fragment.
 - **`gc_render_pr_body`** for the PR body (ADR-036) so `tools/policy/checks.py::check_pr_body` accepts it.
 - **CI + SonarCloud green** before merge handoff.
-- **Configured completion + policy commands clean** before commit (Step Q6 / pre-commit).
+- **Configured completion + policy commands clean** before commit (Step Q6), and the **single mandatory pre-publish hook boundary** inside Step Q7's `publish` action.
 - **User merges, not the agent.**
 
 ## What `/quickfix` drops (compared to `/implement`)
