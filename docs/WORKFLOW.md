@@ -15,8 +15,10 @@ a contract is stated once and read in one place.
 | Why did the SonarCloud watcher stop before its window, and what is the difference between an analysis that has not arrived and one that will never exist? | [`docs/DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) § Step 11 and [`skills/implement/steps/step-11-sonarcloud.md`](../skills/implement/steps/step-11-sonarcloud.md) |
 | How are requirements written and traced? | [`docs/requirements/`](requirements/) and [ADR-093](../architecture/adrs/093-requirements-specs-as-code.md) |
 | How does a requirement introduced mid-run become in-scope for the run that introduced it? | [`docs/DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) and [ADR-029](../architecture/adrs/029-issue-thread-gate-model.md) - `gc_update_issue_requirements` is the only supported writer for an issue's `## Requirements` section |
+| A review station first rendered no verdict and a later run posted its findings, but readiness still refuses the station-observation obligation. How is it resolved? | [`docs/DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) § Unobserved review stations and [ADR-029](../architecture/adrs/029-issue-thread-gate-model.md) - `gc_reconcile_station_observation` is the only recovery writer, and `gc_record_execution_obligation` cannot close the obligation |
 | Why is a decision the way it is? | [`architecture/adrs/`](../architecture/adrs/) |
 | What does CI verify? | [`docs/ci/CI_PIPELINE.md`](ci/CI_PIPELINE.md) |
+| What pull request title shape do the Step 9 check and the synchronized PR-creation boundary accept, including the breaking-change `!`? | [`skills/implement/steps/step-09-pr-body.md`](../skills/implement/steps/step-09-pr-body.md) and [`docs/DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) § Release model |
 | How do I set up a clone and open a pull request? | [`CONTRIBUTING.md`](../CONTRIBUTING.md) |
 | What are the style and testing rules? | [`docs/CODING_STANDARDS.md`](CODING_STANDARDS.md) and [`docs/DOC_STYLE.md`](DOC_STYLE.md) |
 
@@ -38,3 +40,9 @@ Skill lanes are agent-neutral and run from Claude Code, Codex, or Cursor CLI
 `/integrate` prepares a queue of approved pull requests, and `/review` reviews one
 contributor pull request. `docs/DEVELOPMENT_WORKFLOW.md` describes each lane and the
 boundaries between them.
+
+Every lane reaches GitHub through the MCP server over REST. GitHub's GraphQL budget is
+shared by every agent on the same token and can run out without warning, so GraphQL is
+used only where REST has no equivalent: review-thread ids and resolution for
+`gc_codex_verify_finding`, and the `/review` lane's unresolved-thread summary. That summary
+is optional and reports itself unavailable instead of failing the review.

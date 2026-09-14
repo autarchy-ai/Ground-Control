@@ -7,9 +7,10 @@
 import { readTrustedMergeStateOverride, resolvePrForClose } from "./close-issue.js";
 import { extractInScopeRequirementUids } from "./issue-requirements-scope.js";
 import { runPostFinalReport } from "./doc-coverage-2.js";
-import { getOwnerRepo } from "./grc-legacy-compat-3.js";
-import { ensureGitRepo, readTrustedExecutionObligationState } from "./grc-legacy-compat-4.js";
+import { readTrustedExecutionObligationState } from "./grc-legacy-compat-4.js";
+import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { runGetIssueThread } from "./issue-thread.js";
+import { findRecoverableStationObservations } from "./station-observation-reconcile.js";
 import { verifyMergedRequirementState } from "./merged-requirement-state.js";
 import { validateFinalReportInput } from "./plan-posting.js";
 import { execFile } from "./runtime-primitives.js";
@@ -19,28 +20,11 @@ const FULL_GIT_OID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 // Read and gate on the trusted execution-obligation state. Returns `{ ok: true }`
 // when no obligation is open, or `{ earlyReturn }` carrying the exact envelope the
 // caller must return. Extracted to keep runAssertCompletion under the length cap.
-async function _readCompletionObligationState(repoPath, issueNumber, assertions) {
-  let obligationRepoRoot;
-  let obligationOwnerRepo;
-  try {
-    obligationRepoRoot = await ensureGitRepo(repoPath);
-    obligationOwnerRepo = await getOwnerRepo(obligationRepoRoot);
-  } catch (error) {
-    return {
-      earlyReturn: {
-        ok: false,
-        error: "completion_obligation_state_failed",
-        message: error.message,
-        issue_number: issueNumber,
-        assertions,
-        final_report: null,
-      },
-    };
-  }
+async function _readCompletionObligationState(repository, issueNumber, assertions) {
   const obligationState = await readTrustedExecutionObligationState(
-    obligationRepoRoot,
-    obligationOwnerRepo.owner,
-    obligationOwnerRepo.name,
+    repository.repoRoot,
+    repository.owner,
+    repository.name,
     issueNumber,
   );
   if (!obligationState.ok) {
@@ -57,18 +41,36 @@ async function _readCompletionObligationState(repoPath, issueNumber, assertions)
     };
   }
   if (!obligationState.clear) {
+    // A station observation whose verdict is already on the thread is not work left to do; only its
+    // resolution is missing (issue #1582). Name it, and the tool that records it, so the refusal
+    // does not read as a gate nobody can clear.
+    const recoverable = await findRecoverableStationObservations({
+      repoRoot: repository.repoRoot,
+      owner: repository.owner,
+      name: repository.name,
+      issueNumber,
+      openObligations: obligationState.open_obligations,
+    });
+    const allRecoverable = recoverable.length === obligationState.open_obligation_ids.length;
     return {
       earlyReturn: {
         ok: false,
         error: "completion_open_execution_obligations",
         message:
           `gc_assert_completion refuses readiness/completion while execution obligations remain open: ` +
-          obligationState.open_obligation_ids.join(", "),
+          obligationState.open_obligation_ids.join(", ") +
+          (recoverable.length > 0
+            ? `. Already re-observed but unresolved: ${recoverable.map((r) => r.obligation_id).join(", ")} ` +
+              "- record each with gc_reconcile_station_observation"
+            : ""),
         issue_number: issueNumber,
         open_obligation_ids: obligationState.open_obligation_ids,
+        recoverable_station_observations: recoverable,
         assertions,
         final_report: null,
-        next_action: "fix_and_resolve_open_obligations_then_retry",
+        next_action: allRecoverable
+          ? "reconcile_station_observations_then_retry"
+          : "fix_and_resolve_open_obligations_then_retry",
       },
     };
   }
@@ -77,14 +79,14 @@ async function _readCompletionObligationState(repoPath, issueNumber, assertions)
 
 // Phase D terminal (phase="pre_merge"): post the readiness record and return its
 // envelope. Extracted from runAssertCompletion (length cap).
-async function _runPreMergeReadiness({ subInput, repoPath, issueNumber, prNumber, assertions }) {
+async function _runPreMergeReadiness({ subInput, repoPath, issueNumber, prNumber, assertions, workspaceAuthorizationResolver }) {
   const readiness = await runPostFinalReport({
     ...subInput,
     repoPath,
     issueNumber,
     prNumber,
     phase: "pre_merge",
-  });
+  }, { workspaceAuthorizationResolver });
   if (!readiness.ok) {
     return {
       ok: false,
@@ -114,13 +116,11 @@ async function _runPreMergeReadiness({ subInput, repoPath, issueNumber, prNumber
 // Phase E merge gate: resolve the linked PR and refuse unless it is merged.
 // Returns `{ ok: true }` when merged, or `{ earlyReturn }` with the caller's exact
 // envelope. Extracted from runAssertCompletion (length cap).
-async function _assertLinkedPrMerged({ repoPath, issueNumber, prNumber, assertions }) {
-  const mergeRepoRoot = await ensureGitRepo(repoPath);
-  const { owner: mergeOwner, name: mergeName } = await getOwnerRepo(mergeRepoRoot);
+async function _assertLinkedPrMerged({ repository, issueNumber, prNumber, assertions }) {
   const resolvedPr = await resolvePrForClose({
-    repoRoot: mergeRepoRoot,
-    owner: mergeOwner,
-    name: mergeName,
+    repoRoot: repository.repoRoot,
+    owner: repository.owner,
+    name: repository.name,
     issueNumber,
     prNumber,
   });
@@ -191,11 +191,10 @@ async function _ensureRevisionPresent(repoRoot, oid, baseRef) {
 // Resolve the trusted merge-state override for this PR. Authority is a repo-write
 // human's issue-thread comment, never a caller DTO field (issue #1541 security review);
 // the comment is itself the durable record of the bypass.
-async function _resolveMergeStateOverride(repoRoot, issueNumber, mergedPr) {
+async function _resolveMergeStateOverride({ repoRoot, owner, name }, issueNumber, mergedPr) {
   const prNumber = mergedPr?.number ?? null;
   if (!Number.isInteger(prNumber) || prNumber <= 0) return { authorized: false, reason: null };
   try {
-    const { owner, name } = await getOwnerRepo(repoRoot);
     return await readTrustedMergeStateOverride(repoRoot, owner, name, issueNumber, prNumber);
   } catch {
     return { authorized: false, reason: null };
@@ -208,8 +207,8 @@ async function _resolveMergeStateOverride(repoRoot, issueNumber, mergedPr) {
 // revision. Returns `{ ok, skip?, observed?, revision?, overridden?, reason? }` on
 // success or `{ earlyReturn }` with the caller's exact refusal envelope. The only
 // bypass is a trusted issue-thread override authorization (see _resolveMergeStateOverride).
-async function _verifyMergedRequirements({ repoPath, issueNumber, mergedPr, requirements, assertions }) {
-  const thread = await runGetIssueThread({ repoPath, issueNumber });
+async function _verifyMergedRequirements({ repository, issueNumber, mergedPr, requirements, assertions, workspaceAuthorizationResolver }) {
+  const thread = await runGetIssueThread({ repoPath: repository.repoRoot, issueNumber }, { workspaceAuthorizationResolver });
   if (!thread.ok) {
     return { earlyReturn: {
       ok: false, error: "completion_issue_thread_unavailable",
@@ -243,12 +242,12 @@ async function _verifyMergedRequirements({ repoPath, issueNumber, mergedPr, requ
     } };
   }
   const oid = mergedPr?.mergeCommit?.oid ?? null;
-  const repoRoot = await ensureGitRepo(repoPath);
+  const { repoRoot } = repository;
   const revisionUsable =
     typeof oid === "string" && FULL_GIT_OID_RE.test(oid) &&
     (await _ensureRevisionPresent(repoRoot, oid, mergedPr?.baseRefName));
   if (!revisionUsable) {
-    const override = await _resolveMergeStateOverride(repoRoot, issueNumber, mergedPr);
+    const override = await _resolveMergeStateOverride(repository, issueNumber, mergedPr);
     if (override.authorized) return { ok: true, overridden: true, reason: override.reason };
     return { earlyReturn: {
       ok: false, error: "completion_merge_revision_unavailable",
@@ -262,7 +261,7 @@ async function _verifyMergedRequirements({ repoPath, issueNumber, mergedPr, requ
   const expectations = requirements.map((r) => ({ uid: r.uid, statusIntent: r.status ?? r.statusIntent ?? "ACTIVE" }));
   const verification = await verifyMergedRequirementState({ repoRoot, revision: oid, expectations });
   if (!verification.ok) {
-    const override = await _resolveMergeStateOverride(repoRoot, issueNumber, mergedPr);
+    const override = await _resolveMergeStateOverride(repository, issueNumber, mergedPr);
     if (override.authorized) return { ok: true, overridden: true, revision: oid, reason: override.reason };
     return { earlyReturn: {
       ok: false, error: "completion_requirement_state_unverified",
@@ -279,13 +278,13 @@ async function _verifyMergedRequirements({ repoPath, issueNumber, mergedPr, requ
 
 // Phase E post-merge completion: post the final report and return its envelope.
 // Extracted from runAssertCompletion (length cap).
-async function _runPostMergeCompletion({ subInput, repoPath, issueNumber, prNumber, assertions }) {
+async function _runPostMergeCompletion({ subInput, repoPath, issueNumber, prNumber, assertions, workspaceAuthorizationResolver }) {
   const report = await runPostFinalReport({
     ...subInput,
     repoPath,
     issueNumber,
     prNumber,
-  });
+  }, { workspaceAuthorizationResolver });
   if (!report.ok) {
     return {
       ok: false,
@@ -310,7 +309,7 @@ async function _runPostMergeCompletion({ subInput, repoPath, issueNumber, prNumb
   };
 }
 
-export async function runAssertCompletion(input) {
+export async function runAssertCompletion(input, { workspaceAuthorizationResolver = undefined } = {}) {
   const {
     repoPath,
     issueNumber,
@@ -363,11 +362,23 @@ export async function runAssertCompletion(input) {
     };
   }
 
+  // Every read and record below — the obligation ledger, the merged PR, the issue scope, and the
+  // report itself — is bound to the launch-workspace-authorized repository (issues #1578, #1583).
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    return {
+      ...issueRepositoryNotAuthorized("completion", repository, { issue_number: issueNumber }),
+      assertions,
+      final_report: null,
+    };
+  }
+  const authorizedRepoPath = repository.repoRoot;
+
   // A discovered real problem is a durable obligation of the current
   // /implement run. Both the Phase D readiness record and Phase E completion
   // fail closed while a trusted issue-thread obligation remains open. Cached
   // arrays and caller summaries are intentionally ignored.
-  const obligationCheck = await _readCompletionObligationState(repoPath, issueNumber, assertions);
+  const obligationCheck = await _readCompletionObligationState(repository, issueNumber, assertions);
   if (obligationCheck.earlyReturn) return obligationCheck.earlyReturn;
 
   // Phase D terminal (phase="pre_merge", issue #963): post the ready-for-review
@@ -380,7 +391,9 @@ export async function runAssertCompletion(input) {
   // on the post-merge DRAFT→ACTIVE transition and is verified by the
   // phase="post_merge" completion.
   if (phase === "pre_merge") {
-    return _runPreMergeReadiness({ subInput, repoPath, issueNumber, prNumber, assertions });
+    return _runPreMergeReadiness({
+      subInput, repoPath: authorizedRepoPath, issueNumber, prNumber, assertions, workspaceAuthorizationResolver,
+    });
   }
 
   // Phase E (phase="post_merge", default): the reconciled completion record is
@@ -391,7 +404,7 @@ export async function runAssertCompletion(input) {
   // gc_close_issue_after_merge. resolvePrForClose validates a supplied pr_number
   // is linked to the issue and otherwise resolves the merged PR from the timeline;
   // its `close_*` resolver errors are re-mapped to `completion_*` here.
-  const mergeCheck = await _assertLinkedPrMerged({ repoPath, issueNumber, prNumber, assertions });
+  const mergeCheck = await _assertLinkedPrMerged({ repository, issueNumber, prNumber, assertions });
   if (mergeCheck.earlyReturn) return mergeCheck.earlyReturn;
 
   // Requirement transitions and traceability edits are now reviewed and merged in the
@@ -404,7 +417,7 @@ export async function runAssertCompletion(input) {
   // enforces CI green, Sonar pass-or-legit-skipped, the mandatory Codex review, and the
   // sensitive/defer/reserved-marker scrubs.
   const verify = await _verifyMergedRequirements({
-    repoPath, issueNumber, mergedPr: mergeCheck.mergedPr, requirements, assertions,
+    repository, issueNumber, mergedPr: mergeCheck.mergedPr, requirements, assertions, workspaceAuthorizationResolver,
   });
   if (verify.earlyReturn) return verify.earlyReturn;
   // Render OBSERVED merged values, not caller-supplied status/title (issue #1541).
@@ -421,5 +434,7 @@ export async function runAssertCompletion(input) {
   // The override reason is the trusted authorization comment itself, so recording it in
   // the final report keeps the durable record self-consistent.
   if (verify.overridden) subInput.requirementStateOverrideReason = verify.reason;
-  return _runPostMergeCompletion({ subInput, repoPath, issueNumber, prNumber, assertions });
+  return _runPostMergeCompletion({
+    subInput, repoPath: authorizedRepoPath, issueNumber, prNumber, assertions, workspaceAuthorizationResolver,
+  });
 }

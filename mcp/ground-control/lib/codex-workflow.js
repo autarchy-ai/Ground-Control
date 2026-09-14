@@ -174,9 +174,10 @@ export function validateImplementPrTitle(title, config = null) {
   if (typeof title !== "string" || title.includes("\n") || title.includes("\r")) {
     return { ok: false, message: "title must be a single-line string" };
   }
-  const match = /^([a-z]+)(?:\(([^()\r\n]+)\))?: (.+)$/.exec(title);
+  // The optional `!` is the Conventional Commits breaking-change marker Release Please reads.
+  const match = /^([a-z]+)(?:\(([^()\r\n]+)\))?!?: (.+)$/.exec(title);
   if (match == null) {
-    return { ok: false, message: "title must match <type>(<optional-scope>): <subject>" };
+    return { ok: false, message: "title must match <type>(<optional-scope>)<optional-!>: <subject>" };
   }
   const types = Array.isArray(config?.types) ? config.types : DEFAULT_PR_TITLE_TYPES;
   if (!types.includes(match[1])) {
@@ -409,10 +410,19 @@ export function evaluateExecutionObligations(events) {
   }
   const open = [...states.entries()]
     .filter(([, state]) => state.status === "open")
-    .map(([id]) => id)
-    .sort();
+    .sort(([a], [b]) => (a < b ? -1 : Number(a > b)))
+    .map(([id, state]) => ({
+      obligation_id: id,
+      schema_version: state.schema_version,
+      kind: state.kind,
+      station: state.station,
+      cycle: state.cycle,
+    }));
   return {
-    open_obligation_ids: open,
+    open_obligation_ids: open.map((obligation) => obligation.obligation_id),
+    // Replayed identity of each open obligation, so a caller can tell a station observation it can
+    // recover (issue #1582) from a problem obligation without re-parsing the thread.
+    open_obligations: open,
     clear: open.length === 0,
   };
 }

@@ -5,8 +5,7 @@
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
 import { createHash } from "node:crypto";
-import { getOwnerRepo } from "./grc-legacy-compat-3.js";
-import { ensureGitRepo } from "./grc-legacy-compat-4.js";
+import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { execFile } from "./runtime-primitives.js";
 
 export const VERIFY_FINDING_ALLOWED_AUTHORS = new Set([
@@ -100,6 +99,8 @@ export function parseCodexVerifyTail(stdout) {
   }
   return { status: "unresolved", reply };
 }
+// GraphQL by necessity (issue #1586): GitHub exposes review-thread resolution
+// only as the `resolveReviewThread` mutation; REST has no equivalent endpoint.
 export async function resolveReviewThread(repoRoot, threadId) {
   const mutation = `
     mutation($threadId:ID!) {
@@ -241,7 +242,10 @@ async function _fetchIssueThread(repoRoot, owner, name, issueNumber) {
     comments,
   };
 }
-export async function runGetIssueThread({ repoPath, issueNumber, expectedHash = null }) {
+export async function runGetIssueThread(
+  { repoPath, issueNumber, expectedHash = null },
+  { workspaceAuthorizationResolver = undefined } = {},
+) {
   if (typeof repoPath !== "string" || repoPath.length === 0) {
     return {
       ok: false,
@@ -271,17 +275,13 @@ export async function runGetIssueThread({ repoPath, issueNumber, expectedHash = 
     };
   }
 
-  let repoRoot;
-  try {
-    repoRoot = await ensureGitRepo(repoPath);
-  } catch (e) {
-    return {
-      ok: false,
-      error: "issue_thread_repo_not_found",
-      message: e?.message ?? "ensureGitRepo failed",
-      issue_number: issueNumber,
-    };
+  // The thread is read with the MCP host's GitHub credentials, so only the launch workspace's
+  // repository is readable through this tool (issue #1583).
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    return issueRepositoryNotAuthorized("issue_thread", repository, { issue_number: issueNumber });
   }
+  const { repoRoot, owner, name } = repository;
 
   const cacheKey = _issueThreadCacheKey(repoRoot, issueNumber);
 
@@ -309,19 +309,6 @@ export async function runGetIssueThread({ repoPath, issueNumber, expectedHash = 
         comments: null,
       };
     }
-  }
-
-  let owner;
-  let name;
-  try {
-    ({ owner, name } = await getOwnerRepo(repoRoot));
-  } catch (e) {
-    return {
-      ok: false,
-      error: "issue_thread_repo_lookup_failed",
-      message: e?.message ?? "getOwnerRepo failed",
-      issue_number: issueNumber,
-    };
   }
 
   let thread;

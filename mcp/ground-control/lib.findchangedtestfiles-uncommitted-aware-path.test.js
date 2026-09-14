@@ -337,8 +337,9 @@ describe("runGetIssueThread input validation (issue #934)", () => {
     try {
       const r = await runGetIssueThread({ repoPath: dir, issueNumber: 1 });
       assert.equal(r.ok, false);
-      // ensureGitRepo failure surfaces as a repo-not-found envelope.
-      assert.equal(r.error, "issue_thread_repo_not_found");
+      // A path that is not a checkout cannot be the authorized launch workspace (issue #1583).
+      assert.equal(r.error, "issue_thread_repo_not_authorized");
+      assert.match(r.message, /implement_repo_not_git/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

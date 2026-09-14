@@ -13,7 +13,8 @@ import { realpathSync } from "node:fs";
 import { promisify } from "node:util";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { REVIEW_REMEDIATION_APPROVAL_PHRASE, runRemediatePullRequest } from "./lib.js";
+import { REVIEW_REMEDIATION_APPROVAL_PHRASE, readLivePullRequest, runRemediatePullRequest } from "./lib.js";
+import { restPullRequest } from "./github-rest.test-helpers.js";
 
 const execFile = promisify(execFileCb);
 const REPO_ROOT = realpathSync(new URL("../..", import.meta.url).pathname);
@@ -43,12 +44,14 @@ function reviewedIdentity(overrides = {}) {
   return { base_ref: "dev", head_ref: "contributor-branch", base_oid: BASE, head_oid: HEAD, cross_repository: false, ...overrides };
 }
 
+// The live PR as GET /repos/{o}/{r}/pulls/42 returns it; overrides take the
+// restPullRequest options (e.g. `headOwner` for a fork, `mergedAt` for a merge).
 function livePr(overrides = {}) {
-  return {
-    state: "OPEN", headRefName: "contributor-branch", headRefOid: HEAD, baseRefName: "dev", baseRefOid: BASE,
-    isCrossRepository: false, headRepository: { name: "r" }, maintainerCanModify: true, mergedAt: null,
-    url: "https://github.com/o/r/pull/42", ...overrides,
-  };
+  return restPullRequest({
+    owner: "autarchy-ai", name: "ground-control", number: 42,
+    headRefName: "contributor-branch", headRefOid: HEAD, baseRefName: "dev", baseRefOid: BASE,
+    maintainerCanModify: true, mergeableState: "clean", ...overrides,
+  });
 }
 
 function gitOp(args) {
@@ -71,7 +74,10 @@ function runner(spec = {}) {
   const run = async (command, args) => {
     calls.push([command, args]);
     if (command === "gh") {
-      if (args[0] === "pr" && args[1] === "view") return { stdout: JSON.stringify(s.live) };
+      // GraphQL is exhausted: every GraphQL-backed gh call fails, so remediation must use REST.
+      if (args[1] === "graphql" || args[0] === "pr") {
+        const e = new Error("GraphQL: API rate limit exceeded"); e.stderr = "RATE_LIMITED"; throw e;
+      }
       const method = args.includes("--method") ? args[args.indexOf("--method") + 1] : "GET";
       if (args[0] === "api" && method === "POST") { // comment POST
         if (s.commentThrows) { const e = new Error("comment failed"); e.stderr = "HTTP 403"; throw e; }
@@ -79,6 +85,7 @@ function runner(spec = {}) {
       }
       if (args[0] === "api") { // reads
         const path = args.find((a) => a.startsWith("/repos/")) ?? "";
+        if (/\/pulls\/42$/.test(path)) return { stdout: JSON.stringify(s.live) };
         if (path.includes("/reviews")) return { stdout: JSON.stringify(s.reviews) };
         return { stdout: JSON.stringify(s.existingComments) }; // GET comments (idempotency)
       }
@@ -134,7 +141,7 @@ function runner(spec = {}) {
     contextResolver: async () => ({ status: s.contextStatus, workflow: { base_branch: s.baseBranch, completion_command: "make mcp-test", policy_command: "make policy" } }),
     permissionResolver: async () => s.permission,
   };
-  return { calls, run: (input) => runRemediatePullRequest(input, injections), calls_ref: calls };
+  return { calls, run: (input) => runRemediatePullRequest(input, injections), run_command: run, calls_ref: calls };
 }
 
 function baseInput(action, overrides = {}) {
@@ -215,23 +222,66 @@ describe("runRemediatePullRequest — identity binding (CAS)", () => {
 
   it("refuses when the PR cross-repository status changed since review", async () => {
     // reviewedIdentity.cross_repository is false; the live PR is now a fork.
-    const r = runner({ live: livePr({ isCrossRepository: true }) });
+    const r = runner({ live: livePr({ headOwner: "fork" }) });
     const out = await r.run(baseInput("sync_base"));
     assert.equal(out.error, "pr_remediation_stale_authorization");
     assertNoMutation(r.calls_ref);
   });
 });
 
+describe("runRemediatePullRequest — REST live read with GraphQL exhausted (issue #1586)", () => {
+  it("maps the REST pull request onto the live identity the safety checks compare", async () => {
+    const r = runner({ live: livePr({ headOwner: "fork", maintainerCanModify: true }) });
+    const out = await readLivePullRequest(REPO_ROOT, "autarchy-ai", "ground-control", 42, r.run_command);
+    assert.deepEqual(out.live, {
+      state: "OPEN", head_ref: "contributor-branch", head_oid: HEAD, base_ref: "dev", base_oid: BASE,
+      cross_repository: true, head_repository_deleted: false, maintainer_can_modify: true, merged_at: null,
+      url: "https://github.com/autarchy-ai/ground-control/pull/42",
+    });
+  });
+
+  it("completes sync_base while every GraphQL-backed gh call fails", async () => {
+    const r = runner({ ancestor: false });
+    const out = await r.run(baseInput("sync_base"));
+    assert.equal(out.ok, true);
+    assert.equal(out.outcome, "merged_clean");
+  });
+
+  it("refuses a merged pull request without mutating", async () => {
+    const r = runner({ live: livePr({ mergedAt: "2026-09-13T00:00:00Z" }) });
+    const out = await r.run(baseInput("sync_base"));
+    assert.equal(out.error, "pr_remediation_pr_not_open");
+    assert.equal(out.pr_state, "MERGED");
+    assertNoMutation(r.calls_ref);
+  });
+
+  it("refuses a closed pull request without mutating", async () => {
+    const r = runner({ status: STAGED, ancestor: true, live: livePr({ state: "CLOSED" }) });
+    const out = await r.run(publishInput());
+    assert.equal(out.error, "pr_remediation_pr_not_open");
+    assert.equal(out.pr_state, "CLOSED");
+    assertNoMutation(r.calls_ref);
+  });
+
+  it("refuses when the REST pull request cannot be read", async () => {
+    const r = runner({ live: { message: "Not Found" } });
+    const out = await r.run(baseInput("sync_base"));
+    assert.equal(out.error, "pr_remediation_pr_unavailable");
+    assertNoMutation(r.calls_ref);
+  });
+});
+
 describe("runRemediatePullRequest — fork / branch access", () => {
   it("refuses in-place remediation of a fork (cross-repository) PR — no mutation", async () => {
-    const r = runner({ live: livePr({ isCrossRepository: true, maintainerCanModify: true }) });
+    const r = runner({ live: livePr({ headOwner: "fork", maintainerCanModify: true }) });
     const out = await r.run(baseInput("sync_base", { reviewedIdentity: reviewedIdentity({ cross_repository: true }) }));
     assert.equal(out.error, "pr_remediation_fork_pr_unsupported");
     assertNoMutation(r.calls_ref);
   });
 
   it("refuses fork remediation even when the fork head repository is gone", async () => {
-    const r = runner({ live: livePr({ isCrossRepository: true, headRepository: null }) });
+    // REST returns a deleted fork's head.repo as null; that must still read as cross-repository.
+    const r = runner({ live: livePr({ headRepoDeleted: true }) });
     const out = await r.run(baseInput("publish", { reviewedIdentity: reviewedIdentity({ cross_repository: true }), commitMessage: "fix" }));
     assert.equal(out.error, "pr_remediation_fork_pr_unsupported");
     assertNoMutation(r.calls_ref);

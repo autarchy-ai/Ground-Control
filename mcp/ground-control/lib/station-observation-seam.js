@@ -6,7 +6,7 @@
 
 import { buildStationObservationObligationId } from "./execution-obligation-v2.js";
 import { getOwnerRepo } from "./grc-legacy-compat-3.js";
-import { ensureGitRepo } from "./grc-legacy-compat-4.js";
+import { ensureGitRepo, readTrustedExecutionObligationState } from "./grc-legacy-compat-4.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { readPriorCodexReviewPrePushCycleCount } from "./codex-verify-cap.js";
 import { readPriorTestQualityReviewCycleCount } from "./test-quality-runner.js";
@@ -26,6 +26,15 @@ export const REVIEW_STATION_BY_REVIEWER = Object.freeze({
   "test-quality": "test_quality_review",
 });
 
+const DEFAULT_LEDGER_DEPS = Object.freeze({
+  readContext: getRepoGroundControlContext,
+  resolveLedgerTarget: _resolveLedgerTarget,
+  resolveLogicalCycle: _resolveLogicalCycle,
+  readObligationState: readTrustedExecutionObligationState,
+  postOpened: postStationObservationOpened,
+  postEscalation: postStationObservationEscalation,
+});
+
 /**
  * Run one review station through its bounded re-attempts, keeping the obligation ledger honest.
  *
@@ -40,11 +49,12 @@ export async function _runStationWithObservationLedger({
   issueNumber,
   invokeReview,
   signal,
+  deps = DEFAULT_LEDGER_DEPS,
 }) {
   const stationId = REVIEW_STATION_BY_REVIEWER[reviewer];
   let context = null;
   try {
-    context = await getRepoGroundControlContext(repoPath);
+    context = await deps.readContext(repoPath);
   } catch {
     // Configuration unavailable falls back to the canonical default rather than failing the
     // review: retry depth is an operational knob, not a gate.
@@ -53,16 +63,17 @@ export async function _runStationWithObservationLedger({
     context?.workflow?.[REVIEWER_CONFIG_BLOCK[reviewer]],
   );
 
-  // Resolved lazily, on the first attempt that renders no verdict: the common path is a station
-  // that works, and it should not pay a GitHub round-trip for a ledger it never writes to.
-  //
   // Derived from the durable cycle markers, which a non-verdict attempt never writes — so it is
-  // stable across every re-attempt of the same logical cycle, and repeated failures update one
-  // obligation instead of opening one per transport attempt.
-  let logicalCycle = null;
-  let obligationId = null;
-  let ledger = null;
-  let observationOpened = false;
+  // stable across every re-attempt of the same logical cycle, and across separate invocations of
+  // the cycle tool, and repeated failures update one obligation instead of opening one per try.
+  //
+  // Read before the first attempt, not lazily on the first failure (issue #1582). An obligation
+  // opened by an EARLIER invocation is invisible to this one's in-memory state, so a verdict
+  // rendered here posted no `reobserved` and the obligation stranded. The durable ledger is the
+  // only record that spans invocations, so the wrapper must consult it before it can render.
+  const recovered = await _recoverOpenObservation({ repoPath, issueNumber, reviewer, stationId, deps });
+  let { ledger, logicalCycle, obligationId } = recovered;
+  let observationOpened = recovered.open;
 
   const run = await runStationWithNonVerdictRetry({
     stationId,
@@ -70,8 +81,9 @@ export async function _runStationWithObservationLedger({
     signal,
     invoke: (attemptOrdinal) =>
       invokeReview({
-        // Only a re-attempt carries the pending obligation: the first attempt has nothing open,
-        // and passing it anyway would post a resolution for an obligation that never existed.
+        // Carried whenever this station's obligation for this logical cycle is open — whether an
+        // earlier invocation opened it or an earlier attempt in this one did. Never carried when
+        // nothing is open: a resolution for an obligation that never existed is not evidence.
         stationObservation: observationOpened
           ? { obligationId, stationId, logicalCycle }
           : null,
@@ -80,11 +92,11 @@ export async function _runStationWithObservationLedger({
     onAttempt: async (attempt) => {
       if (attempt.station_result !== "not_evaluable") return;
       if (observationOpened) return;
-      ledger = await _resolveLedgerTarget(repoPath, ledger);
+      ledger = await deps.resolveLedgerTarget(repoPath, ledger);
       if (ledger == null) return;
-      logicalCycle = await _resolveLogicalCycle(ledger, issueNumber, reviewer);
+      logicalCycle = await deps.resolveLogicalCycle(ledger, issueNumber, reviewer);
       obligationId = buildStationObservationObligationId({ stationId, logicalCycle });
-      const opened = await postStationObservationOpened({
+      const opened = await deps.postOpened({
         ...ledger,
         issueNumber,
         stationId,
@@ -105,9 +117,9 @@ export async function _runStationWithObservationLedger({
     && run.attempts.every((a) => a.station_result === "not_evaluable");
 
   if (exhaustedNonVerdict && observationOpened) {
-    ledger = await _resolveLedgerTarget(repoPath, ledger);
+    ledger = await deps.resolveLedgerTarget(repoPath, ledger);
     if (ledger != null) {
-      await postStationObservationEscalation({
+      await deps.postEscalation({
         ...ledger,
         issueNumber,
         stationId,
@@ -119,6 +131,35 @@ export async function _runStationWithObservationLedger({
   }
 
   return { ...run, stationId, logicalCycle, obligationId, observationOpened, exhaustedNonVerdict };
+}
+
+/**
+ * This station's obligation for the upcoming logical cycle, if the durable ledger holds it open.
+ *
+ * Fails open to "nothing open": an unreadable thread must not stop a working station from rendering
+ * its verdict. The cost of that direction is bounded — a verdict posted without a resolution is
+ * exactly the state gc_reconcile_station_observation recovers from the durable records.
+ */
+async function _recoverOpenObservation({ repoPath, issueNumber, reviewer, stationId, deps }) {
+  const none = { ledger: null, logicalCycle: null, obligationId: null, open: false };
+  const ledger = await deps.resolveLedgerTarget(repoPath, null);
+  if (ledger == null) return none;
+  const logicalCycle = await deps.resolveLogicalCycle(ledger, issueNumber, reviewer);
+  const obligationId = buildStationObservationObligationId({ stationId, logicalCycle });
+  let state;
+  try {
+    state = await deps.readObligationState(ledger.repoRoot, ledger.owner, ledger.name, issueNumber);
+  } catch {
+    return { ...none, ledger, logicalCycle };
+  }
+  const open = state?.ok === true && (state.open_obligations ?? []).some(
+    (o) => o.obligation_id === obligationId
+      && o.kind === "station_observation"
+      && o.schema_version === 2
+      && o.station === stationId
+      && o.cycle === logicalCycle,
+  );
+  return { ledger, logicalCycle, obligationId: open ? obligationId : null, open };
 }
 
 async function _resolveLedgerTarget(repoPath, cached) {

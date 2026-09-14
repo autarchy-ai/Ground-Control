@@ -21,7 +21,7 @@ for code+docs comprehension when an agent wants it, it is not required.
 
 ## What the MCP server does
 
-The surviving tool surface (32 tools, down from 215) is exactly what the
+The surviving tool surface (33 tools, down from 215) is exactly what the
 `/implement` workflow needs, and every tool operates over `gh`/`git`/files, no
 backend:
 

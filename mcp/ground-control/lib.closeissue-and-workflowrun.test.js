@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { restLinkedPullRequestRoutes } from "./github-rest.test-helpers.js";
+import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
 
 // ---------------------------------------------------------------------------
 // gc_assert_traceability_reconciled (issue #1058)
@@ -115,7 +116,7 @@ describe("runCloseIssueAfterMerge", () => {
     try {
       await withShimPath(shim.binDir, async () => {
         const { runCloseIssueAfterMerge } = await import("./lib.js");
-        const r = await runCloseIssueAfterMerge({ repoPath: shim.repoDir, issueNumber });
+        const r = await runCloseIssueAfterMerge({ repoPath: shim.repoDir, issueNumber }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assertResult(r);
       });
     } finally {
@@ -128,7 +129,7 @@ describe("runCloseIssueAfterMerge", () => {
     try {
       const { runCloseIssueAfterMerge } = await import("./lib.js");
       await assert.rejects(
-        runCloseIssueAfterMerge({ repoPath: shim.repoDir, issueNumber: 0 }),
+        runCloseIssueAfterMerge({ repoPath: shim.repoDir, issueNumber: 0 }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) }),
         /positive integer issue_number/,
       );
     } finally {
@@ -245,7 +246,7 @@ describe("runCloseIssueAfterMerge", () => {
       await withShimPath(shim.binDir, async () => {
         const { runCloseIssueAfterMerge } = await import("./lib.js");
         // Caller passes PR #99, which is NOT one of issue 1058's linked PRs.
-        const r = await runCloseIssueAfterMerge({ repoPath: shim.repoDir, issueNumber: 1058, prNumber: 99 });
+        const r = await runCloseIssueAfterMerge({ repoPath: shim.repoDir, issueNumber: 1058, prNumber: 99 }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(r.ok, false);
         assert.equal(r.error, "close_pr_not_linked_to_issue");
         assert.deepEqual(r.linked_pr_numbers, [42]);
@@ -272,7 +273,7 @@ describe("runCloseIssueAfterMerge", () => {
     try {
       await withShimPath(shim.binDir, async () => {
         const { runCloseIssueAfterMerge } = await import("./lib.js");
-        const r = await runCloseIssueAfterMerge({ repoPath: shim.repoDir, issueNumber: 1058, prNumber: 42 });
+        const r = await runCloseIssueAfterMerge({ repoPath: shim.repoDir, issueNumber: 1058, prNumber: 42 }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(r.ok, true);
         assert.equal(r.already_closed, false);
         assert.equal(r.pr_number, 42);

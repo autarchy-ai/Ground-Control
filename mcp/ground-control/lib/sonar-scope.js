@@ -14,7 +14,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ghRestJson } from "./github-rest.js";
+import { fetchCommitCheckRollup, ghRestJson } from "./github-rest.js";
 import { ciStationResult } from "./ci-conclusion.js";
 import { parseGroundControlYaml } from "./ground-control-config.js";
 
@@ -78,7 +78,7 @@ function text(value) {
 }
 
 /**
- * Normalize one `gh pr view --json statusCheckRollup` entry.
+ * Normalize one `statusCheckRollup` entry (see `fetchCommitCheckRollup`).
  *
  * Display names keep their original casing because they are shown to an
  * operator; status and conclusion are lowercased because they are compared.
@@ -200,28 +200,13 @@ export function buildSonarScopeEvidence({ repoSlug, prNumber, headSha, projectKe
  */
 export async function fetchSonarProducerEvidence({ repoRoot, repoSlug, prNumber, execFile }) {
   // REST only (issue #1584): `gh pr view --json statusCheckRollup` spent the shared GraphQL budget.
-  // The head sha comes from the pull request, check runs and legacy status contexts from that
-  // commit, and each Actions check run's workflow name from its run, so the selector still sees the
-  // names it matched against before.
+  // The head sha comes from the pull request and the rollup from that commit, with each Actions
+  // check run's workflow name, so the selector still sees the names it matched against before.
   try {
-    const rest = (path, paginate = false) => ghRestJson(repoRoot, `/repos/${repoSlug}${path}`, { execFile, paginate });
-    const pr = await rest(`/pulls/${prNumber}`);
+    const pr = await ghRestJson(repoRoot, `/repos/${repoSlug}/pulls/${prNumber}`, { execFile });
     const headSha = text(pr?.head?.sha);
     if (headSha === null) return null;
-    const pages = await rest(`/commits/${headSha}/check-runs?per_page=100`, true);
-    const checkRuns = pages.flatMap((page) => (Array.isArray(page?.check_runs) ? page.check_runs : []));
-    const status = await rest(`/commits/${headSha}/status`);
-    const workflowNames = await resolveWorkflowNames(rest, checkRuns);
-    const rollup = [
-      ...checkRuns.map((run) => ({
-        name: run.name,
-        workflowName: workflowNames.get(actionsRunId(run)) ?? null,
-        status: run.status,
-        conclusion: run.conclusion,
-        completedAt: run.completed_at,
-      })),
-      ...(Array.isArray(status?.statuses) ? status.statuses : []).map((entry) => ({ context: entry.context, state: entry.state })),
-    ];
+    const rollup = await fetchCommitCheckRollup(repoRoot, repoSlug, headSha, { execFile, withWorkflowNames: true });
     return {
       headSha,
       entries: rollup.map(normalizeCheckRollupEntry).filter((entry) => entry !== null),
@@ -229,22 +214,4 @@ export async function fetchSonarProducerEvidence({ repoRoot, repoSlug, prNumber,
   } catch {
     return null;
   }
-}
-
-function actionsRunId(checkRun) {
-  const match = /\/actions\/runs\/(\d+)\//.exec(String(checkRun?.details_url ?? ""));
-  return match ? match[1] : null;
-}
-
-async function resolveWorkflowNames(rest, checkRuns) {
-  const names = new Map();
-  for (const runId of new Set(checkRuns.map(actionsRunId).filter(Boolean))) {
-    try {
-      const run = await rest(`/actions/runs/${runId}`);
-      if (text(run?.name) !== null) names.set(runId, run.name);
-    } catch {
-      // A missing workflow name only narrows the selector to check names; it never widens it.
-    }
-  }
-  return names;
 }

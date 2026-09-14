@@ -30,7 +30,7 @@ export async function ensureGitRepo(repoPath) {
     throw new Error(`repo_path is not a valid Git repository: ${formatCommandFailure("git", error)}`);
   }
 }
-async function captureImplementWorkspaceAuthorization(cwd) {
+export async function captureImplementWorkspaceAuthorization(cwd) {
   const { stdout } = await execFile("git", ["-C", cwd, "rev-parse", GIT_SHOW_TOPLEVEL]);
   const workspaceRoot = realpathSync(stdout.trim());
   const identity = await readGitIdentity(workspaceRoot);
@@ -201,8 +201,10 @@ export async function assertSafeImplementCheckoutConfiguration(repoRoot) {
     );
   }
 }
-export async function readTrustedExecutionObligationState(repoRoot, owner, name, issueNumber) {
-  const comments = await readIssueCommentsWithAuthors(repoRoot, owner, name, issueNumber);
+// `preread` lets a caller that must bind further decisions to the same thread snapshot (issue #1582)
+// evaluate the ledger over the comments it already holds instead of a second, possibly newer, read.
+export async function readTrustedExecutionObligationState(repoRoot, owner, name, issueNumber, preread = null) {
+  const comments = preread ?? await readIssueCommentsWithAuthors(repoRoot, owner, name, issueNumber);
   const markerComments = comments
     .map((comment) => ({
       comment,
@@ -377,6 +379,9 @@ function _absorbReviewThreadPage(threads, wanted, result) {
   }
 }
 
+// GraphQL by necessity (issue #1586): REST review comments carry no review-thread
+// node id, and `resolveReviewThread` accepts only that id, so there is no REST
+// path from a comment to the thread gc_codex_verify_finding resolves.
 export async function enrichCommentsWithThreadIds({ repoRoot, owner, name, prNumber, commentIds }) {
   if (!commentIds || commentIds.length === 0) {
     return new Map();

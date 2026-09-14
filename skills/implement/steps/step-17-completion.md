@@ -24,6 +24,11 @@ For both phases, `gc_assert_completion` re-reads the trusted
 `completion_open_execution_obligations` while any real problem remains open.
 Caller summaries or cached arrays cannot override this gate. Repair and verify
 every obligation, record its resolution, then retry completion.
+A station observation whose verdict is already on the thread is listed in
+`recoverable_station_observations`, and `next_action` is
+`reconcile_station_observations_then_retry` when nothing else is open. Resolve
+each entry with `gc_reconcile_station_observation` (its `obligation_id` and
+`findings_record_url`), then retry (issue #1582).
 
 **Precondition (post_merge only)**: the requirement `status:` transition (Step 15) and `## Traceability` reconciliation (Step 16) must already be part of the merged delivery PR — they were committed pre-publish (issue #1541), not in Phase E. Phase E makes **no** requirement-file edits: do **not** manufacture a placeholder requirement-file edit, and do **not** run the completion command, the policy suite, the pre-push reviews, or any other implementation verification for Phase E — `finalize` runs no `verify` gate (issue #1543). The tool instead reads the merged requirement files at the immutable merge revision and refuses if their state does not match; the pre-merge readiness record names only proposed state.
 

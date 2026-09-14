@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { CODEX_REVIEW_PREPUSH_HARD_CAP, buildCodexReviewPrePushCycleMarker, runCodexReview } from "./lib.js";
+import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
 
 async function withShimPath(binDir, fn) {
   const oldPath = process.env.PATH;
@@ -137,7 +138,7 @@ process.exit(2);
         const result = await runCodexReview({
           repoPath: shim.repoDir,
           uncommitted: true,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.ok, false);
         assert.equal(result.error, "codex_review_prepush_cap_reached");
         assert.equal(result.prior_cycles, 3);
@@ -188,7 +189,7 @@ process.exit(2);
           result = await runCodexReview({
             repoPath: shim.repoDir,
             uncommitted: true,
-          });
+          }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         } catch (err) {
           thrown = err;
         }
@@ -268,7 +269,7 @@ process.exit(2);
         const result = await runCodexReview({
           repoPath: shim.repoDir,
           uncommitted: true,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.ok, false);
         assert.equal(result.error, "codex_review_prepush_cap_reached");
         assert.equal(result.prior_cycles, 3);

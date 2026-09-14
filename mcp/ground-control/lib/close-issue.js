@@ -7,8 +7,8 @@
 import { TO_CAMEL } from "./field-mapping.js";
 import { extractGhErrorMessage } from "./grc-legacy-compat-2.js";
 import { fetchPullRequest, listIssueCrossReferencedPullNumbers } from "./github-rest.js";
-import { getOwnerRepo, readIssueCommentBodies, readIssueCommentsWithAuthors, resolveExecutionObligationTrust, validateSourceDevStartGate } from "./grc-legacy-compat-3.js";
-import { ensureGitRepo } from "./grc-legacy-compat-4.js";
+import { readIssueCommentBodies, readIssueCommentsWithAuthors, resolveExecutionObligationTrust, validateSourceDevStartGate } from "./grc-legacy-compat-3.js";
+import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { devStartGateConfigFailure, devStartGateFailure, readDevStartPlanFields, readSourceBearingDecision, validateNonSourceDevStartGate } from "./grc-legacy-compat.js";
 import { buildCodexReviewCycleMarker, normalizeDevStartGateConfig, parseCodexReviewCycleMarkers } from "./repo-context-2.js";
 import { execFile } from "./runtime-primitives.js";
@@ -270,7 +270,10 @@ export async function readTrustedMergeStateOverride(repoRoot, owner, name, issue
   if (!authorizing) return { authorized: false, reason: null };
   return { authorized: true, reason: authorizing.body.trim().slice(0, 300) };
 }
-export async function runCloseIssueAfterMerge({ repoPath, issueNumber, prNumber = null }) {
+export async function runCloseIssueAfterMerge(
+  { repoPath, issueNumber, prNumber = null },
+  { workspaceAuthorizationResolver = undefined } = {},
+) {
   if (issueNumber == null || !Number.isInteger(issueNumber) || issueNumber <= 0) {
     throw new Error("gc_close_issue_after_merge requires a positive integer issue_number");
   }
@@ -278,8 +281,11 @@ export async function runCloseIssueAfterMerge({ repoPath, issueNumber, prNumber 
     throw new Error("gc_close_issue_after_merge pr_number must be a positive integer when supplied");
   }
 
-  const repoRoot = await ensureGitRepo(repoPath);
-  const { owner, name } = await getOwnerRepo(repoRoot);
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    return issueRepositoryNotAuthorized("close", repository, { issue_number: issueNumber });
+  }
+  const { repoRoot, owner, name } = repository;
 
   const resolved = await resolvePrForClose({ repoRoot, owner, name, issueNumber, prNumber });
   if (resolved.earlyReturn) return resolved.earlyReturn;

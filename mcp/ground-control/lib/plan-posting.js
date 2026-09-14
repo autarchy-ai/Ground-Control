@@ -8,8 +8,9 @@ import { validateDevStartPlanGate } from "./close-issue.js";
 import { parseGroundControlYaml } from "./ground-control-config.js";
 import { buildFinalReportMarker, renderCiStatus, renderSonarStatus, validateDocumentationOutcome } from "./doc-coverage.js";
 import { detectSensitiveBodyContent } from "./grc-legacy-compat-2.js";
-import { getOwnerRepo, postPhaseMarker } from "./grc-legacy-compat-3.js";
-import { ensureGitRepo, readCompletedPhases } from "./grc-legacy-compat-4.js";
+import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
+import { postPhaseMarker } from "./grc-legacy-compat-3.js";
+import { readCompletedPhases } from "./grc-legacy-compat-4.js";
 import { evaluatePhasePrerequisite } from "./grc-legacy-compat.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { FINAL_REPORT_PLAIN_ENGLISH_OUTCOME_MAX, FINAL_REPORT_REVIEW_SUMMARY_MAX, FINAL_REPORT_SUMMARY_MAX, GITHUB_ISSUE_COMMENT_BODY_MAX } from "./repo-vocabulary.js";
@@ -22,7 +23,7 @@ export async function runPostImplementationPlan({
   planBody,
   override = false,
   overrideReason = null,
-}) {
+}, { workspaceAuthorizationResolver = undefined } = {}) {
   if (issueNumber == null || !Number.isInteger(issueNumber) || issueNumber <= 0) {
     throw new Error("gc_post_implementation_plan requires a positive integer issue_number");
   }
@@ -30,8 +31,11 @@ export async function runPostImplementationPlan({
     throw new Error("gc_post_implementation_plan requires a non-empty plan_body");
   }
 
-  const repoRoot = await ensureGitRepo(repoPath);
-  const { owner, name } = await getOwnerRepo(repoRoot);
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    return issueRepositoryNotAuthorized("plan", repository, { issue_number: issueNumber });
+  }
+  const { repoRoot, owner, name } = repository;
 
   // Prerequisite check: preflight must have run for this issue. Override is
   // available for the same reason as the codex-review cap override — the user

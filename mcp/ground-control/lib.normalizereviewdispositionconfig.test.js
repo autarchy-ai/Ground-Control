@@ -18,6 +18,7 @@ import {
   runTestQualityReviewCycle,
   verifyAutoDispositionGrant,
 } from "./lib.js";
+import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
 
 async function withShimPath(binDir, fn) {
   const oldPath = process.env.PATH;
@@ -367,7 +368,10 @@ process.exit(2);
     });
     try {
       await withShimPath(repo.binDir, async () => {
-        const r = await verifyAutoDispositionGrant({ repoPath: repo.repoDir, issueNumber: 7, reviewer: "codex" });
+        const r = await verifyAutoDispositionGrant(
+          { repoPath: repo.repoDir, issueNumber: 7, reviewer: "codex" },
+          { workspaceAuthorizationResolver: workspaceAuthorizationFor(repo.repoDir) },
+        );
         assert.equal(r.ok, true);
         assert.equal(r.authorized, true);
         assert.equal(r.grant_number, 1);
@@ -387,7 +391,10 @@ process.exit(2);
     });
     try {
       await withShimPath(repo.binDir, async () => {
-        const r = await verifyAutoDispositionGrant({ repoPath: repo.repoDir, issueNumber: 7, reviewer: "codex" });
+        const r = await verifyAutoDispositionGrant(
+          { repoPath: repo.repoDir, issueNumber: 7, reviewer: "codex" },
+          { workspaceAuthorizationResolver: workspaceAuthorizationFor(repo.repoDir) },
+        );
         assert.equal(r.ok, true);
         assert.equal(r.authorized, false);
         assert.equal(r.reason, "auto_grant_already_consumed");
@@ -401,7 +408,10 @@ process.exit(2);
     const repo = makeRepo({ enabled: true, mode: "shadow", comments: [grantComment(7, "codex", 1)] });
     try {
       await withShimPath(repo.binDir, async () => {
-        const r = await verifyAutoDispositionGrant({ repoPath: repo.repoDir, issueNumber: 7, reviewer: "codex" });
+        const r = await verifyAutoDispositionGrant(
+          { repoPath: repo.repoDir, issueNumber: 7, reviewer: "codex" },
+          { workspaceAuthorizationResolver: workspaceAuthorizationFor(repo.repoDir) },
+        );
         assert.equal(r.ok, true);
         assert.equal(r.authorized, false);
         assert.equal(r.reason, "review_disposition_mode_not_authoritative");
@@ -415,7 +425,10 @@ process.exit(2);
     const repo = makeRepo({ enabled: false, comments: [grantComment(7, "codex", 1)] });
     try {
       await withShimPath(repo.binDir, async () => {
-        const r = await verifyAutoDispositionGrant({ repoPath: repo.repoDir, issueNumber: 7, reviewer: "codex" });
+        const r = await verifyAutoDispositionGrant(
+          { repoPath: repo.repoDir, issueNumber: 7, reviewer: "codex" },
+          { workspaceAuthorizationResolver: workspaceAuthorizationFor(repo.repoDir) },
+        );
         assert.equal(r.ok, true);
         assert.equal(r.authorized, false);
         assert.equal(r.reason, "review_disposition_disabled");

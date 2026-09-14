@@ -2,7 +2,7 @@
 
 This is the current enforcement inventory after the #1500 MCP-only re-platform
 and the issue #1303 reconciliation. It covers repository policy, local hooks,
-GitHub Actions and protection, `/implement`, and all 32 registered MCP tools.
+GitHub Actions and protection, `/implement`, and all 33 registered MCP tools.
 Historical ADR text is not evidence that a gate still exists.
 
 ## Placement doctrine
@@ -113,6 +113,18 @@ privileged operation behind the same repository binding. Callers cannot bypass
 repository identity, issue/PR scope, or public-text scrubbing unless a row names
 an explicit recorded human override.
 
+Repository identity means the MCP launch workspace, not the caller's `repo_path`.
+Every tool that writes an issue or pull-request record, creates or closes an
+issue, or reads an issue thread with the host's GitHub credentials refuses any
+other checkout with `<tool>_repo_not_authorized` before its first GitHub call
+(issue #1583): `gc_post_decision_record`, `gc_post_implementation_plan`,
+`gc_post_final_report`, `gc_assert_completion`, `gc_close_issue_after_merge`,
+`gc_codex_architecture_preflight`, `gc_codex_review`, `gc_codex_review_cycle`,
+`gc_test_quality_review`, `gc_test_quality_review_cycle`,
+`gc_codex_verify_finding`, `gc_review_cap_disposition`, `gc_create_github_issue`,
+and `gc_get_issue_thread`. The branch, obligation, synchronization, watcher,
+requirement-scope, and PR-review tools were already bound the same way.
+
 | Tool | Role | Invariant, input, bypass/failure, and placement history |
 |---|---|---|
 | `gc_get_repo_ground_control_context` | evidence | Validated checkout config is the workflow input; invalid/mismatched config refuses. Replaces driver-hardcoded project settings. |
@@ -135,6 +147,7 @@ an explicit recorded human override.
 | `gc_post_decision_record` | gate/support | Renders and posts fix/wontfix/not-applicable decisions with bounded rationale. `wontfix` is not self-authorizing. |
 | `gc_record_execution_obligation` | gate/support | Persists a real surfaced finding/repair obligation on the issue thread; it cannot be silently dropped between attempts. |
 | `gc_authorize_execution_obligation_wontfix` | gate/support | Converts an obligation only from explicit user authorization bound to that record. Missing/ambiguous authority refuses. |
+| `gc_reconcile_station_observation` | gate/support | Resolves only a `station_observation` obligation, only as `reobserved`, and only when trusted records on the thread prove its station's verdict and cycle marker for that cycle followed the opening. No disposition or claim is accepted. |
 | `gc_render_pr_body` | gate/evidence | Renders canonical sections and derives Release Please versus fragment mode from the target repo. Caller-selected mode mismatch refuses. |
 | `gc_synchronize_implement_branch` | gate/support | Merges the latest integration base into the feature branch and rechecks the tree under OID/lease bounds. Conflicts return to the agent. |
 | `gc_create_synchronized_implement_pr` | gate/support | Creates/updates only after synchronization evidence and title/body validation. No direct unsynchronized PR path. |

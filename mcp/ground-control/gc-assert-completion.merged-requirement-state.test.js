@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { runAssertCompletion } from "./lib.js";
 import { restPullRequest } from "./github-rest.test-helpers.js";
+import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
 
 function reqFile({ id, status, traceability = [] }) {
   const trace = traceability.length > 0 ? ["", "## Traceability", "", ...traceability] : [];
@@ -100,7 +101,7 @@ describe("runAssertCompletion post_merge — merged requirement-state verificati
       const r = await withPath(bin, () => runAssertCompletion({
         ...BASE_INPUT, repoPath: repo.dir,
         requirements: [{ uid: "GC-X001", title: "Title of GC-X001", status: "ACTIVE" }],
-      }));
+      }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(repo.dir) }));
       assert.equal(r.ok, false);
       assert.equal(r.error, "completion_requirement_state_unverified");
       assert.equal(r.final_report, null);
@@ -125,7 +126,7 @@ describe("runAssertCompletion post_merge — merged requirement-state verificati
       const r = await withPath(bin, () => runAssertCompletion({
         ...BASE_INPUT, repoPath: repo.dir,
         requirements: [{ uid: "GC-X001", title: "caller-title", status: "ACTIVE" }],
-      }));
+      }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(repo.dir) }));
       assert.equal(r.ok, true, JSON.stringify(r));
       assert.ok(r.final_report != null);
     } finally {
@@ -141,7 +142,7 @@ describe("runAssertCompletion post_merge — merged requirement-state verificati
     try {
       const r = await withPath(bin, () => runAssertCompletion({
         ...BASE_INPUT, repoPath: repo.dir, requirements: [],
-      }));
+      }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(repo.dir) }));
       assert.equal(r.ok, false);
       assert.equal(r.error, "completion_scope_mismatch");
       assert.deepEqual(r.missing_from_caller, ["GC-X001"]);
@@ -161,7 +162,7 @@ describe("runAssertCompletion post_merge — merged requirement-state verificati
       const r = await withPath(bin, () => runAssertCompletion({
         ...BASE_INPUT, repoPath: repo.dir,
         requirements: [{ uid: "GC-X001", title: "t", status: "ACTIVE" }],
-      }));
+      }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(repo.dir) }));
       assert.equal(r.ok, true, JSON.stringify(r));
       assert.ok(r.final_report != null);
     } finally {
@@ -180,7 +181,7 @@ describe("runAssertCompletion post_merge — merged requirement-state verificati
         requirements: [{ uid: "GC-X001", title: "t", status: "ACTIVE" }],
         // A compromised caller cannot bypass by flipping a DTO field.
         override: true, overrideReason: "attacker-supplied reason",
-      }));
+      }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(repo.dir) }));
       assert.equal(r.ok, false);
       assert.equal(r.error, "completion_requirement_state_unverified");
       assert.equal(r.final_report, null);

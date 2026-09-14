@@ -4,6 +4,7 @@
 // (docs/CODING_STANDARDS.md, Sonar S104). It contained no mutual recursion, so it was
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
+import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { runCodexReview } from "./codex-review-runner.js";
 import { runPostDecisionRecord } from "./decision-records.js";
 import { _statusForReviewerAction, buildAutoFixDecisionFindings, normalizeReviewCycleNextAction, reviewCycleFindings, summarizeReviewFindings } from "./knowledge-capture.js";
@@ -16,6 +17,7 @@ async function _runReviewCycleShared({
   reviewResult,
   repoPath,
   issueNumber,
+  workspaceAuthorizationResolver,
 }) {
   // Non-ok review results pass straight through; the cycle tool does
   // not paper over reviewer boundary errors with a decision record. The
@@ -89,7 +91,7 @@ async function _runReviewCycleShared({
         && reviewResult.architectural_read.trim() !== ""
         ? { architectural_read: reviewResult.architectural_read }
         : {}),
-    });
+    }, { workspaceAuthorizationResolver });
   } catch (e) {
     return {
       ok: false,
@@ -134,6 +136,84 @@ async function _runReviewCycleShared({
     ...diffFields,
   };
 }
+function _reviewCycleInputError(repoPath, issueNumber) {
+  if (typeof repoPath !== "string" || repoPath.length === 0) return "repo_path is required";
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) return "issue_number must be a positive integer";
+  return null;
+}
+
+// Shared cycle entry: input validation, the launch-workspace pin (issue #1583), and the opt-in
+// auto-grant path (gc_review_cap_disposition). Returns `{ earlyReturn }` or the authorized checkout
+// plus the effective cap override. The existing human override_cap path is untouched.
+async function _prepareReviewCycle({
+  reviewer,
+  errorPrefix,
+  repoPath,
+  issueNumber,
+  extraInputError = null,
+  overrideCap,
+  overrideReason,
+  autoGrant,
+  workspaceAuthorizationResolver,
+}) {
+  const inputError = _reviewCycleInputError(repoPath, issueNumber) ?? extraInputError;
+  if (inputError) {
+    return { earlyReturn: { ok: false, error: `${errorPrefix}_input_invalid`, message: inputError } };
+  }
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    return {
+      earlyReturn: {
+        ...issueRepositoryNotAuthorized(errorPrefix, repository, { issue_number: issueNumber }),
+        reviewer,
+        status: "post_failed",
+      },
+    };
+  }
+  const authorizedRepoPath = repository.repoRoot;
+  if (autoGrant !== true) {
+    return { authorizedRepoPath, overrideCap, overrideReason };
+  }
+  const grant = await verifyAutoDispositionGrant(
+    { repoPath: authorizedRepoPath, issueNumber, reviewer },
+    { workspaceAuthorizationResolver },
+  );
+  if (!grant || grant.authorized !== true) {
+    return {
+      earlyReturn: {
+        ok: false,
+        reviewer,
+        error: "auto_grant_unauthorized",
+        message: grant?.reason
+          ? `auto_grant requested but not authorized: ${grant.reason}`
+          : "auto_grant requested but no valid auto-disposition grant exists",
+        next_action: "post_summary_and_escalate_to_user",
+      },
+    };
+  }
+  return {
+    authorizedRepoPath,
+    overrideCap: true,
+    overrideReason: `auto-disposition grant #${grant.grant_number} (gc_review_cap_disposition one_more_cycle for ${reviewer})`,
+  };
+}
+// Every attempt rendered no verdict: report the unobserved station; otherwise record the cycle.
+function _finishReviewCycle({ reviewer, run, authorizedRepoPath, issueNumber, workspaceAuthorizationResolver }) {
+  if (!run.observed && run.exhaustedNonVerdict) {
+    return {
+      ..._decorateUnobservedStation(run.envelope, run),
+      reviewer,
+      status: "post_failed",
+    };
+  }
+  return _runReviewCycleShared({
+    reviewer,
+    reviewResult: run.envelope,
+    repoPath: authorizedRepoPath,
+    issueNumber,
+    workspaceAuthorizationResolver,
+  });
+}
 export async function runCodexReviewCycle({
   repoPath,
   issueNumber,
@@ -143,91 +223,42 @@ export async function runCodexReviewCycle({
   overrideReason = null,
   autoGrant = false,
   signal = undefined,
-}) {
-  if (typeof repoPath !== "string" || repoPath.length === 0) {
-    return {
-      ok: false,
-      error: "codex_review_cycle_input_invalid",
-      message: "repo_path is required",
-    };
-  }
-  if (
-    typeof issueNumber !== "number" ||
-    !Number.isInteger(issueNumber) ||
-    issueNumber <= 0
-  ) {
-    return {
-      ok: false,
-      error: "codex_review_cycle_input_invalid",
-      message: "issue_number must be a positive integer",
-    };
-  }
-  if (uncommitted !== true) {
-    return {
-      ok: false,
-      error: "codex_review_cycle_input_invalid",
-      message:
-        "gc_codex_review_cycle is the pre-push entrypoint only; uncommitted must be true. " +
+}, { workspaceAuthorizationResolver = undefined } = {}) {
+  const prepared = await _prepareReviewCycle({
+    reviewer: "codex",
+    errorPrefix: "codex_review_cycle",
+    repoPath,
+    issueNumber,
+    extraInputError: uncommitted === true
+      ? null
+      : "gc_codex_review_cycle is the pre-push entrypoint only; uncommitted must be true. " +
         "Post-push direct callers should use gc_codex_review with pr_number.",
-    };
-  }
-
-  // Auto-grant path (gc_review_cap_disposition). Only active when the caller
-  // explicitly opts in. The existing human override_cap path is untouched.
-  let effectiveOverrideCap = overrideCap;
-  let effectiveOverrideReason = overrideReason;
-  if (autoGrant === true) {
-    const grant = await verifyAutoDispositionGrant({
-      repoPath,
-      issueNumber,
-      reviewer: "codex",
-    });
-    if (!grant || grant.authorized !== true) {
-      return {
-        ok: false,
-        reviewer: "codex",
-        error: "auto_grant_unauthorized",
-        message: grant?.reason
-          ? `auto_grant requested but not authorized: ${grant.reason}`
-          : "auto_grant requested but no valid auto-disposition grant exists",
-        next_action: "post_summary_and_escalate_to_user",
-      };
-    }
-    effectiveOverrideCap = true;
-    effectiveOverrideReason = `auto-disposition grant #${grant.grant_number} (gc_review_cap_disposition one_more_cycle for codex)`;
-  }
+    overrideCap,
+    overrideReason,
+    autoGrant,
+    workspaceAuthorizationResolver,
+  });
+  if (prepared.earlyReturn) return prepared.earlyReturn;
+  const { authorizedRepoPath } = prepared;
 
   const run = await _runStationWithObservationLedger({
     reviewer: "codex",
-    repoPath,
+    repoPath: authorizedRepoPath,
     issueNumber,
     signal,
     invokeReview: ({ stationObservation }) => runCodexReview({
-      repoPath,
+      repoPath: authorizedRepoPath,
       baseBranch: baseBranch ?? "dev",
       uncommitted: true,
       issueNumber,
-      overrideCap: effectiveOverrideCap,
-      overrideReason: effectiveOverrideReason,
+      overrideCap: prepared.overrideCap,
+      overrideReason: prepared.overrideReason,
       stationObservation,
       signal,
-    }),
+    }, { workspaceAuthorizationResolver }),
   });
 
-  if (!run.observed && run.exhaustedNonVerdict) {
-    return {
-      ..._decorateUnobservedStation(run.envelope, run),
-      reviewer: "codex",
-      status: "post_failed",
-    };
-  }
-
-  return _runReviewCycleShared({
-    reviewer: "codex",
-    reviewResult: run.envelope,
-    repoPath,
-    issueNumber,
-  });
+  return _finishReviewCycle({ reviewer: "codex", run, authorizedRepoPath, issueNumber, workspaceAuthorizationResolver });
 }
 export async function runTestQualityReviewCycle({
   repoPath,
@@ -238,83 +269,39 @@ export async function runTestQualityReviewCycle({
   autoGrant = false,
   model = undefined,
   signal = undefined,
-}) {
-  if (typeof repoPath !== "string" || repoPath.length === 0) {
-    return {
-      ok: false,
-      error: "test_quality_review_cycle_input_invalid",
-      message: "repo_path is required",
-    };
-  }
-  if (
-    typeof issueNumber !== "number" ||
-    !Number.isInteger(issueNumber) ||
-    issueNumber <= 0
-  ) {
-    return {
-      ok: false,
-      error: "test_quality_review_cycle_input_invalid",
-      message: "issue_number must be a positive integer",
-    };
-  }
-
-  // Auto-grant path (gc_review_cap_disposition). Only active when the caller
-  // explicitly opts in. The existing human override_cap path is untouched.
-  let effectiveOverrideCap = overrideCap;
-  let effectiveOverrideReason = overrideReason;
-  if (autoGrant === true) {
-    const grant = await verifyAutoDispositionGrant({
-      repoPath,
-      issueNumber,
-      reviewer: "test-quality",
-    });
-    if (!grant || grant.authorized !== true) {
-      return {
-        ok: false,
-        reviewer: "test-quality",
-        error: "auto_grant_unauthorized",
-        message: grant?.reason
-          ? `auto_grant requested but not authorized: ${grant.reason}`
-          : "auto_grant requested but no valid auto-disposition grant exists",
-        next_action: "post_summary_and_escalate_to_user",
-      };
-    }
-    effectiveOverrideCap = true;
-    effectiveOverrideReason = `auto-disposition grant #${grant.grant_number} (gc_review_cap_disposition one_more_cycle for test-quality)`;
-  }
+}, { workspaceAuthorizationResolver = undefined } = {}) {
+  const prepared = await _prepareReviewCycle({
+    reviewer: "test-quality",
+    errorPrefix: "test_quality_review_cycle",
+    repoPath,
+    issueNumber,
+    overrideCap,
+    overrideReason,
+    autoGrant,
+    workspaceAuthorizationResolver,
+  });
+  if (prepared.earlyReturn) return prepared.earlyReturn;
+  const { authorizedRepoPath } = prepared;
 
   const run = await _runStationWithObservationLedger({
     reviewer: "test-quality",
-    repoPath,
+    repoPath: authorizedRepoPath,
     issueNumber,
     signal,
     invokeReview: ({ stationObservation }) => {
       const reviewParams = {
-        repoPath,
+        repoPath: authorizedRepoPath,
         baseBranch,
         issueNumber,
-        overrideCap: effectiveOverrideCap,
-        overrideReason: effectiveOverrideReason,
+        overrideCap: prepared.overrideCap,
+        overrideReason: prepared.overrideReason,
         stationObservation,
         signal,
       };
       if (model !== undefined) reviewParams.model = model;
-      return runTestQualityReview(reviewParams);
+      return runTestQualityReview(reviewParams, { workspaceAuthorizationResolver });
     },
   });
 
-  if (!run.observed && run.exhaustedNonVerdict) {
-    return {
-      ..._decorateUnobservedStation(run.envelope, run),
-      reviewer: "test-quality",
-      status: "post_failed",
-    };
-  }
-
-  return _runReviewCycleShared({
-    reviewer: "test-quality",
-    reviewResult: run.envelope,
-    repoPath,
-    issueNumber,
-  });
+  return _finishReviewCycle({ reviewer: "test-quality", run, authorizedRepoPath, issueNumber, workspaceAuthorizationResolver });
 }

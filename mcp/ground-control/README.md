@@ -111,7 +111,7 @@ takes effect on the next server start.
 
 ## Tool surface
 
-The server registers **32 tools**. They are the `/implement`, `/quickfix`,
+The server registers **33 tools**. They are the `/implement`, `/quickfix`,
 `/integrate`, and `/review` workflow mechanics plus the coding-agent/reviewer separation - there is
 no entity CRUD surface and no ad-hoc REST escape hatch, because there is no
 backend behind them to read. Requirements and ADRs are read and written as repo
@@ -156,6 +156,12 @@ The complete keep/delete and placement record is in
 | `gc_authorize_execution_obligation_wontfix` | Record the user's authorization to close an obligation unfixed |
 | `gc_codex_job` | Poll or cancel any async review, preflight, or mechanical job |
 
+**Station-observation recovery (`tools/station-observation.js`)**
+
+| Tool | Purpose |
+|---|---|
+| `gc_reconcile_station_observation` | Resolve a stranded `station_observation` obligation as `reobserved` from the station's own findings record and cycle marker already on the thread; accepts no disposition or claim |
+
 **Durable issue-thread records (`tools/post-decision-record.js`)**
 
 | Tool | Purpose |
@@ -190,7 +196,7 @@ enforcement layer every driver shares.
 | Tool | Purpose |
 |---|---|
 | `gc_get_pr_review_context` | Read-only bounded evidence snapshot of a PR |
-| `gc_remediate_pull_request` | Authorization-gated `sync_base` / `publish` / `comment` |
+| `gc_remediate_pull_request` | Authorization-gated `sync_base` / `publish` |
 
 **Approved-PR integration (`tools/integrate.js`)**
 
@@ -229,8 +235,8 @@ in `lib.js` is only the starter template.
 
 Two capability-separated tools back the `/review` skill (GC-O015, issue #1535) - a read-only reader and an authorization-gated mutation surface. They are **separate tools by design** so a review-only caller cannot reach a mutation by flipping an action field, and post-merge closure reuses `gc_close_issue_after_merge` rather than adding a close path.
 
-- **`gc_get_pr_review_context`** *(read-only)* - `{repo_path, pr_number, repo?, max_files?, max_patch_bytes?}`. Bound to the immutable MCP launch checkout (it cannot read another repository the process can reach). Returns one bounded evidence snapshot: identity (base/head refs + OIDs, cross-repository flag, merge state), the bounded PR body (premise) read as inert data, the complete changed-file inventory (paginated) with bounded patches and explicit `patch_truncated` / `patch_unavailable_reason` flags, checks bound to the head OID plus `required_contexts` (or `required_contexts_available: false`), `linked_issues[]` distinguishing `closing_reference` from `cross_reference`, review metadata, unresolved-discussion evidence, and a `completeness` block whose reasons cover every omission. It performs no `git fetch`, no branch switch, no object-database write, and posts nothing.
-- **`gc_remediate_pull_request`** *(authorization-gated)* - `{repo_path, pr_number, action, authorization, reviewed_identity, commit_message?, comment_body?, published_head_oid?}`, `action ∈ {sync_base, publish, comment}`. Every action requires an explicit `authorization` and the reviewed PR identity, re-validated against the live PR by object id before anything is touched (the `authorization` is the driver's relay of the user's request, not a cryptographic capability; the object-id, same-repo, fast-forward, and gate bindings are the enforced guarantees). The approval label must also postdate the reviewed head (a stale label is refused). Remediation is same-repository only - a fork PR is refused. `sync_base` verifies the PR base matches the configured integration branch (a mismatch is a consultation stop) then updates a stale branch with a real `git merge --no-ff` (never rebase/reset/force/worktree; conflicts are surfaced for manual resolution). `publish` stages the working tree itself, re-fetches the base immediately before pushing, commits the staged tree, and non-force pushes to the same PR branch bound to the reviewed remote head. `publish` does **not** run the repo's gate commands locally against the contributor tree (a credential-exfiltration surface); verification is the PR's own isolated CI, surfaced by `gc_get_pr_review_context`. `comment` posts at most one scrubbed, neutral PR comment and only after a successful publish is proven (`published_head_oid` must be the live PR head and advance past the reviewed head). The user still owns merge; the tool never merges, approves, closes, or relabels.
+- **`gc_get_pr_review_context`** *(read-only)* - `{repo_path, pr_number, repo?, max_files?, max_patch_bytes?}`. Bound to the immutable MCP launch checkout (it cannot read another repository the process can reach). Returns one bounded evidence snapshot: identity (base/head refs + OIDs, cross-repository flag, merge state), the bounded PR body (premise) read as inert data, the complete changed-file inventory (paginated) with bounded patches and explicit `patch_truncated` / `patch_unavailable_reason` flags, checks bound to the head OID plus `required_contexts` (or `required_contexts_available: false`), `linked_issues[]` distinguishing `closing_reference` from `cross_reference`, review metadata (`review_decision` derived from each reviewer's latest decisive review), unresolved-discussion evidence, and a `completeness` block whose reasons cover every omission. It performs no `git fetch`, no branch switch, no object-database write, and posts nothing. Every read is REST (issue #1586): the GraphQL budget is shared by every agent on the token and drains without warning. The one exception is the unresolved-review-thread summary, which GitHub exposes only over GraphQL; it is optional, and its failure reports `discussions.available: false` (a `review_discussions_unavailable` completeness reason) without failing the snapshot. Closing references come from GitHub's closing keywords in the PR body, so an issue linked only through the PR sidebar is not listed.
+- **`gc_remediate_pull_request`** *(authorization-gated)* - `{repo_path, pr_number, action, authorization, reviewed_identity, commit_message?, comment_body?}`, `action ∈ {sync_base, publish}`. Every action requires an explicit `authorization` and the reviewed PR identity, re-validated against the live PR (read over REST) by object id before anything is touched (the `authorization` is the driver's relay of the user's request, not a cryptographic capability; the object-id, same-repo, fast-forward, and gate bindings are the enforced guarantees). Every mutation also requires a trusted-host confirmation: a PR review against the current head whose body contains `gc-review: remediation-approved`, from a write-access account (GitHub binds the review to the head `commit_id`, so it cannot be backdated or reused for a later head). Remediation is same-repository only - a fork PR is refused - and only an open PR is remediable (`pr_remediation_pr_not_open`). `sync_base` verifies the PR base matches the configured integration branch (a mismatch is a consultation stop) then updates a stale branch with a real `git merge --no-ff` (never rebase/reset/force/worktree; conflicts are surfaced for manual resolution). `publish` stages the working tree itself, re-fetches the base immediately before pushing, commits the staged tree, and non-force pushes to the same PR branch bound to the reviewed remote head. `publish` does **not** run the repo's gate commands locally against the contributor tree (a credential-exfiltration surface); verification is the PR's own isolated CI, surfaced by `gc_get_pr_review_context`. When `comment_body` is supplied, `publish` posts at most one scrubbed, neutral PR comment, only after its own successful push. The user still owns merge; the tool never merges, approves, closes, or relabels.
 
 Both tools keep every `gh`/`git` side effect inside the repository-bound MCP server (ADR-027); the skill never runs them. The read-only review creates no issue-thread record (ADR-029 issue #1535 amendment). See `skills/review/SKILL.md` and GC-O015.
 

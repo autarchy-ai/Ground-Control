@@ -12,7 +12,8 @@ import {
   buildExecutionObligationV2Marker,
   buildStationObservationObligationId,
 } from "./execution-obligation-v2.js";
-import { detectSensitiveBodyContent } from "./grc-legacy-compat-2.js";
+import { boundedOutputTail } from "./command-failure-diagnostics.js";
+import { detectSensitiveBodyContent, extractGhErrorMessage } from "./grc-legacy-compat-2.js";
 import { GITHUB_ISSUE_COMMENT_BODY_MAX } from "./repo-vocabulary.js";
 import { execFile } from "./runtime-primitives.js";
 
@@ -43,7 +44,8 @@ async function postComment({ repoRoot, owner, name, issueNumber, body }) {
     );
     return { ok: true, url: stdout.trim() };
   } catch (err) {
-    return { ok: false, message: err.message };
+    // stderr, not the Error message: the message repeats the whole argv, body included.
+    return { ok: false, message: boundedOutputTail(extractGhErrorMessage(err))?.text ?? "gh api failed" };
   }
 }
 
@@ -94,17 +96,32 @@ export async function postStationObservationOpened({
 }
 
 /**
+ * How the verdict behind a re-observation was established. Closed set: the corrective-action prose
+ * is chosen here, never supplied by a caller.
+ */
+const REOBSERVATION_SOURCES = Object.freeze({
+  cycle_wrapper: "a re-attempt of this station at this logical cycle rendered a verdict.",
+  reconciliation:
+    "the server matched this station's verdict record and cycle marker for this logical cycle, " +
+    "posted after the obligation opened, and recorded the resolution the cycle wrapper did not.",
+});
+
+/**
  * Resolve the obligation against the record proving a later attempt rendered a verdict.
  *
  * `reobserved` states only that the gate was finally observed. A re-observed verdict that found
  * problems still leaves every one of those findings under the existing disposition rules.
  */
 export async function postStationReobservation({
-  repoRoot, owner, name, issueNumber, recordUrl, stationObservation,
+  repoRoot, owner, name, issueNumber, recordUrl, stationObservation, source = "cycle_wrapper",
 }) {
   const observationRecordId = commentIdFromUrl(recordUrl);
   if (!Number.isInteger(observationRecordId)) {
     return { ok: false, message: `could not derive a comment id from '${recordUrl}'` };
+  }
+  const correctiveAction = REOBSERVATION_SOURCES[source];
+  if (correctiveAction == null) {
+    return { ok: false, message: `unknown re-observation source '${source}'` };
   }
   const { obligationId, stationId, logicalCycle } = stationObservation;
   const body = [
@@ -122,7 +139,7 @@ export async function postStationReobservation({
     header(stationId, logicalCycle, "Re-observed"),
     "",
     "**Disposition:** reobserved  ",
-    `**Corrective action:** a bounded automatic re-attempt observed the station and it rendered a verdict.  `,
+    `**Corrective action:** ${correctiveAction}  `,
     `**Evidence:** ${recordUrl}`,
     "",
     "### Verification",

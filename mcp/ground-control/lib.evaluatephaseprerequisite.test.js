@@ -23,6 +23,7 @@ import {
   parsePhaseMarkers,
   runPostImplementationPlan,
 } from "./lib.js";
+import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
 
 async function withShimPath(binDir, fn) {
   const oldPath = process.env.PATH;
@@ -195,7 +196,7 @@ process.exit(2);
           planBody: "## Plan\n\nImplement source work.",
           override: true,
           overrideReason: "test skips preflight to isolate the dev-start gate",
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(r.ok, false);
         assert.equal(r.error, "dev_start_gate_invalid");
         assert.equal(r.next_action, "add_valid_dev_start_gate_to_plan_and_retry");
@@ -286,7 +287,7 @@ process.exit(2);
           repoPath: shim.repoDir,
           issueNumber: 1123,
           planBody: "## Plan\n\nWork.",
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(r.ok, false);
         assert.equal(r.error, "phase_prerequisite_missing");
       });
@@ -303,7 +304,7 @@ process.exit(2);
           repoPath: shim.repoDir,
           issueNumber: 1123,
           planBody: "## Plan\n\nWork.",
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(r.ok, false);
         assert.equal(r.error, "phase_prerequisite_missing");
         assert.deepEqual(r.missing, ["preflight"]);
@@ -320,7 +321,7 @@ process.exit(2);
           repoPath: shim.repoDir,
           issueNumber: 1123,
           planBody: "## Plan\n\nWork.",
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(r.ok, true);
       });
     } finally { shim.cleanup(); }

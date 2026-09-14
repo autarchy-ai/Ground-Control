@@ -4,13 +4,24 @@
 // (docs/CODING_STANDARDS.md, Sonar S104). It contained no mutual recursion, so it was
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
+import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { readRequirementByUid } from "./requirement-files.js";
 import { createGitHubIssue, formatIssueBody } from "./codex-workflow-3.js";
 
-export async function createGitHubIssueFromRequirement({ uid, project, repo, repoRoot, labels, extraBody }) {
+export async function createGitHubIssueFromRequirement(
+  { uid, project, repo, repoRoot: repoPath, labels, extraBody },
+  { workspaceAuthorizationResolver = undefined } = {},
+) {
   if (typeof uid !== "string" || uid.trim() === "") {
     throw new Error("createGitHubIssueFromRequirement: 'uid' is required");
   }
+  // Issue creation spends the MCP host's credentials, so it targets only the launch workspace's
+  // repository, and the requirement it renders is read from that checkout (issue #1583).
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    return issueRepositoryNotAuthorized("create_issue", repository, { requirement_uid: uid });
+  }
+  const { repoRoot } = repository;
   // Requirements are repo-local files now (issue #1500): read the requirement from
   // docs/requirements/<UID>/requirement.md. A missing file aborts before any GitHub
   // issue is created — the same fail-fast the former REST 404 gave.

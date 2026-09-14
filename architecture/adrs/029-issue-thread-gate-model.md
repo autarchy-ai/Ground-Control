@@ -641,3 +641,70 @@ corrections are appended. Requirement-free runs, the single human merge touchpoi
 the issue-thread durable-record model are unchanged. This amendment supersedes the
 requirement-file mutation ordering in the 2026-06-22 issue #963 amendment; its separation
 between pre-merge readiness and post-merge authoritative completion remains in force.
+
+**2026-09-13 (issue #1586, maintainer review lane off GraphQL).** The issue #1535
+review lane now reads GitHub over REST, like the `/implement` workflow after issue
+#1584. GraphQL's hourly budget is shared by every agent on the token, and GitHub's
+rate-limit endpoint does not report it as exhausted, so a drained budget had failed the
+read-only review and blocked remediation while REST was healthy. `gc_get_pr_review_context`
+reads the pull request, reviews, head-commit check runs and status contexts, and
+body-keyword closing references over REST. Its review decision is derived from each
+reviewer's latest decisive review. The unresolved-review-thread summary is the lane's
+only GraphQL read, because GitHub exposes thread resolution state only there. That read
+is optional: its failure marks `discussions` unavailable, which is a completeness reason,
+and never fails the snapshot. Unreadable checks or reviews are completeness reasons too,
+never an empty clean set.
+
+`gc_remediate_pull_request` re-validates the reviewed identity against the REST pull
+request. A deleted fork, whose REST head repository is null, still counts as
+cross-repository and is refused. The tool now also refuses a merged or closed pull request
+(`pr_remediation_pr_not_open`) before the trusted-host confirmation or any mutation.
+Before this amendment only the optional post-push comment checked PR state, so a merged
+PR's branch could still receive a remediation push. `enrichCommentsWithThreadIds` and
+`resolveReviewThread` stay on GraphQL because REST has no review-thread id or resolution
+endpoint. The read-only default, the no-issue-thread-record rule, and the user-owned
+merge are unchanged.
+
+**2026-09-14 (issue #1582, stranded station-observation reconciliation).** The
+station-owning cycle wrapper remains the normal and automatic writer of a
+`reobserved` resolution. A wrapper or process defect can nevertheless leave a
+trusted primary findings record and its ordinary cycle marker on the issue
+thread while omitting the intervening resolution. The cycle is then consumed,
+so another review is not a safe repair. A dedicated synchronous
+`gc_reconcile_station_observation` MCP action is the sole recovery writer for
+this already-observed state; the generic `gc_record_execution_obligation`
+surface still cannot select `reobserved`.
+
+The recovery action uses the caller's obligation id only to select a trusted
+open v2 ledger entry. It derives station and logical cycle from that entry,
+checks the deterministic id, and fails closed unless a fresh read of the
+launch-workspace-pinned repository proves exact repository, issue, current-MCP
+author, primary findings-record, and matching ordinary cycle-marker identity.
+It reuses the existing v2 renderer and appends a resolution bound to the
+findings comment id. A repeat with the same trusted evidence is a successful
+no-op, including after a response is lost; no record is edited or deleted. The
+historical record and marker may be required to agree on their branch, but the
+current branch and configured cap are not identity fields. A findings record
+without the cycle marker stays on the ordinary partial-write path. The record is
+derived, not caller-chosen: it is the latest canonical record the cycle marker
+consumed, and markers that consume different records refuse as ambiguous. The
+opening needs only the trusted ledger's repository permission; the current-MCP
+identity binds the record, marker, and attestation. Reconciliation runs under a
+per-issue, per-obligation filesystem lease so concurrent calls cannot append
+duplicate resolutions.
+
+The root defect is also closed at its source. The cycle wrapper held the open
+observation only in one invocation's memory, so a verdict rendered by a later,
+separate invocation carried no resolution. The wrapper now reads the trusted
+ledger before its first attempt and carries an open observation for its station
+and logical cycle into that attempt, keeping the normal write order.
+
+Pre-merge readiness and post-merge completion still reject every open
+obligation. When the same live validation finds a safe recovery candidate, the
+existing open-obligation error envelope names the bounded candidate and the
+dedicated reconciliation action instead of suggesting a generic v1 `fix`.
+Readiness never performs the repair itself. No new marker family,
+configuration, environment variable, routing stage, async job, persistence
+store, finding disposition, decision-record vocabulary, or authorization
+hierarchy is introduced. See the issue #1582 amendment in
+`architecture/notes/unobserved-station-recovery-preflight.md`.

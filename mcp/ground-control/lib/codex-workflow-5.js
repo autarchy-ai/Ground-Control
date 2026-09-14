@@ -249,7 +249,7 @@ export async function runCreateSynchronizedImplementPr(input, {
   commandRunner = execFile,
   contextResolver = getRepoGroundControlContext,
   syncRecordReader = readTrustedImplementSyncRecord,
-  issueThreadReader = runGetIssueThread,
+  issueThreadReader = (args) => runGetIssueThread(args, { workspaceAuthorizationResolver }),
 } = {}) {
   const inputValidation = validateSynchronizedImplementPrInput(input);
   if (!inputValidation.ok) return inputValidation;
