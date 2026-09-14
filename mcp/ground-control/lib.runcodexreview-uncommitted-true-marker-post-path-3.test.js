@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { CODEX_REVIEW_PREPUSH_HARD_CAP, computeReviewDiff, runCodexReview } from "./lib.js";
+import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
 
 describe("runCodexReview uncommitted=true marker-post path (hermetic codex+gh shims)", () => {
   // These tests exercise the post-codex marker-write path. Codex is shimmed to
@@ -179,7 +180,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: false,
           prNumber: 520,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         // Confirm the boundary failure was detected and signalled. Since
         // #1414 an unparseable reviewer envelope means a review slice
         // produced no judgment, so the run reports incomplete coverage
@@ -247,7 +248,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: false,
           prNumber: 520,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.ok, false);
         // #1414: a malformed reviewer envelope is a coverage failure — the
         // slice produced no judgment, so no durable record is written and the
@@ -316,7 +317,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: false,
           prNumber: 520,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         // post_failures is the source of truth for failed POSTs.
         assert.equal(result.post_failures.length, 2);
         // comments contains ONLY successfully-posted findings (none here).
@@ -380,7 +381,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: false,
           prNumber: 520,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         // parse_errors carries one entry per reviewer that failed to parse
         // (both core and security reviewers see the same malformed tail).
         assert.equal(result.parse_errors.length, 2);
@@ -433,7 +434,7 @@ process.stdin.on("end", () => {
         const result = await runCodexReview({
           repoPath: shim.repoDir,
           uncommitted: true,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.ok, false);
         assert.equal(result.error, "prepush_cycle_record_failed");
         assert.equal(result.next_action, "fix_underlying_marker_post_failure_and_retry");

@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { CODEX_REVIEW_HARD_CAP, computeReviewDiff, runCodexReview } from "./lib.js";
+import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
 
 describe("runCodexReview uncommitted=true marker-post path (hermetic codex+gh shims)", () => {
   // These tests exercise the post-codex marker-write path. Codex is shimmed to
@@ -169,7 +170,7 @@ process.stdin.on("end", () => {
 
     try {
       await withShimPathFull(shim.binDir, async () => {
-        const result = await runCodexReview({ repoPath: shim.repoDir, uncommitted: false, prNumber: 520 });
+        const result = await runCodexReview({ repoPath: shim.repoDir, uncommitted: false, prNumber: 520 }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.ok, false);
         assert.equal(result.error, "review_comment_post_failed");
         assert.match(result.message, /sensitive|secret|private key/i);
@@ -249,7 +250,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: false,
           prNumber: 520,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.ok, false);
         assert.equal(result.error, "review_comment_post_failed");
         assert.match(result.message, /HTTP 502|gateway/);
@@ -316,7 +317,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: false,
           prNumber: 520,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         // 1 finding x 2 reviewers (core + security) → 2 POST attempts → 2
         // failures.
         assert.equal(result.post_failures.length, 2);
@@ -418,7 +419,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: false,
           prNumber: 520,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         // No partial failure here (all POSTs succeed) — cycle marker MUST
         // be written, response carries cycle: 1.
         assert.equal(result.ok, true);
@@ -465,7 +466,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: true,
           issueNumber: 998,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.ok(result.comments.length >= 1);
         // The placeholder for no-PR / pre-push must carry the body verbatim.
         for (const c of result.comments) {

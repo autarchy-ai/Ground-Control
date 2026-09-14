@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { CODEX_REVIEW_PREPUSH_HARD_CAP, computeReviewDiff, dedupFindings, runCodexReview } from "./lib.js";
+import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
 
 describe("runCodexReview uncommitted=true marker-post path (hermetic codex+gh shims)", () => {
   // These tests exercise the post-codex marker-write path. Codex is shimmed to
@@ -162,7 +163,7 @@ process.stdin.on("end", () => {
         const result = await runCodexReview({
           repoPath: shim.repoDir,
           uncommitted: true,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.uncommitted, true);
         assert.equal(result.issue_number, 796);
         assert.equal(result.branch, "796-x");
@@ -238,7 +239,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: true,
           issueNumber: 796,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.ok, false);
         assert.equal(result.error, "review_comment_post_failed");
         assert.match(result.message, /HTTP 502|gateway/);
@@ -289,7 +290,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: true,
           issueNumber: 4242,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         // Explicit issue_number is the resolved issue, not derived from
         // "feature-x" (which derivation returns null for).
         assert.equal(result.issue_number, 4242);
@@ -401,7 +402,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: false,
           prNumber: 520,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.pr_number, 520);
         assert.deepEqual(result.parse_errors, []);
         assert.deepEqual(result.post_failures, []);
@@ -469,7 +470,7 @@ process.stdin.on("end", () => {
 
     try {
       await withShimPathFull(shim.binDir, async () => {
-        const result = await runCodexReview({ repoPath: shim.repoDir, uncommitted: false, prNumber: 520 });
+        const result = await runCodexReview({ repoPath: shim.repoDir, uncommitted: false, prNumber: 520 }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.ok, false);
         assert.equal(result.error, "review_comment_post_failed");
         // The cycle was NOT consumed — cycle/cap surface as null so the

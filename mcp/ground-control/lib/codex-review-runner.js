@@ -11,8 +11,9 @@ import { buildCodexReviewFindingsComments, buildReviewCommentPostFailedEnvelope,
 import { buildReviewerCommentsList, postCodexReviewFindingsComment, postCodexReviewPrePushCycleMarker, readPriorCodexReviewPrePushCycleCount, resolveFindingsRecordIssueNumber } from "./codex-verify-cap.js";
 import { resolveReviewerPrePushCap } from "./codex-workflow-5.js";
 import { detectSensitiveBodyContent, planReviewSlices, selectDiffMode } from "./grc-legacy-compat-2.js";
-import { getOwnerRepo, getPullRequestClosingIssues, postCodexReviewFindings } from "./grc-legacy-compat-3.js";
-import { autoDetectPrNumber, computeReviewDiff, ensureGitRepo, getCurrentBranchName, readCompletedPhases } from "./grc-legacy-compat-4.js";
+import { getPullRequestClosingIssues, postCodexReviewFindings } from "./grc-legacy-compat-3.js";
+import { autoDetectPrNumber, computeReviewDiff, getCurrentBranchName, readCompletedPhases } from "./grc-legacy-compat-4.js";
+import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { buildCodexReviewCorePrompt, buildCodexSecurityReviewPrompt } from "./grc-legacy-compat-5.js";
 import { runReviewerOverSlices } from "./grc-legacy-compat-6.js";
 import { readVocabularyForReview } from "./plan-posting.js";
@@ -33,8 +34,17 @@ export async function runCodexReview({
   signal = undefined,
   // Open station-observation obligation from an earlier non-verdict attempt (issue #1476).
   stationObservation = null,
-}) {
-  const repoRoot = await ensureGitRepo(repoPath);
+}, { workspaceAuthorizationResolver = undefined } = {}) {
+  // Findings records, cycle markers, and the reviewed tree all belong to the launch workspace; a
+  // caller-named checkout is refused before any GitHub read or reviewer run (issue #1583).
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    return issueRepositoryNotAuthorized("codex_review", repository, {
+      issue_number: issueNumber ?? null,
+      pr_number: prNumber ?? null,
+    });
+  }
+  const { repoRoot, owner, name } = repository;
 
   let effectivePr = prNumber;
   if (effectivePr == null && !uncommitted) {
@@ -163,18 +173,6 @@ export async function runCodexReview({
       core,
       security,
     });
-  }
-
-  // Resolve owner/name once if any posting could happen. The pre-push and
-  // gate paths above also resolved owner/name; cycleOwnership/prePushOwnership
-  // already carry them, so we reuse them when available to avoid a second
-  // `gh repo view` round-trip.
-  let owner = cycleOwnership?.owner ?? prePushOwnership?.owner ?? null;
-  let name = cycleOwnership?.name ?? prePushOwnership?.name ?? null;
-  const willPost =
-    effectivePr != null && (core.findings.length > 0 || security.findings.length > 0);
-  if (willPost && (owner == null || name == null)) {
-    ({ owner, name } = await getOwnerRepo(repoRoot));
   }
 
   // Server-side post each reviewer's findings. The poster never throws on a

@@ -972,6 +972,29 @@ not the per-worktree pointer (`--absolute-git-dir`), so the guard is stable acro
 every linked worktree of the same repository. Raw remote URLs
 never enter branch-tool results.
 
+**Issue-thread record tools are pinned to the same workspace (issue #1583).** A
+tool that writes an issue or pull-request record, creates or closes an issue, or
+reads an issue thread spends the MCP host's GitHub credentials, so it resolves its
+repository through the same launch-workspace authorization
+(`lib/authorized-issue-repository.js`). Pinning the origin alone stopped `GH_REPO`
+from retargeting these calls. It never stopped a caller from naming another
+on-host checkout, whose issue thread would then receive plan comments, decision
+records, cycle markers, or a close. Cycle markers and decision records feed other
+gates, so a run could otherwise satisfy another repository's review or phase
+state. The pinned tools are `gc_post_decision_record`,
+`gc_post_implementation_plan`, `gc_post_final_report`, `gc_assert_completion`,
+`gc_close_issue_after_merge`, `gc_codex_architecture_preflight`,
+`gc_codex_review`, `gc_codex_review_cycle`, `gc_test_quality_review`,
+`gc_test_quality_review_cycle`, `gc_codex_verify_finding`,
+`gc_review_cap_disposition` (plus the auto-grant check the cycle tools run),
+`gc_create_github_issue`, and `gc_get_issue_thread`. Each one refuses another
+checkout with a structured `<tool>_repo_not_authorized` error before any GitHub
+read or write, and before any review engine starts. The message carries the
+underlying authorization code, for example `implement_repo_not_authorized` or
+`implement_repo_identity_changed`. Tests that drive these tools against a
+temporary repository supply that repository's identity through
+`workspace-authorization.test-helpers.js`, so the real check still runs.
+
 **Concurrent worktrees and MCP relaunch (issue #1502).** Run one Ground Control
 MCP server per checkout, launched from that checkout. Each server captures the
 launch workspace once; a second `/implement` in a sibling linked worktree gets its

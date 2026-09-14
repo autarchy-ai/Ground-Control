@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { runAssertCompletion } from "./lib.js";
 import { restPullRequest } from "./github-rest.test-helpers.js";
+import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
 
 const GH_NAME_WITH_OWNER = "nameWithOwner";
 
@@ -186,7 +187,7 @@ describe("runAssertCompletion — thin post-merge happy path", () => {
           ciStatus: "green",
           sonarStatus: "skipped",
           plainEnglishOutcome: "Consolidates Phase D completion into a single tool call.",
-        }),
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) }),
       );
       assert.equal(r.ok, true, `expected ok:true; got: ${JSON.stringify(r)}`);
       assert.ok(Array.isArray(r.assertions));
@@ -217,7 +218,7 @@ describe("runAssertCompletion — malformed input early rejection", () => {
           ciStatus: "green",
           sonarStatus: "skipped",
           plainEnglishOutcome: "Consolidates Phase D completion into a single tool call.",
-        }),
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) }),
       );
       assert.equal(r.ok, false);
       assert.equal(r.error, "completion_final_report_input_invalid");

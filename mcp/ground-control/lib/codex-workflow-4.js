@@ -41,7 +41,7 @@ export async function runSynchronizeImplementBranch(input, {
   commandRunner = execFile,
   contextResolver = getRepoGroundControlContext,
   syncRecordReader = readTrustedImplementSyncRecord,
-  issueThreadReader = runGetIssueThread,
+  issueThreadReader = (args) => runGetIssueThread(args, { workspaceAuthorizationResolver }),
   attestationReader = readTrustedImplementVerificationAttestations,
   attestationWriter = postImplementVerificationAttestation,
 } = {}) {

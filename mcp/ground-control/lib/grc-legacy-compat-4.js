@@ -30,7 +30,7 @@ export async function ensureGitRepo(repoPath) {
     throw new Error(`repo_path is not a valid Git repository: ${formatCommandFailure("git", error)}`);
   }
 }
-async function captureImplementWorkspaceAuthorization(cwd) {
+export async function captureImplementWorkspaceAuthorization(cwd) {
   const { stdout } = await execFile("git", ["-C", cwd, "rev-parse", GIT_SHOW_TOPLEVEL]);
   const workspaceRoot = realpathSync(stdout.trim());
   const identity = await readGitIdentity(workspaceRoot);

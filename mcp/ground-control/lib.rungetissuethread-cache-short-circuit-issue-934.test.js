@@ -7,6 +7,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
 
 describe("runGetIssueThread cache short-circuit (issue #934)", () => {
   function makeGitRepo() {
@@ -39,7 +40,7 @@ describe("runGetIssueThread cache short-circuit (issue #934)", () => {
         repoPath: dir,
         issueNumber: 42,
         expectedHash: "deadbeef",
-      });
+      }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(dir) });
       assert.equal(r.ok, true);
       assert.equal(r.unchanged, true);
       assert.equal(r.hash, "deadbeef");
@@ -65,7 +66,7 @@ describe("runGetIssueThread cache short-circuit (issue #934)", () => {
         repoPath: dir,
         issueNumber: 7,
         expectedHash: "abc123",
-      });
+      }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(dir) });
       assert.equal(r.ok, true);
       assert.equal(r.unchanged, true);
       // Cache-hit envelope nulls payload fields so callers know to use
@@ -102,7 +103,7 @@ describe("runGetIssueThread cache short-circuit (issue #934)", () => {
         repoPath: dir,
         issueNumber: 9,
         expectedHash: null,
-      });
+      }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(dir) });
       // Did NOT short-circuit: either it failed at `gh repo view` (no remote)
       // or at the issue fetch. Either way, ok=false and not unchanged.
       assert.equal(r.ok, false);
@@ -127,7 +128,7 @@ describe("runGetIssueThread cache short-circuit (issue #934)", () => {
         repoPath: dir,
         issueNumber: 11,
         expectedHash: "different",
-      });
+      }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(dir) });
       // Hash mismatch falls through to a fresh fetch (which fails in test
       // env). The cache must NEVER serve a payload it doesn't have a
       // matching hash for.
@@ -153,7 +154,7 @@ describe("runGetIssueThread cache short-circuit (issue #934)", () => {
         repoPath: dir,
         issueNumber: 101,
         expectedHash: "h100",
-      });
+      }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(dir) });
       // Hash matches a DIFFERENT issue's cache entry — must NOT short-circuit.
       assert.equal(r.ok, false);
     } finally {

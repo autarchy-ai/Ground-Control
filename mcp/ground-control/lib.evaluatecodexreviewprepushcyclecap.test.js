@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
 import {
   CODEX_REVIEW_PREPUSH_HARD_CAP,
   CODEX_REVIEW_PREPUSH_MARKER_PREFIX,
@@ -344,7 +345,10 @@ describe("runCodexReview uncommitted=true input gating", () => {
   it("refuses with prepush_branch_unresolved on detached HEAD before invoking gh/codex", async () => {
     const dir = makeTempRepo({ detached: true });
     try {
-      const result = await runCodexReview({ repoPath: dir, uncommitted: true });
+      const result = await runCodexReview(
+        { repoPath: dir, uncommitted: true },
+        { workspaceAuthorizationResolver: workspaceAuthorizationFor(dir) },
+      );
       assert.equal(result.ok, false);
       assert.equal(result.error, "prepush_branch_unresolved");
       assert.equal(result.next_action, "checkout_named_feature_branch");
@@ -358,7 +362,10 @@ describe("runCodexReview uncommitted=true input gating", () => {
   it("refuses with prepush_issue_unresolved when the branch has no numeric prefix and no issue_number is passed", async () => {
     const dir = makeTempRepo({ branch: "feature-x" });
     try {
-      const result = await runCodexReview({ repoPath: dir, uncommitted: true });
+      const result = await runCodexReview(
+        { repoPath: dir, uncommitted: true },
+        { workspaceAuthorizationResolver: workspaceAuthorizationFor(dir) },
+      );
       assert.equal(result.ok, false);
       assert.equal(result.error, "prepush_issue_unresolved");
       assert.equal(result.branch, "feature-x");
