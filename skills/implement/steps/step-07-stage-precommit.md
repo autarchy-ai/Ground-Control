@@ -24,7 +24,12 @@ pushes, and attests a preserved merge.
    `cfg.workflow.precommit_command`, default
    `pre-commit run --all-files`. The boundary is mandatory; a repo on lefthook,
    husky, or a bespoke script configures that field. Do not duplicate a
-   successful boundary elsewhere.
+   successful boundary elsewhere, and do not run the hook chain by hand before
+   calling `publish` to check first: a hook failure is a completed `publish`
+   result carrying repair evidence. The explicit invocation exists because
+   commit-time hook installation is per clone and cannot be assumed; the
+   commit then also fires whatever hooks the clone has installed, which is Git's
+   behavior rather than a second workflow step.
 3. If the completed result names a hook failure, read its bounded output, fix
    the issue, and retry `publish` with a new idempotency key. Repeat up to 5
    failed attempts. If it still fails, escalate with the failure details and
