@@ -252,10 +252,10 @@ export function parseCodexPrePushFindingsHeader(body) {
   if (typeof body !== "string") return null;
   const newline = body.indexOf("\n");
   const firstLine = newline < 0 ? body : body.slice(0, newline);
-  const match = firstLine.match(PRE_PUSH_FINDINGS_HEADER_RE);
+  const match = PRE_PUSH_FINDINGS_HEADER_RE.exec(firstLine);
   if (match == null) return null;
   const rest = firstLine.slice(match[0].length);
-  const branch = rest === "" ? null : rest.match(PRE_PUSH_FINDINGS_BRANCH_RE)?.[1];
+  const branch = rest === "" ? null : PRE_PUSH_FINDINGS_BRANCH_RE.exec(rest)?.[1];
   if (branch === undefined) return null;
   return { cycle: Number(match[1]), issueNumber: Number(match[2]), branch };
 }

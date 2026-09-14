@@ -53,7 +53,7 @@ export function parseTestQualityReviewCycleMarkers(commentBodies, issueNumber) {
 }
 /** The `{issueNumber, cycle, branch}` a findings record opens with, or null. Anchored to the start. */
 export function parseTestQualityReviewFindingsMarker(body) {
-  const match = typeof body === "string" ? body.match(TEST_QUALITY_FINDINGS_MARKER_RE) : null;
+  const match = typeof body === "string" ? TEST_QUALITY_FINDINGS_MARKER_RE.exec(body) : null;
   if (match == null) return null;
   try {
     return { issueNumber: Number(match[1]), branch: JSON.parse(`"${match[2]}"`), cycle: Number(match[3]) };
