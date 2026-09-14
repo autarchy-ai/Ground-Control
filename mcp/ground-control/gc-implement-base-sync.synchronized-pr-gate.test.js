@@ -133,6 +133,17 @@ describe("synchronized PR gate", () => {
     assert.equal(validateImplementPrTitle("fix/refactor: merge dev").ok, false);
   });
 
+  it("accepts the Conventional Commits breaking-change marker under the configured rules (#1593)", () => {
+    const config = { types: ["feat", "fix"], subject_pattern: "^[a-z].*$", require_scope: false };
+    assert.equal(validateImplementPrTitle("feat!: adopt raes 4.1.0", config).ok, true);
+    assert.equal(validateImplementPrTitle("feat(api)!: drop legacy route", config).ok, true);
+    assert.equal(validateImplementPrTitle("feat!!: adopt raes 4.1.0", config).ok, false);
+    assert.equal(validateImplementPrTitle("feat!(api): drop legacy route", config).ok, false);
+    assert.equal(validateImplementPrTitle("docs!: rewrite guide", config).ok, false);
+    assert.equal(validateImplementPrTitle("feat!: Adopt raes 4.1.0", config).ok, false);
+    assert.equal(validateImplementPrTitle("feat!: adopt raes 4.1.0", { ...config, require_scope: true }).ok, false);
+  });
+
   it("refuses PR creation on an invalid repository context (#1429)", async () => {
     const calls = [];
     const result = await runCreateSynchronizedImplementPr({

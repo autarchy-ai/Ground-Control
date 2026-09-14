@@ -119,7 +119,8 @@ date-stamped and prior snapshots stay in place so profile drift is auditable.
   ([ADR-079](../architecture/adrs/079-commit-time-pre-commit-hook-activation.md)); they run
   private-key detection and gitleaks. Do not bypass with `--no-verify`.
 - Commit subjects are imperative: `Add repository-map gate`, not `Added ...`.
-- **PR titles must be Conventional Commits** (`type(optional-scope): lowercase subject`),
+- **PR titles must be Conventional Commits** (`type(optional-scope): lowercase subject`,
+  with `!` before the colon for a breaking change),
   enforced by `.github/workflows/pr-title.yml`. Release Please parses merged commit
   history to compute the version and `CHANGELOG.md`, so the title is load-bearing.
 - **Do not edit `CHANGELOG.md`** or file a changelog fragment. Release Please owns the

@@ -174,9 +174,10 @@ export function validateImplementPrTitle(title, config = null) {
   if (typeof title !== "string" || title.includes("\n") || title.includes("\r")) {
     return { ok: false, message: "title must be a single-line string" };
   }
-  const match = /^([a-z]+)(?:\(([^()\r\n]+)\))?: (.+)$/.exec(title);
+  // The optional `!` is the Conventional Commits breaking-change marker Release Please reads.
+  const match = /^([a-z]+)(?:\(([^()\r\n]+)\))?!?: (.+)$/.exec(title);
   if (match == null) {
-    return { ok: false, message: "title must match <type>(<optional-scope>): <subject>" };
+    return { ok: false, message: "title must match <type>(<optional-scope>)<optional-!>: <subject>" };
   }
   const types = Array.isArray(config?.types) ? config.types : DEFAULT_PR_TITLE_TYPES;
   if (!types.includes(match[1])) {
