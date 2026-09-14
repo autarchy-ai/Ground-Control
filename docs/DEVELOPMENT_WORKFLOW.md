@@ -474,6 +474,15 @@ unrelated fast workflow as the CI gate: a push triggers both `ci.yml` and
 pass while the suite was still running. A failure in the set reports the run
 responsible rather than the newest one.
 
+`queued_too_long` means a run waited past the queued cap for its first runner:
+it is measured per run from the run's latest attempt start and applies only
+while no job of that run has started. A run's status reads `queued` again
+between jobs, while `needs:` dependents wait for a runner, and measuring the
+watch's elapsed time instead reported healthy runs as stuck (#1581). A run that
+has started a job is subject only to the total cap. Every envelope takes
+`run_id`, `status`, and `url` from the same run; a success over several runs
+reports `run_id` and `url` as null, and `runs` lists each watched run.
+
 ## Release model (GC-P027, issue #1399)
 
 Release Please owns product versioning and `CHANGELOG.md`. The Towncrier

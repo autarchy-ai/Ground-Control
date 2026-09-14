@@ -990,3 +990,23 @@ A retry therefore cannot build silently on partial output from an attempt whose
 mechanical result was failure. The `preflight` phase marker is still not
 written on a failed run, and no gate is weakened: the run remains a failure
 that must be re-run, only now with the evidence to diagnose it.
+
+**2026-09-14 (issue #1581, per-run queued cap and one run per envelope).** The
+`gc_watch_ci_run` surface above names a queued-too-long cap, and the watcher
+enforced it against its own elapsed time: once five minutes of watching had
+passed, any run reading `queued` ended the watch as `queued_too_long`. A run's
+status reads `queued` again between jobs, while `needs:` dependents wait for a
+runner, so a healthy run past five minutes failed the Step 10 gate and sent the
+agent back through publish to repair nothing. The cap now applies per run, to
+the time since the run's latest attempt started, and only while none of that
+run's jobs has started; a run with a started job is bounded by the total cap
+alone. A run with no started job that stays queued past the cap still reports
+`queued_too_long`, including one that was already queued when the watch began.
+
+The terminal envelope gained one invariant and one field. `run_id`, `status`,
+and `url` always come from the run the conclusion is about, where they had
+mixed the first watched run's id with another run's status and URL. A success
+over several runs no longer names an arbitrary member as the CI result: it
+reports `run_id` and `url` as null, and every envelope carries `runs[]` with
+each watched run's id, workflow, status, conclusion, and URL. The caps, their
+defaults, and the bounded log-summary contract are unchanged.

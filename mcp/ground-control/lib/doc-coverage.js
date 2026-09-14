@@ -171,19 +171,58 @@ export function renderSonarStatus(s) {
 }
 const CI_TERMINAL_STATUSES = new Set(["completed"]);
 const CI_QUEUED_STATUSES = new Set(["queued", "pending", "waiting"]);
+// A job has claimed a runner once it is running or has finished with a real
+// result. A skipped job never needed a runner, so it does not show that the run
+// left the queue.
+export function ciRunHasStartedJob(snapshot) {
+  const jobs = Array.isArray(snapshot?.jobs) ? snapshot.jobs : [];
+  return jobs.some(
+    (job) =>
+      job?.status === "in_progress" ||
+      (job?.status === "completed" && job?.conclusion !== "skipped"),
+  );
+}
+function ciTimestampMs(value) {
+  const ms = typeof value === "string" ? Date.parse(value) : Number.NaN;
+  // gh renders an unset timestamp as the zero time (0001-01-01), which parses.
+  return Number.isFinite(ms) && ms > 0 ? ms : null;
+}
+// Seconds a run has waited for its first runner, or null when the run is not
+// queued or any of its jobs has started. A run's status reads `queued` again
+// between jobs, while finished jobs hand off to `needs:` dependents that are
+// still waiting for a runner, and that is not a stuck queue (issue #1581).
+// The wait is measured from the latest attempt's start (`startedAt`, which a
+// re-run resets) or the run's creation, so a run queued before the watch began
+// gets no fresh allowance; `firstQueuedObservedMs` covers a snapshot with
+// neither timestamp.
+export function ciRunQueuedSeconds(snapshot, nowMs, firstQueuedObservedMs) {
+  if (!CI_QUEUED_STATUSES.has(snapshot?.status) || ciRunHasStartedJob(snapshot)) {
+    return null;
+  }
+  const sinceMs =
+    ciTimestampMs(snapshot?.startedAt) ?? ciTimestampMs(snapshot?.createdAt) ?? firstQueuedObservedMs;
+  return Math.max(0, Math.floor((nowMs - sinceMs) / 1000));
+}
 export function evaluateCiPollState({
   status,
   elapsedSeconds,
+  queuedSeconds = null,
   queuedTimeoutSeconds,
   totalTimeoutSeconds,
 }) {
   if (CI_TERMINAL_STATUSES.has(status)) {
     return { action: "complete" };
   }
-  // The queued-too-long signal is more specific than timed_out (a stuck
-  // runner pool is a different failure mode than a slow run); report it
-  // even if the total cap was also crossed.
-  if (CI_QUEUED_STATUSES.has(status) && elapsedSeconds > queuedTimeoutSeconds) {
+  // `queuedSeconds` is the run's own wait for a first runner (see
+  // ciRunQueuedSeconds), never the watch's elapsed time. The queued-too-long
+  // signal is more specific than timed_out (a stuck runner pool is a different
+  // failure mode than a slow run); report it even if the total cap was also
+  // crossed.
+  if (
+    CI_QUEUED_STATUSES.has(status) &&
+    Number.isFinite(queuedSeconds) &&
+    queuedSeconds > queuedTimeoutSeconds
+  ) {
     return { action: "queued_too_long" };
   }
   if (elapsedSeconds > totalTimeoutSeconds) {
@@ -244,7 +283,7 @@ export async function _fetchCiRunSnapshot(repoRoot, repoSlug, runId) {
       "view",
       String(runId),
       "--json",
-      "status,conclusion,databaseId,url,createdAt,updatedAt,jobs",
+      "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs",
     ]),
     { cwd: repoRoot },
   );

@@ -4,7 +4,7 @@
 // (docs/CODING_STANDARDS.md, Sonar S104). It contained no mutual recursion, so it was
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
-import { _fetchCiRunFailedLog, _fetchCiRunSnapshot, _sleepMs, evaluateCiPollState, extractFailedStepsFromJobsJson, summarizeCiLogFailedOutput } from "./doc-coverage.js";
+import { _fetchCiRunFailedLog, _fetchCiRunSnapshot, _sleepMs, ciRunQueuedSeconds, evaluateCiPollState, extractFailedStepsFromJobsJson, summarizeCiLogFailedOutput } from "./doc-coverage.js";
 import { ensureGitRepo } from "./grc-legacy-compat-4.js";
 import { authorizeWatcherRepoRead } from "./watcher-repo-authorization.js";
 import { FINDING_CLASSIFICATIONS, FINDING_SWEEP_EVIDENCE_MAX, truncateReviewProse } from "./grc-legacy-compat.js";
@@ -186,6 +186,10 @@ export async function runWatchCiRun({
   totalTimeoutSeconds = 2700,
   pollIntervalSeconds = 15,
   authorizeRepoRead = authorizeWatcherRepoRead,
+  resolveRuns = _resolveCiRunsForBranch,
+  fetchRunSnapshot = _fetchCiRunSnapshot,
+  now = Date.now,
+  sleep = _sleepMs,
 }) {
   if (typeof repoPath !== "string" || repoPath.length === 0) {
     return {
@@ -262,7 +266,7 @@ export async function runWatchCiRun({
   } else {
     let selected;
     try {
-      selected = await _resolveCiRunsForBranch(repoRoot, repoSlug, branch);
+      selected = await resolveRuns(repoRoot, repoSlug, branch);
     } catch (e) {
       return {
         ok: false,
@@ -291,78 +295,84 @@ export async function runWatchCiRun({
       };
     }
   }
-  // The newest run identifies the set in envelopes that predate multi-run
-  // watching; a failure below replaces it with the run actually responsible.
-  let effectiveRunId = watchedRunIds[0];
-
-  const startMs = Date.now();
-  let snapshot = null;
-  let snapshots = [];
+  const startMs = now();
+  const firstQueuedObservedMs = new Map();
+  let observed = [];
   while (true) {
-    try {
-      snapshots = [];
-      for (const id of watchedRunIds) {
-        snapshots.push(await _fetchCiRunSnapshot(repoRoot, repoSlug, id));
+    observed = [];
+    for (const id of watchedRunIds) {
+      try {
+        observed.push({ id, snapshot: await fetchRunSnapshot(repoRoot, repoSlug, id) });
+      } catch (e) {
+        return {
+          ok: false,
+          error: "ci_watch_snapshot_failed",
+          message: e?.message ?? "gh run view failed",
+          run_id: id,
+        };
       }
-    } catch (e) {
-      return {
-        ok: false,
-        error: "ci_watch_snapshot_failed",
-        message: e?.message ?? "gh run view failed",
-        run_id: effectiveRunId,
-      };
     }
-    // The set is only settled when every run is settled, so poll on the least
-    // advanced status rather than on any single run's.
-    const pending = snapshots.find((snap) => snap?.status !== "completed");
-    snapshot = pending ?? snapshots[0];
-    const elapsedSeconds = Math.floor((Date.now() - startMs) / 1000);
-    const decision = evaluateCiPollState({
-      status: snapshot.status,
-      elapsedSeconds,
-      queuedTimeoutSeconds,
-      totalTimeoutSeconds,
-    });
-    if (decision.action === "complete") {
+    const nowMs = now();
+    const elapsedSeconds = Math.floor((nowMs - startMs) / 1000);
+    // The set is only settled when every run is settled. Each unsettled run is
+    // judged on its own queue wait, so one run's hand-off between jobs cannot
+    // read as another run's stuck queue (issue #1581).
+    const pending = observed.filter((run) => run.snapshot?.status !== "completed");
+    if (pending.length === 0) {
       break;
     }
-    if (decision.action === "queued_too_long") {
-      return {
-        ok: true,
-        run_id: effectiveRunId,
-        conclusion: "queued_too_long",
-        status: snapshot.status ?? "queued",
-        url: snapshot.url ?? "",
-        duration_seconds: elapsedSeconds,
-        failed_steps: [],
-        log_summary: null,
-      };
+    let timedOut = null;
+    for (const run of pending) {
+      const queuedSeconds = ciRunQueuedSeconds(
+        run.snapshot,
+        nowMs,
+        firstQueuedObservedMs.get(run.id) ?? nowMs,
+      );
+      if (queuedSeconds !== null && !firstQueuedObservedMs.has(run.id)) {
+        firstQueuedObservedMs.set(run.id, nowMs);
+      }
+      const decision = evaluateCiPollState({
+        status: run.snapshot?.status,
+        elapsedSeconds,
+        queuedSeconds,
+        queuedTimeoutSeconds,
+        totalTimeoutSeconds,
+      });
+      if (decision.action === "queued_too_long") {
+        return ciWatchEnvelope(run, "queued_too_long", elapsedSeconds, observed);
+      }
+      if (decision.action === "timed_out") {
+        timedOut ??= run;
+      }
     }
-    if (decision.action === "timed_out") {
-      return {
-        ok: true,
-        run_id: effectiveRunId,
-        conclusion: "timed_out",
-        status: snapshot.status ?? "in_progress",
-        url: snapshot.url ?? "",
-        duration_seconds: elapsedSeconds,
-        failed_steps: [],
-        log_summary: null,
-      };
+    if (timedOut) {
+      return ciWatchEnvelope(timedOut, "timed_out", elapsedSeconds, observed);
     }
-    await _sleepMs(pollIntervalSeconds * 1000);
+    await sleep(pollIntervalSeconds * 1000);
   }
 
   // Terminal state reached. Success requires every watched run to have
   // succeeded; otherwise report the run responsible.
-  const outcome = aggregateCiRunOutcomes(snapshots);
-  if (outcome.failing) {
-    snapshot = outcome.failing;
-    effectiveRunId =
-      typeof snapshot.databaseId === "number" ? snapshot.databaseId : effectiveRunId;
+  const elapsedSeconds = Math.floor((now() - startMs) / 1000);
+  const outcome = aggregateCiRunOutcomes(observed.map((run) => run.snapshot));
+  if (!outcome.failing) {
+    // A success belongs to the whole set, so no single member stands in for it
+    // unless it is the only one watched; `runs` lists every member.
+    const only = observed.length === 1 ? observed[0] : null;
+    return {
+      ok: true,
+      run_id: only ? only.id : null,
+      conclusion: "success",
+      status: "completed",
+      url: only ? ciRunSummary(only).url : null,
+      duration_seconds: elapsedSeconds,
+      failed_steps: [],
+      log_summary: null,
+      runs: observed.map(ciRunSummary),
+    };
   }
-  const elapsedSeconds = Math.floor((Date.now() - startMs) / 1000);
-  const ghConclusion = typeof snapshot.conclusion === "string" ? snapshot.conclusion : "";
+  const failingRun = observed.find((run) => run.snapshot === outcome.failing);
+  const ghConclusion = outcome.conclusion;
   const isFailure =
     ghConclusion === "failure" ||
     ghConclusion === "cancelled" ||
@@ -370,22 +380,39 @@ export async function runWatchCiRun({
     ghConclusion === "action_required" ||
     ghConclusion === "startup_failure";
 
-  let failedSteps = [];
-  let logSummary = null;
+  const envelope = ciWatchEnvelope(failingRun, ghConclusion, elapsedSeconds, observed);
   if (isFailure) {
-    failedSteps = extractFailedStepsFromJobsJson(snapshot);
-    const rawLog = await _fetchCiRunFailedLog(repoRoot, repoSlug, effectiveRunId);
-    logSummary = summarizeCiLogFailedOutput(rawLog, 4096);
+    envelope.failed_steps = extractFailedStepsFromJobsJson(failingRun.snapshot);
+    const rawLog = await _fetchCiRunFailedLog(repoRoot, repoSlug, failingRun.id);
+    envelope.log_summary = summarizeCiLogFailedOutput(rawLog, 4096);
   }
+  return envelope;
+}
 
+function ciRunSummary({ id, snapshot }) {
+  const text = (value) => (typeof value === "string" ? value : "");
+  return {
+    run_id: id,
+    workflow: text(snapshot?.workflowName),
+    status: text(snapshot?.status),
+    conclusion: text(snapshot?.conclusion),
+    url: text(snapshot?.url),
+  };
+}
+
+// Every identifying field comes from the one run the conclusion is about: the
+// id is the one that run was fetched by, never a different member of the set.
+function ciWatchEnvelope(run, conclusion, elapsedSeconds, observed) {
+  const summary = ciRunSummary(run);
   return {
     ok: true,
-    run_id: effectiveRunId,
-    conclusion: ghConclusion || (isFailure ? "failure" : "success"),
-    status: typeof snapshot.status === "string" ? snapshot.status : "completed",
-    url: typeof snapshot.url === "string" ? snapshot.url : "",
+    run_id: summary.run_id,
+    conclusion,
+    status: summary.status,
+    url: summary.url,
     duration_seconds: elapsedSeconds,
-    failed_steps: failedSteps,
-    log_summary: logSummary,
+    failed_steps: [],
+    log_summary: null,
+    runs: observed.map(ciRunSummary),
   };
 }
