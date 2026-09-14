@@ -13,8 +13,9 @@ import { evaluateCodexVerifyCycleCap, postCodexVerifyCycleMarker, readPriorCodex
 import { buildCodexArchitecturePreflightPrompt, getIssueContext } from "./codex-workflow-3.js";
 import { formatWorkingTreeMutation } from "./command-failure-diagnostics.js";
 import { buildCodexArchitectureExecArgs, findNewWorkingTreeChanges, readGeneratedCodexSummary } from "./codex-workflow.js";
-import { getOwnerRepo, postPhaseMarker } from "./grc-legacy-compat-3.js";
-import { enrichCommentsWithThreadIds, ensureGitRepo, fetchReviewCommentById } from "./grc-legacy-compat-4.js";
+import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
+import { postPhaseMarker } from "./grc-legacy-compat-3.js";
+import { enrichCommentsWithThreadIds, fetchReviewCommentById } from "./grc-legacy-compat-4.js";
 import { buildCodexVerifyPrompt, getRuntimeAllowedAuthors, parseCodexVerifyTail, postReviewCommentReply, resolveReviewThread } from "./issue-thread.js";
 import { listWorkingTreeChanges } from "./knowledge-capture.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
@@ -74,10 +75,9 @@ async function resolvePreflightVocabulary(repoRoot) {
 // let the workflow advance. Marker post is best-effort — a failed post does not
 // invalidate the preflight; the worst case is the next gating tool sees no marker
 // and refuses, prompting the agent to re-run preflight (the correct fallback).
-async function postPreflightPhaseMarker(repoRoot, issueNumber) {
+async function postPreflightPhaseMarker({ repoRoot, owner, name }, issueNumber) {
   if (issueNumber == null) return null;
   try {
-    const { owner, name } = await getOwnerRepo(repoRoot);
     await postPhaseMarker(repoRoot, owner, name, issueNumber, "preflight");
     return { phase: "preflight", issue_number: issueNumber };
   } catch (markerError) {
@@ -118,7 +118,7 @@ export async function runCodexArchitecturePreflight({
   issueNumber,
   repo,
   signal = undefined,
-}) {
+}, { workspaceAuthorizationResolver = undefined } = {}) {
   // The /implement workflow supports two entry points: UID-first (a formal
   // Ground Control requirement) and issue-first (a requirement-free issue
   // for a bug, refactor, or maintenance run). Preflight must support both,
@@ -130,7 +130,16 @@ export async function runCodexArchitecturePreflight({
     );
   }
 
-  const repoRoot = await ensureGitRepo(repoPath);
+  // Preflight runs codex with write access to the checkout and posts the `preflight` marker the
+  // plan gate reads, so it runs only against the launch workspace (issue #1583).
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    return issueRepositoryNotAuthorized("architecture_preflight", repository, {
+      issue_number: issueNumber ?? null,
+      requirement_uid: requirementUid ?? null,
+    });
+  }
+  const { repoRoot } = repository;
 
   let requirement = null;
   let traceabilityLinks = [];
@@ -193,7 +202,7 @@ export async function runCodexArchitecturePreflight({
     // Record the `preflight` phase marker on the issue thread so downstream
     // tools (gc_post_implementation_plan etc.) can detect that preflight ran
     // before they let the workflow advance.
-    const phaseMarker = await postPreflightPhaseMarker(repoRoot, issueNumber);
+    const phaseMarker = await postPreflightPhaseMarker(repository, issueNumber);
 
     return {
       requirement_uid: requirementUid ?? null,
@@ -359,7 +368,7 @@ export async function runCodexVerifyFinding({
   commentId,
   overrideCap = false,
   overrideReason = null,
-}) {
+}, { workspaceAuthorizationResolver = undefined } = {}) {
   if (!Number.isInteger(prNumber) || prNumber <= 0) {
     throw new Error("pr_number must be a positive integer");
   }
@@ -367,8 +376,11 @@ export async function runCodexVerifyFinding({
     throw new Error("comment_id must be a positive integer");
   }
 
-  const repoRoot = await ensureGitRepo(repoPath);
-  const { owner, name } = await getOwnerRepo(repoRoot);
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    return issueRepositoryNotAuthorized("codex_verify", repository, { pr_number: prNumber, comment_id: commentId });
+  }
+  const { repoRoot, owner, name } = repository;
 
   // Per-finding hard-cap-2 enforcement. Same template as the cycle cap but
   // keyed per (PR, comment_id). Refuses cycle 3+ unless overrideCap=true with

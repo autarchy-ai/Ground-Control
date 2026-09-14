@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { parsePhaseMarkers, runCodexReview, runCodexReviewCycle } from "./lib.js";
+import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
 
 // The full set of keys `review_coverage` publishes. Asserting the exact shape
 // at every public surface is the structural gate for a whole class of bug: a
@@ -193,7 +194,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: true,
           issueNumber: 1414,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
 
         assert.equal(result.ok, true);
         assert.equal(result.diff_mode, "manifest");
@@ -256,7 +257,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: true,
           issueNumber: 1414,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
 
         assert.equal(result.ok, true);
         // A clean slice never masks a finding-bearing one.
@@ -292,7 +293,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: true,
           issueNumber: 1414,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
 
         assert.equal(result.ok, false);
         assert.equal(result.error, "review_coverage_incomplete");
@@ -323,7 +324,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           issueNumber: 1414,
           uncommitted: true,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.ok, true);
         assert.equal(result.status, "clean");
         assert.equal(result.diff_mode, "manifest");
@@ -351,7 +352,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           issueNumber: 1414,
           uncommitted: true,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.ok, false);
         assert.equal(result.status, "post_failed");
         assert.equal(result.error, "review_coverage_incomplete");
@@ -377,7 +378,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: true,
           issueNumber: 1414,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.ok, false);
         assert.equal(result.error, "review_coverage_incomplete");
         assert.equal(result.next_action, "retry_review_after_resolving_coverage_failure");
@@ -408,7 +409,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: true,
           issueNumber: 1414,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.ok, true);
         assert.equal(result.diff_mode, "manifest");
         assert.ok(
@@ -430,7 +431,7 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           uncommitted: true,
           issueNumber: 1414,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.cycle, 1);
         assert.equal(result.review_coverage.chunks_total, 3);
         // One findings record + one cycle marker — never one per slice.

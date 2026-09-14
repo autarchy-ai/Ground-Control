@@ -7,8 +7,8 @@
 import { deriveIssueNumberFromBranch } from "./api-requirements.js";
 import { TEST_QUALITY_REVIEW_DEFAULT_MODEL } from "./ci-watcher.js";
 import { resolveReviewerPrePushCap, runSingleClaudeTestQualityReview } from "./codex-workflow-5.js";
-import { getOwnerRepo } from "./grc-legacy-compat-3.js";
-import { ensureGitRepo, getCurrentBranchName } from "./grc-legacy-compat-4.js";
+import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
+import { getCurrentBranchName } from "./grc-legacy-compat-4.js";
 import { readVocabularyForReview } from "./plan-posting.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { rejectReservedMarkerSequence } from "./repo-vocabulary.js";
@@ -53,8 +53,18 @@ export async function runTestQualityReview({
   // logical cycle (issue #1476). Forwarded to the durable writer so the resolution lands between
   // the findings record and the cycle marker.
   stationObservation = null,
-}) {
-  const repoRoot = await ensureGitRepo(repoPath);
+}, { workspaceAuthorizationResolver = undefined } = {}) {
+  // The findings record and cycle marker are gate inputs, so they are written only to the launch
+  // workspace's issue thread; a caller-named checkout is refused first (issue #1583).
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    return issueRepositoryNotAuthorized("test_quality_review", repository, {
+      issue_number: issueNumber ?? null,
+      finding_count: 0,
+      findings: [],
+    });
+  }
+  const { repoRoot, owner, name } = repository;
 
   // Resolve base_branch: caller wins; otherwise pull from
   // .ground-control.yaml; otherwise "dev". Preserves the legacy
@@ -102,8 +112,6 @@ export async function runTestQualityReview({
       findings: [],
     };
   }
-
-  const { owner, name } = await getOwnerRepo(repoRoot);
 
   // Cycle cap enforcement. Count existing test-quality cycle markers on
   // the issue thread; refuse cycle hardCap+1 unless override_cap=true

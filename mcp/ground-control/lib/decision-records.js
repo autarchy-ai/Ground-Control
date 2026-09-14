@@ -5,8 +5,7 @@
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
 import { detectSensitiveBodyContent, extractGhErrorMessage } from "./grc-legacy-compat-2.js";
-import { getOwnerRepo } from "./grc-legacy-compat-3.js";
-import { ensureGitRepo } from "./grc-legacy-compat-4.js";
+import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { REVIEW_NOTES_MAX, REVIEW_VERDICTS } from "./grc-legacy-compat-5.js";
 import { checkVerdictBlockingConsistency } from "./grc-legacy-compat.js";
 import { DECISION_RECORD_CLASSIFICATIONS, DECISION_RECORD_DECISIONS, DECISION_RECORD_REVIEWERS, GITHUB_ISSUE_COMMENT_BODY_MAX, buildDecisionRecordMarker, rejectReservedMarkerSequence } from "./repo-vocabulary.js";
@@ -280,7 +279,10 @@ function rejectReservedMarkersInDecisionInput({ findings, architectural_read, no
   }
   return rejectReservedMarkersInNotes(notes, issueNumber);
 }
-export async function runPostDecisionRecord({ repoPath, issueNumber, cycle, reviewer, findings, verdict, architectural_read, notes }) {
+export async function runPostDecisionRecord(
+  { repoPath, issueNumber, cycle, reviewer, findings, verdict, architectural_read, notes },
+  { workspaceAuthorizationResolver = undefined } = {},
+) {
   const validation = validateDecisionRecordInput({ issueNumber, cycle, reviewer, findings, verdict, architectural_read, notes });
   if (!validation.ok) {
     return {
@@ -319,8 +321,11 @@ export async function runPostDecisionRecord({ repoPath, issueNumber, cycle, revi
       next_action: "reduce_findings_or_split_across_cycles_and_retry",
     };
   }
-  const repoRoot = await ensureGitRepo(repoPath);
-  const { owner, name } = await getOwnerRepo(repoRoot);
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    return issueRepositoryNotAuthorized("decision_record", repository, { issue_number: issueNumber });
+  }
+  const { repoRoot, owner, name } = repository;
   let apiResponse = null;
   try {
     const { stdout } = await execFile(

@@ -4,6 +4,7 @@
 // (docs/CODING_STANDARDS.md, Sonar S104). It contained no mutual recursion, so it was
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
+import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { runCodexReview } from "./codex-review-runner.js";
 import { runPostDecisionRecord } from "./decision-records.js";
 import { _statusForReviewerAction, buildAutoFixDecisionFindings, normalizeReviewCycleNextAction, reviewCycleFindings, summarizeReviewFindings } from "./knowledge-capture.js";
@@ -16,6 +17,7 @@ async function _runReviewCycleShared({
   reviewResult,
   repoPath,
   issueNumber,
+  workspaceAuthorizationResolver,
 }) {
   // Non-ok review results pass straight through; the cycle tool does
   // not paper over reviewer boundary errors with a decision record. The
@@ -89,7 +91,7 @@ async function _runReviewCycleShared({
         && reviewResult.architectural_read.trim() !== ""
         ? { architectural_read: reviewResult.architectural_read }
         : {}),
-    });
+    }, { workspaceAuthorizationResolver });
   } catch (e) {
     return {
       ok: false,
@@ -143,7 +145,7 @@ export async function runCodexReviewCycle({
   overrideReason = null,
   autoGrant = false,
   signal = undefined,
-}) {
+}, { workspaceAuthorizationResolver = undefined } = {}) {
   if (typeof repoPath !== "string" || repoPath.length === 0) {
     return {
       ok: false,
@@ -171,6 +173,15 @@ export async function runCodexReviewCycle({
         "Post-push direct callers should use gc_codex_review with pr_number.",
     };
   }
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    return {
+      ...issueRepositoryNotAuthorized("codex_review_cycle", repository, { issue_number: issueNumber }),
+      reviewer: "codex",
+      status: "post_failed",
+    };
+  }
+  const authorizedRepoPath = repository.repoRoot;
 
   // Auto-grant path (gc_review_cap_disposition). Only active when the caller
   // explicitly opts in. The existing human override_cap path is untouched.
@@ -178,10 +189,10 @@ export async function runCodexReviewCycle({
   let effectiveOverrideReason = overrideReason;
   if (autoGrant === true) {
     const grant = await verifyAutoDispositionGrant({
-      repoPath,
+      repoPath: authorizedRepoPath,
       issueNumber,
       reviewer: "codex",
-    });
+    }, { workspaceAuthorizationResolver });
     if (!grant || grant.authorized !== true) {
       return {
         ok: false,
@@ -199,11 +210,11 @@ export async function runCodexReviewCycle({
 
   const run = await _runStationWithObservationLedger({
     reviewer: "codex",
-    repoPath,
+    repoPath: authorizedRepoPath,
     issueNumber,
     signal,
     invokeReview: ({ stationObservation }) => runCodexReview({
-      repoPath,
+      repoPath: authorizedRepoPath,
       baseBranch: baseBranch ?? "dev",
       uncommitted: true,
       issueNumber,
@@ -211,7 +222,7 @@ export async function runCodexReviewCycle({
       overrideReason: effectiveOverrideReason,
       stationObservation,
       signal,
-    }),
+    }, { workspaceAuthorizationResolver }),
   });
 
   if (!run.observed && run.exhaustedNonVerdict) {
@@ -225,8 +236,9 @@ export async function runCodexReviewCycle({
   return _runReviewCycleShared({
     reviewer: "codex",
     reviewResult: run.envelope,
-    repoPath,
+    repoPath: authorizedRepoPath,
     issueNumber,
+    workspaceAuthorizationResolver,
   });
 }
 export async function runTestQualityReviewCycle({
@@ -238,7 +250,7 @@ export async function runTestQualityReviewCycle({
   autoGrant = false,
   model = undefined,
   signal = undefined,
-}) {
+}, { workspaceAuthorizationResolver = undefined } = {}) {
   if (typeof repoPath !== "string" || repoPath.length === 0) {
     return {
       ok: false,
@@ -257,6 +269,15 @@ export async function runTestQualityReviewCycle({
       message: "issue_number must be a positive integer",
     };
   }
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    return {
+      ...issueRepositoryNotAuthorized("test_quality_review_cycle", repository, { issue_number: issueNumber }),
+      reviewer: "test-quality",
+      status: "post_failed",
+    };
+  }
+  const authorizedRepoPath = repository.repoRoot;
 
   // Auto-grant path (gc_review_cap_disposition). Only active when the caller
   // explicitly opts in. The existing human override_cap path is untouched.
@@ -264,10 +285,10 @@ export async function runTestQualityReviewCycle({
   let effectiveOverrideReason = overrideReason;
   if (autoGrant === true) {
     const grant = await verifyAutoDispositionGrant({
-      repoPath,
+      repoPath: authorizedRepoPath,
       issueNumber,
       reviewer: "test-quality",
-    });
+    }, { workspaceAuthorizationResolver });
     if (!grant || grant.authorized !== true) {
       return {
         ok: false,
@@ -285,12 +306,12 @@ export async function runTestQualityReviewCycle({
 
   const run = await _runStationWithObservationLedger({
     reviewer: "test-quality",
-    repoPath,
+    repoPath: authorizedRepoPath,
     issueNumber,
     signal,
     invokeReview: ({ stationObservation }) => {
       const reviewParams = {
-        repoPath,
+        repoPath: authorizedRepoPath,
         baseBranch,
         issueNumber,
         overrideCap: effectiveOverrideCap,
@@ -299,7 +320,7 @@ export async function runTestQualityReviewCycle({
         signal,
       };
       if (model !== undefined) reviewParams.model = model;
-      return runTestQualityReview(reviewParams);
+      return runTestQualityReview(reviewParams, { workspaceAuthorizationResolver });
     },
   });
 
@@ -314,7 +335,8 @@ export async function runTestQualityReviewCycle({
   return _runReviewCycleShared({
     reviewer: "test-quality",
     reviewResult: run.envelope,
-    repoPath,
+    repoPath: authorizedRepoPath,
     issueNumber,
+    workspaceAuthorizationResolver,
   });
 }

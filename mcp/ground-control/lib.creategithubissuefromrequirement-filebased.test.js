@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createGitHubIssueFromRequirement } from "./lib.js";
+import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
 
 describe("createGitHubIssueFromRequirement (issue #1500)", () => {
   function makeGhShim(number) {
@@ -80,7 +81,7 @@ process.exit(0);
           repoRoot: repoDir,
           labels: ["requirement", "wave-1"],
           extraBody: "## Notes\n\nextra context",
-        }),
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(repoDir) }),
       );
 
       assert.equal(result.url, "https://github.com/o/r/issues/431");
@@ -117,7 +118,10 @@ process.exit(0);
     writeRequirement(repoDir, { uid: "AGT-001", title: "Draft Req", status: "DRAFT" });
     try {
       const result = await withShim(shim.binDir, () =>
-        createGitHubIssueFromRequirement({ uid: "AGT-001", repo: "o/r", repoRoot: repoDir }),
+        createGitHubIssueFromRequirement(
+          { uid: "AGT-001", repo: "o/r", repoRoot: repoDir },
+          { workspaceAuthorizationResolver: workspaceAuthorizationFor(repoDir) },
+        ),
       );
       assert.equal(result.link_type, "DOCUMENTS");
     } finally {
@@ -132,7 +136,10 @@ process.exit(0);
     try {
       await withShim(shim.binDir, async () => {
         await assert.rejects(
-          () => createGitHubIssueFromRequirement({ uid: "NOPE-001", repo: "o/r", repoRoot: repoDir }),
+          () => createGitHubIssueFromRequirement(
+            { uid: "NOPE-001", repo: "o/r", repoRoot: repoDir },
+            { workspaceAuthorizationResolver: workspaceAuthorizationFor(repoDir) },
+          ),
           /not found/,
         );
       });

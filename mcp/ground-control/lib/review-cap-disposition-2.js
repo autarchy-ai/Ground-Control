@@ -7,8 +7,9 @@
 import { parseCodexReviewPrePushCycleMarkers } from "./api-requirements.js";
 import { collectDispositionSignals, effectiveReviewerCap, runDispositionJudge } from "./codex-verify-cap.js";
 import { detectSensitiveBodyContent, extractGhErrorMessage, selectDiffMode } from "./grc-legacy-compat-2.js";
-import { getAuthenticatedGitHubLogin, getOwnerRepo, readIssueCommentBodies, readIssueCommentsWithAuthors } from "./grc-legacy-compat-3.js";
-import { computeReviewDiff, ensureGitRepo } from "./grc-legacy-compat-4.js";
+import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
+import { getAuthenticatedGitHubLogin, readIssueCommentBodies, readIssueCommentsWithAuthors } from "./grc-legacy-compat-3.js";
+import { computeReviewDiff } from "./grc-legacy-compat-4.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { GITHUB_ISSUE_COMMENT_BODY_MAX, rejectReservedMarkerSequence } from "./repo-vocabulary.js";
 import { REVIEW_DISPOSITIONS, REVIEW_DISPOSITION_NEXT_ACTION, _emptyReviewDispositionConfigForRunner, _isHighRiskSnapshot, buildReviewAutoDispositionRecord, evaluateAutoDispositionGrant, parseChangedPathsFromManifest, scoreDisposition } from "./review-cap-disposition.js";
@@ -26,7 +27,7 @@ export async function runReviewCapDisposition({
   uncommitted = true,
   judgeVerdict = null,
   signal = undefined,
-}) {
+}, { workspaceAuthorizationResolver = undefined } = {}) {
   if (typeof repoPath !== "string" || repoPath.length === 0) {
     return { ok: false, error: "review_cap_disposition_input_invalid", message: "repo_path is required" };
   }
@@ -43,7 +44,13 @@ export async function runReviewCapDisposition({
     return { ok: false, error: "review_cap_disposition_input_invalid", message: "cap must be a positive integer" };
   }
 
-  const repoRoot = await ensureGitRepo(repoPath);
+  // The disposition record can mint an over-cap grant a later review cycle consumes, so it is
+  // written only to the launch workspace's issue thread (issue #1583).
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    return issueRepositoryNotAuthorized("review_cap_disposition", repository, { issue_number: issueNumber });
+  }
+  const { repoRoot, owner, name } = repository;
 
   let config = null;
   let workflow = null;
@@ -63,7 +70,6 @@ export async function runReviewCapDisposition({
   // Authoritative cap boundary comes from config, not the caller's `cap`.
   const effectiveCap = effectiveReviewerCap(workflow, reviewer);
 
-  const { owner, name } = await getOwnerRepo(repoRoot);
   const commentBodies = await readIssueCommentBodies(repoRoot, owner, name, issueNumber);
   // Prior over-cap count is derived from DURABLE cycle markers (how many review
   // cycles actually ran beyond the cap), not from the grant-marker count or the
@@ -265,7 +271,10 @@ export async function runReviewCapDisposition({
       apiResponse && typeof apiResponse.html_url === "string" ? apiResponse.html_url : null,
   };
 }
-export async function verifyAutoDispositionGrant({ repoPath, issueNumber, reviewer }) {
+export async function verifyAutoDispositionGrant(
+  { repoPath, issueNumber, reviewer },
+  { workspaceAuthorizationResolver = undefined } = {},
+) {
   if (typeof repoPath !== "string" || repoPath.length === 0) {
     return { ok: false, error: "verify_auto_disposition_input_invalid", message: "repo_path is required" };
   }
@@ -276,7 +285,12 @@ export async function verifyAutoDispositionGrant({ repoPath, issueNumber, review
     return { ok: false, error: "verify_auto_disposition_input_invalid", message: "reviewer must be 'codex' or 'test-quality'" };
   }
 
-  const repoRoot = await ensureGitRepo(repoPath);
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    const refusal = issueRepositoryNotAuthorized("verify_auto_disposition", repository, { issue_number: issueNumber });
+    return { ...refusal, authorized: false, reason: refusal.error };
+  }
+  const { repoRoot, owner, name } = repository;
   let config = null;
   let workflow = null;
   try {
@@ -297,7 +311,6 @@ export async function verifyAutoDispositionGrant({ repoPath, issueNumber, review
   // caller — the grant must bind to it.
   const effectiveCap = effectiveReviewerCap(workflow, reviewer);
 
-  const { owner, name } = await getOwnerRepo(repoRoot);
   const trustedLogin = await getAuthenticatedGitHubLogin(repoRoot);
   const authored = await readIssueCommentsWithAuthors(repoRoot, owner, name, issueNumber);
   // Count cycle-run markers from ALL comment bodies (not just trusted): a forged

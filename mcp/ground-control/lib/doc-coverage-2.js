@@ -9,8 +9,8 @@ import { readAbsoluteTextFile } from "./api-requirements.js";
 import { parseGroundControlYaml } from "./ground-control-config.js";
 import { buildFinalReportMarker, renderCiStatus, renderDocumentationSection, renderSonarStatus } from "./doc-coverage.js";
 import { detectSensitiveBodyContent, extractGhErrorMessage } from "./grc-legacy-compat-2.js";
-import { getOwnerRepo } from "./grc-legacy-compat-3.js";
 import { ensureGitRepo } from "./grc-legacy-compat-4.js";
+import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { buildQuickfixCloseComment, validateFinalReportInput } from "./plan-posting.js";
 import { GITHUB_ISSUE_COMMENT_BODY_MAX, rejectReservedMarkerSequence } from "./repo-vocabulary.js";
 import { detectDeferralDisposition, execFile } from "./runtime-primitives.js";
@@ -132,7 +132,7 @@ export function buildFinalReport(input) {
     ..._finalReportStatusSection({ isPreMerge, ciStatus, sonarStatus, documentation_outcome: input.documentation_outcome }),
   ].join("\n");
 }
-export async function runPostFinalReport(input) {
+export async function runPostFinalReport(input, { workspaceAuthorizationResolver = undefined } = {}) {
   const { repoPath } = input;
   const rest = { ...input };
   delete rest.repoPath;
@@ -360,8 +360,13 @@ export async function runPostFinalReport(input) {
       next_action: "trim_summary_or_reviews_and_retry",
     };
   }
-  const repoRoot = await ensureGitRepo(repoPath);
-  const { owner, name } = await getOwnerRepo(repoRoot);
+  // The report is posted only to the launch-workspace-authorized repository, never a checkout a
+  // caller named (issues #1578, #1583).
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository.ok) {
+    return issueRepositoryNotAuthorized("final_report", repository, { issue_number: rest.issueNumber });
+  }
+  const { repoRoot, owner, name } = repository;
   // The traceability-reconciliation prerequisite (former issue #1058) is retired
   // with the backend (issue #1500): reconciliation is no longer a workflow phase,
   // so there is no `traceability_reconciled` marker to require. The report's real

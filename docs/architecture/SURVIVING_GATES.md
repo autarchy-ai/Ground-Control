@@ -113,6 +113,18 @@ privileged operation behind the same repository binding. Callers cannot bypass
 repository identity, issue/PR scope, or public-text scrubbing unless a row names
 an explicit recorded human override.
 
+Repository identity means the MCP launch workspace, not the caller's `repo_path`.
+Every tool that writes an issue or pull-request record, creates or closes an
+issue, or reads an issue thread with the host's GitHub credentials refuses any
+other checkout with `<tool>_repo_not_authorized` before its first GitHub call
+(issue #1583): `gc_post_decision_record`, `gc_post_implementation_plan`,
+`gc_post_final_report`, `gc_assert_completion`, `gc_close_issue_after_merge`,
+`gc_codex_architecture_preflight`, `gc_codex_review`, `gc_codex_review_cycle`,
+`gc_test_quality_review`, `gc_test_quality_review_cycle`,
+`gc_codex_verify_finding`, `gc_review_cap_disposition`, `gc_create_github_issue`,
+and `gc_get_issue_thread`. The branch, obligation, synchronization, watcher,
+requirement-scope, and PR-review tools were already bound the same way.
+
 | Tool | Role | Invariant, input, bypass/failure, and placement history |
 |---|---|---|
 | `gc_get_repo_ground_control_context` | evidence | Validated checkout config is the workflow input; invalid/mismatched config refuses. Replaces driver-hardcoded project settings. |

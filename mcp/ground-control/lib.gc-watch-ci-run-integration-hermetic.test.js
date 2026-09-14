@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { DEFAULT_IMPLEMENT_ROUTING_STAGES, postCodexReviewFindings } from "./lib.js";
+import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
 
 async function withShimPath(binDir, fn) {
   const oldPath = process.env.PATH;
@@ -381,7 +382,10 @@ process.exit(2);
     });
     try {
       await withShimPath(shim.binDir, async () => {
-        const r = await runGetIssueThread({ repoPath: shim.repoDir, issueNumber: 42 });
+        const r = await runGetIssueThread(
+          { repoPath: shim.repoDir, issueNumber: 42 },
+          { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) },
+        );
         assert.equal(r.ok, true);
         assert.equal(r.unchanged, false);
         assert.equal(r.body, "issue body");
@@ -422,7 +426,10 @@ process.exit(2);
     });
     try {
       await withShimPath(shim.binDir, async () => {
-        const r1 = await runGetIssueThread({ repoPath: shim.repoDir, issueNumber: 55 });
+        const r1 = await runGetIssueThread(
+          { repoPath: shim.repoDir, issueNumber: 55 },
+          { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) },
+        );
         assert.equal(r1.ok, true);
         firstHash = r1.hash;
         // Second call with the hash should NOT touch gh.
@@ -430,7 +437,7 @@ process.exit(2);
           repoPath: shim.repoDir,
           issueNumber: 55,
           expectedHash: firstHash,
-        });
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(r2.ok, true);
         assert.equal(r2.unchanged, true);
         assert.equal(r2.hash, firstHash);

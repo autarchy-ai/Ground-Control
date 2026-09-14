@@ -400,3 +400,31 @@ This is a correctness fix inside the workflow tool surface. It adds no
 `.ground-control.yaml` key, so the agent-neutral context contract this ADR
 defines is unchanged: the fix needs no repo-specific workflow filename because
 head SHA identifies the triggered set on its own.
+
+## 2026-09-14 amendment: issue-thread record tools bind to the launch workspace
+
+The privileged side-effect boundary above makes repository resolution an MCP
+responsibility. Issue #1583 found that several tools met that duty only with
+origin pinning. `gc_post_decision_record`, `gc_post_implementation_plan`,
+`gc_close_issue_after_merge`, both review tools and their cycle wrappers,
+`gc_codex_architecture_preflight`, `gc_codex_verify_finding`,
+`gc_review_cap_disposition`, `gc_create_github_issue`, `gc_get_issue_thread`,
+`gc_post_final_report`, and `gc_assert_completion` derived `owner/name` from the
+caller's `repo_path`. Origin pinning keeps `GH_REPO` from retargeting a call. It
+does not show that the checkout is one this server may act on. A caller could
+name any on-host checkout with a GitHub origin, and the server would post plan
+comments, findings, cycle markers, and decision records to it, or close its
+issue, with the host's credentials. Cycle markers and decision records are gate
+inputs, so that also let a run consume or satisfy another repository's review and
+phase state.
+
+These tools now resolve their repository through
+`resolveAuthorizedIssueRepository` (`lib/authorized-issue-repository.js`), which
+runs `authorizeImplementRepoRoot` against the identity captured at MCP launch.
+That is the boundary the branch, obligation, synchronization, watcher, and
+PR-review tools already used. `owner/name` comes from that authorization, never
+from the caller. Any other checkout gets a structured
+`<tool>_repo_not_authorized` refusal before any GitHub read or write and before
+any review engine starts. The runners accept an injected workspace resolver, so
+tests authorize their own temporary repository and the real check still runs.
+The context contract and `.ground-control.yaml` schema are unchanged.
