@@ -47,6 +47,9 @@ const REQUIRED_FIELD_REGISTRY = {
   gc_reconcile_station_observation: [
     "repo_path", "issue_number", "obligation_id", "findings_record_url",
   ],
+  gc_release_identity: [
+    "action", "repo_path", "issue_number", "family", "idempotency_key", "reason",
+  ],
 };
 
 describe("MCP tool description parity (issue #1169)", { timeout: 30000 }, () => {
@@ -106,6 +109,15 @@ describe("MCP tool description parity (issue #1169)", { timeout: 30000 }, () => 
     assert.match(descriptionMap.gc_codex_job, /gc_implement_mechanical/);
     assert.match(descriptionMap.gc_codex_job, /review-cycle.*issue thread/i);
     assert.doesNotMatch(descriptionMap.gc_codex_job, /re-run the originating tool/i);
+  });
+
+  it("publishes a release-identity schema with no caller-selected destination or identity (issue #1579)", () => {
+    const schema = toolMap.gc_release_identity?.inputSchema;
+    assert.deepEqual(Object.keys(schema?.properties ?? {}).sort(),
+      ["action", "family", "idempotency_key", "issue_number", "reason", "repo_path"]);
+    assert.equal(schema.additionalProperties, false);
+    assert.deepEqual(schema.properties.action.enum, ["reserve", "publish", "abandon", "status"]);
+    assert.ok(schema.properties.idempotency_key.maxLength <= 128);
   });
 
   it("publishes async-only idempotent review-cycle schemas", () => {

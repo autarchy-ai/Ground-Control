@@ -227,7 +227,7 @@ flowchart TB
 - **Step 8.5 (= SKILL Step 6.5)** is the pre-push Codex review pass per issue #804: `gc_codex_review` with `uncommitted=true` runs locally against the staged + unstaged diff and posts a verbatim findings record to the resolved issue thread for each cycle (durable per ADR-029). **Default cap is 1 cycle** (issue #906); configurable per repo via `workflow.codex_review.pre_push_cap` in `.ground-control.yaml`, bounds `[1, 10]`. The cap is enforced **per issue** (the cycle counter is anchored to the GitHub issue thread; the current branch is recorded in the marker for audit context but is NOT part of the cap key, so a branch rename on the same issue cannot reset the counter; see ADR-029). After a cycle's findings are surfaced, the agent **dispatches on the returned `next_action`**: re-stage and re-invoke ONLY on `fix_findings_and_reinvoke`; on `fix_findings_then_summarize_and_escalate` (the last-in-cap action, which fires on cycle 1 under the cap-1 default when findings are present) fix and post the decision record but escalate to the user instead of a blind re-invoke that would only return `codex_review_prepush_cap_reached`. No commit/push between cycles. The post-push codex review (former Step 12 in earlier numbering) was removed by issue #804; merge-commit drift is the responsibility of CI (compile/tests/integration) and SonarCloud (quality).
 - **Step 8.6 (= SKILL Step 6.6)** is the pre-push test-quality review, moved pre-push by issue #906 from the former post-PR Step 13. `gc_test_quality_review` runs locally against the same staged + unstaged + untracked diff. **Default cap is 1 cycle**; configurable per repo via `workflow.test_quality_review.pre_push_cap`. Same local-only iteration loop as Step 6.5 (re-stage, do NOT commit between cycles); same `gc_post_decision_record` contract for the durable record. The MCP tool returns a `{findings, cycle, cap, next_action, ...}` envelope; the parent /implement agent reads `next_action` as a directive (`fix_findings_and_reinvoke` / `post_clean_decision_record_and_advance_to_phase_c` / `fix_findings_then_summarize_and_escalate` (last in-cap cycle: fix + escalate, NOT re-invoke) / `post_summary_and_escalate_to_user`), not as prose to summarize back to the user. Per #884 v2 this is an MCP tool, not a Skill; the v1 Skill-tool boundary returned prose findings that the parent's autoregressive "I just got a result, present it" bias kept echoing back to the user instead of fixing in-turn; the MCP boundary closes that bias structurally. See `architecture/notes/test-quality-review-engine.md` for the full mechanism (engine, auth, failure modes).
 - **Fix-locks-itself evidence (Steps 6.5 and 6.6).** Both reviewers use the canonical rule in `skills/implement/steps/_review-loop-rules.md`: each accepted fix to executable code or a runtime-consumed data contract adds or extends a test that fails when the named defect is reintroduced, and self-verification records the test path plus case/describe name. Pure prose may state that there is no executable surface to lock; narrowly factual rename or defensive-narrowing exceptions remain per-finding rationales and do not turn an executable diff into documentation-only work. Cycle wrappers auto-post the decision before the repair, so the record cannot truthfully cite later test evidence; no MCP record lifecycle or schema changes in issue #871.
-- **Automated cap disposition (optional, default off; issue #1245).** When `workflow.review_disposition.enabled` is true, the cap boundary at Step 6.5 / 6.6 is dispositioned automatically instead of always stopping for the user. After the last-in-cap findings are fixed, self-verified, and re-staged, the orchestrator calls `gc_review_cap_disposition`, which scores the **post-fix** diff server-side (diff size, changed-surface class, finding shape, and prior auto-overrides) and returns `proceed` (advance), `one_more_cycle` (re-invoke the cycle tool with `override_cap=true` + `auto_grant=true`), or `escalate_to_human` (stop for the user as today). A gray-zone LLM judge ranks only the residual undecided band; it can never override the deterministic ceiling/fast paths. Authority for the one auto-granted over-cap cycle is a durable `gc:review-auto-disposition` marker the tool posts, **not** agent `override_reason` text; the cycle wrappers verify the marker before honoring `auto_grant=true`. A hard `max_auto_overrides` ceiling (default 1) caps the auto path at one extra cycle; beyond it only the human `override_cap` escape proceeds. `mode: shadow` (the enabled default) posts the disposition but still escalates, building agreement data before `mode: authoritative` lets the disposition drive control flow. This repo runs the enabled workflow in `mode: authoritative`, so approved dispositions drive the next step automatically. With the knob off, behavior is byte-for-byte unchanged. Enforced in the MCP layer (ADR-031 / ADR-029 amendments, GC-O007).
+- **Automated cap disposition (optional, default off; issue #1245).** When `workflow.review_disposition.enabled` is true, the cap boundary at Step 6.5 / 6.6 is dispositioned automatically instead of always stopping for the user. After the last-in-cap findings are fixed, self-verified, and re-staged, the orchestrator calls `gc_review_cap_disposition`, which scores the **post-fix** diff server-side (diff size, changed-surface class, finding shape, and prior auto-overrides) and returns `proceed` (advance), `one_more_cycle` (re-invoke the cycle tool with `override_cap=true` + `auto_grant=true`), or `escalate_to_human` (stop for the user as today). A gray-zone LLM judge ranks only the residual undecided band; it can never override the deterministic ceiling/fast paths. Authority for the one auto-granted over-cap cycle is a durable `gc:review-auto-disposition` marker the tool posts, **not** agent `override_reason` text; the cycle wrappers verify the marker before honoring `auto_grant=true`. A hard `max_auto_overrides` ceiling (default 1) caps the auto path at one extra cycle; beyond it only the human `override_cap` escape proceeds. `mode: shadow` (the enabled default) posts the disposition but still escalates, building agreement data before `mode: authoritative` lets the disposition drive control flow. This repository currently leaves the knob disabled, so cap boundaries remain human decisions. With the knob off, behavior is byte-for-byte unchanged. Enforced in the MCP layer (ADR-031 / ADR-029 amendments, GC-O007).
 - **Deterministic execution bands (#1426/#1473).** Successful-path mechanical work is composed by `gc_implement_mechanical` instead of consuming a separate model turn per step: `bootstrap` gathers Steps 1–2 context and pickup state, `verify` runs Step 6, `publish` runs Steps 7–8.5, `monitor` runs Steps 10–11, `readiness` records Step 17 pre-merge, and `finalize` runs Step 17 post-merge plus Step 20. The canonical `/implement` and `/quickfix` workflows call the three long actions (`verify`, `publish`, `monitor`) with `async: true` and one bounded `idempotency_key` per logical attempt, then poll `gc_codex_job`; short actions remain synchronous. The same key and normalized input reuse one running or terminal job, different input under the key is refused, and distinct active `verify`/`publish` attempts cannot race on one checkout. A terminal job preserves the action envelope under `result`: red tests, hooks, merge conflicts, CI, or Sonar are completed jobs with `result.ok: false` and bounded repair evidence, not transport failures. After repair the caller uses a new key. Publish conflicts retain the exact synchronization evidence required to resume the preserved merge. Mechanical jobs return `job_not_cancellable` because their full subprocess and polling graph does not yet honor abort; the `publish` hang this closes is prevented instead by the shared gate runner reaping its process tree on the leader's exit (a leaked descendant can no longer hold the stdout pipe and keep the runner running after every visible child has exited), a per-worktree mutation lease, a versioned write-ahead recovery journal, a pre-commit compare-and-swap on `HEAD`/`MERGE_HEAD`, and restart-time reconciliation that resumes a journal-matching merge through the base-sync retry contract or refuses ambiguous state without mutating (issue #1495, ADR-036). Architecture, implementation, review finding decisions, and post-merge traceability reconciliation remain agent work.
 - **Requirement identity for repository gates (#1434).** A repository whose completion, policy, or pre-commit command runs a requirement-governance check normally derives the requirement under test from the branch name. `/implement` can target a requirement whose issue branch carries no UID, so an optional `requested_requirement_uid` on `gc_implement_mechanical` and `gc_synchronize_implement_branch` reaches every repo-authored gate as the `ACES_REQUIREMENT_UID` environment variable: the `verify` completion and policy commands, the `publish` pre-commit command, and both final-tree gates at Step 8.5, including the committed-retry path. The value travels in the child environment rather than the command text, so it never enters argv and offers no interpolation point. A well-formed UID is not authority: every action that can reach a gate resolves the requested UID server-side against the target issue's canonical Requirements section and refuses an unlisted one before any gate runs. Each of these actions is independently callable, so `bootstrap`'s membership check protects only its own entry point; without the shared binding a caller could name a requirement from another issue or project and have the repository's governance gate evaluated, and attested, against it. Omitting the input changes nothing: no variable is injected, and branch-derived governance behaves exactly as before. The environment is the only place the value exists; it is never added to result envelopes, synchronization markers, or issue comments.
 - **Steps 7–11** stage, commit, push, synchronize the remote integration branch, open the PR, and block on CI + SonarCloud. **Step 8.5 pre-PR synchronization (#1421):** `gc_synchronize_implement_branch` fetches the configured base into `refs/remotes/origin/<base>` with an explicit refspec and either records `already_current` or leaves a real `--no-ff --no-commit` merge for final-tree verification/conflict resolution in the invocation checkout. It verifies the merge graph, pushes normally, and posts a trusted versioned issue-thread attestation containing the fetched-base and resulting-feature SHAs. Step 9 renders the body, then `gc_create_synchronized_implement_pr` re-fetches the base and refuses the GitHub write unless that attestation, the local head, and the remote feature head still match. The canonical workflow has no direct CLI PR-creation fallback. **PR title format (issue #901):** Step 9 validates the title locally and again at the MCP creation boundary. The title uses one conventional-commit type with optional scope, an optional breaking-change `!` before the colon (`feat!:`, `feat(api)!:`; issue #1593), and a lowercase-leading subject; per-repo `workflow.pr_title` overrides remain authoritative.
@@ -875,6 +875,65 @@ example:
 Keep it to invocation guidance. An addendum must not restate, relax, or reorder a
 gate: GC-O007 and the ADR-021 / ADR-027 / ADR-029 ordering are unchanged by the
 dispatcher, and Ground Control carries no consumer-specific branch.
+
+## Versioned artifact releases
+
+A repository that publishes numbered artifacts, such as evidence snapshots or
+retest bundles, declares each series under `release_families` in
+`.ground-control.yaml` ([ADR-097](../architecture/adrs/097-versioned-artifact-release-reservations.md),
+GC-O017). Two runs that start from the same `dev` would otherwise each compute
+the same "next" number, and the collision surfaces only when the second merges
+the first.
+
+```yaml
+release_families:
+  formal-semantic-validation:
+    base_branch: dev
+    sequence_floor: 11
+    version_template: "{sequence+1}.0.0"
+    paths:
+      bundle: docs/research/formal-semantic-validation/bundles/retest-v{sequence}.json
+```
+
+Before generating a capture, Step 4.4 calls `gc_release_identity`:
+
+| Action | What the server does |
+|--------|----------------------|
+| `reserve` | Resolves the family's base head, reads the family definition from `.ground-control.yaml` at that commit, and claims the next identity by creating `refs/gc/release-identities/<family>/claims/<slot>`. Returns the sequence, version, and paths. |
+| `publish` | Verifies every reserved path is a regular file at the base head, re-observes the head, and records that revision and each blob in a create-only outcome. |
+| `abandon` | Records a closed reason code in the outcome. The number is burned. |
+| `status` | Lists the family's reservations and states, read-only. |
+
+The rules the tool enforces:
+
+- **Allocation is a reference create.** GitHub refuses to create a reference that
+  exists, which is the one compare-and-swap it enforces. A `force: false` update
+  is not one: a live check accepted a non-fast-forward update. Slots are
+  contiguous and every claim names its predecessor, so a caller that read a stale
+  floor can only lose a race, never land a lower number after a higher one.
+- **Idempotency.** The same issue, family, and `idempotency_key` replay the
+  stored reservation in any state, before any other check, and never allocate
+  again. Only the key's SHA-256 is stored. A retry after a failed issue record or
+  an unconfirmed write posts what is missing and allocates nothing.
+- **The base branch is the authority.** The caller supplies no repository,
+  revision, version, or path. A family defined only on the feature branch is
+  refused, and a later definition change never rewrites an existing reservation.
+- **The run is the issue branch.** `reserve` runs only from the issue's
+  `<issue>-<slug>` branch in the launch checkout and records that branch.
+  `abandon` runs only from the recorded branch, so another run in the same
+  workspace cannot burn this run's identity. `publish` records verified facts
+  and runs from any branch.
+- **No ambiguity.** A reservation is refused when a derived path already exists
+  at the base head, or when its version or a path is already owned by another
+  claim in the family, abandoned ones included. A malformed, gapped, or
+  unexpected log fails closed; nothing repairs it.
+- **Records.** Each event posts a `gc:release-identity` record on the issue
+  thread, keyed by its event commit. The reference log decides; the record
+  reports.
+
+The tool edits no evidence file and changes no completion, policy, review, CI,
+SonarCloud, or merge gate. Custom references are not copied by an ordinary
+branch clone, so repository backups must include `refs/gc/`.
 
 ## Test tooling beyond unit tests
 

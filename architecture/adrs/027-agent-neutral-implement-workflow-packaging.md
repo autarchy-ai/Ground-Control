@@ -440,3 +440,21 @@ from the caller. Any other checkout gets a structured
 any review engine starts. The runners accept an injected workspace resolver, so
 tests authorize their own temporary repository and the real check still runs.
 The context contract and `.ground-control.yaml` schema are unchanged.
+
+## 2026-09-14 amendment: `release_families` configuration (issue #1579)
+
+`.ground-control.yaml` gains an optional top-level `release_families` mapping that
+opts a repository into `gc_release_identity` (ADR-097). Its normalizer,
+`normalizeReleaseFamiliesConfig` in `lib/release-identity-config.js`, is imported
+by `parseGroundControlYaml`, so the canonical parser stays the only reader of the
+file, and `gc_get_repo_ground_control_context` returns the normalized block. The
+block has strict unknown-key rejection, bounded identifiers and templates, and an
+empty mapping as its feature-off default.
+
+The local block is a branch-discovery hint only. Allocation reads the family
+definition from `.ground-control.yaml` at the head of the family's base branch,
+through the same parser, so a feature branch cannot redefine the family it is
+about to reserve from. The tool derives the repository from the launch-workspace
+authorization and pins `gh api` to the github.com host that authorization
+accepts, so neither `GH_REPO` nor `GH_HOST` can redirect it. No environment
+variable is added.

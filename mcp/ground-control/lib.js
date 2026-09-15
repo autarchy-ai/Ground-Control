@@ -79,3 +79,10 @@ export * from "./lib/pr-review-shared.js";
 export * from "./lib/pr-review-confirm.js";
 export * from "./lib/pr-review-context.js";
 export * from "./lib/pr-review-remediate.js";
+// Versioned artifact-release identity reservations (issue #1579, ADR-097).
+export * from "./lib/release-identity-config.js";
+export * from "./lib/release-identity-checkout.js";
+export * from "./lib/release-identity-github.js";
+export * from "./lib/release-identity-ledger.js";
+export * from "./lib/release-identity-records.js";
+export * from "./lib/release-identity.js";

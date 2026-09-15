@@ -98,7 +98,7 @@ non-obvious rationale rather than restating the code.
 
 ## The tool surface
 
-The surviving 33 tools (down from 215 before the re-platform) are exactly what
+The surviving 34 tools (down from 215 before the re-platform) are exactly what
 the `/implement` workflow needs, each operating over `gh` / `git` / files:
 
 - **Orchestration.** `gc_implement_mechanical` drives the mechanical bands (bootstrap,
@@ -113,6 +113,9 @@ the `/implement` workflow needs, each operating over `gh` / `git` / files:
   its own work.
 - **Durable records.** Plan, decision records, execution obligations, and the final
   report all post to the GitHub issue thread.
+- **Release identities.** `gc_release_identity` allocates versioned evidence-release
+  identities through create-only Git references under `refs/gc/release-identities/`,
+  the one repository-scoped compare-and-swap GitHub enforces (ADR-097).
 
 The complete per-tool inventory and the placement doctrine for policy, hooks,
 CI, protection, skills, and retired surfaces is
