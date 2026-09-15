@@ -111,7 +111,7 @@ takes effect on the next server start.
 
 ## Tool surface
 
-The server registers **33 tools**. They are the `/implement`, `/quickfix`,
+The server registers **34 tools**. They are the `/implement`, `/quickfix`,
 `/integrate`, and `/review` workflow mechanics plus the coding-agent/reviewer separation - there is
 no entity CRUD surface and no ad-hoc REST escape hatch, because there is no
 backend behind them to read. Requirements and ADRs are read and written as repo
@@ -161,6 +161,12 @@ The complete keep/delete and placement record is in
 | Tool | Purpose |
 |---|---|
 | `gc_reconcile_station_observation` | Resolve a stranded `station_observation` obligation as `reobserved` from the station's own findings record and cycle marker already on the thread; accepts no disposition or claim |
+
+**Versioned artifact releases (`tools/release-identity.js`)**
+
+| Tool | Purpose |
+|---|---|
+| `gc_release_identity` | `reserve` the next identity of a `release_families` family against its base branch head, `publish` it once its artifacts are regular files there, `abandon` it with a reason code, or read `status`. Allocation is a create-only reference under `refs/gc/release-identities/<family>/`; the same issue, family, and `idempotency_key` always replay the stored reservation. No repository, revision, version, or path input (ADR-097) |
 
 **Durable issue-thread records (`tools/post-decision-record.js`)**
 
@@ -214,7 +220,9 @@ For cross-repo workflow automation, define Ground Control context in a
 workflow-packaging fields added in ADR-027: `docs.{adr_dir,
 architecture_overview, coding_standards, workflow_reference, knowledge_base}`,
 `example_paths.{source, test}`, `requirements.uid_examples`, and
-`cross_cutting_concerns.description`. A legacy `grc.*` block from a
+`cross_cutting_concerns.description`. The optional `release_families` mapping
+opts a repository into `gc_release_identity`; a family is active only once its
+definition is on its base branch (ADR-097). A legacy `grc.*` block from a
 pre-ADR-089 config is tolerated and ignored - never validated, parsed, or
 returned.
 

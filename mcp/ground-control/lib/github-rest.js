@@ -13,18 +13,26 @@
 
 import { execFile as defaultExecFile } from "./runtime-primitives.js";
 
-/** Call a REST endpoint through `gh api` and parse its JSON response. */
+/**
+ * Call a REST endpoint through `gh api` and parse its JSON response.
+ *
+ * `hostname` pins the API host so an ambient `GH_HOST` cannot redirect a call whose repository was
+ * authorized from a github.com origin; `timeout` bounds the child in milliseconds.
+ */
 export async function ghRestJson(repoRoot, path, {
   method = "GET",
   fields = null,
   paginate = false,
+  hostname = null,
+  timeout = 0,
   execFile = defaultExecFile,
 } = {}) {
   const args = ["api", "--method", method];
+  if (hostname) args.push("--hostname", hostname);
   if (paginate) args.push("--paginate", "--slurp");
   args.push(path);
   for (const [key, value] of Object.entries(fields ?? {})) args.push("-f", `${key}=${value}`);
-  const { stdout } = await execFile("gh", args, { cwd: repoRoot, maxBuffer: 64 * 1024 * 1024 });
+  const { stdout } = await execFile("gh", args, { cwd: repoRoot, maxBuffer: 64 * 1024 * 1024, timeout });
   const parsed = JSON.parse(stdout);
   if (!paginate) return parsed;
   // --slurp wraps each page in an outer array; list endpoints return arrays per page.

@@ -721,3 +721,16 @@ which also satisfies the tool's open-issue gate. The tool's behavior is unchange
 `quickfix-post-merge-close-step` and `workflow-unconditional-auto-close-claim` policy
 checks (`tools/policy/issue_close_contract.py`) require the /quickfix close step and
 reject lane prose that ties `Closes #` to a close without the default-branch condition.
+
+**2026-09-14 (issue #1579, release-identity records).** `gc_release_identity`
+projects each reservation-log event onto the issue thread as a server-rendered
+record carrying `<!-- gc:release-identity family="…" slot="…" sequence="…"
+event="reserved|published|abandoned" commit="<event sha>" -->`. The record is a
+projection, not an authority: allocation and lifecycle are decided by create-only
+references under `refs/gc/release-identities/<family>/` (ADR-097), and comments
+are never scanned to choose a sequence. A retry posts only the records the MCP
+server's own authenticated identity has not already posted, keyed by the event
+commit, and refuses to post when that identity cannot be read. GitHub has no
+conditional comment create, so the projection is at-least-once. No gate reads
+these records, and the marker sits in the reserved `gc:` family that caller text
+cannot carry.

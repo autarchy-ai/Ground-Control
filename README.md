@@ -21,7 +21,7 @@ for code+docs comprehension when an agent wants it, it is not required.
 
 ## What the MCP server does
 
-The surviving tool surface (33 tools, down from 215) is exactly what the
+The surviving tool surface (34 tools, down from 215) is exactly what the
 `/implement` workflow needs, and every tool operates over `gh`/`git`/files, no
 backend:
 
@@ -39,6 +39,9 @@ backend:
   the coding agent never reviews its own work.
 - **Durable records**, plan, decision records, execution obligations, and the
   final report all post to the GitHub issue thread (ADR-029).
+- **Release identities**, `gc_release_identity` reserves each versioned
+  evidence-release identity in a repository reference log before capture, so
+  concurrent runs never produce the same version (ADR-097).
 
 Requirement status and traceability are recorded by the agent directly in the
 requirement file, reviewed in the PR like any other change.

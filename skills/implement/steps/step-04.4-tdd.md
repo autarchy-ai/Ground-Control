@@ -47,6 +47,33 @@ For all other diffs, the loop is mandatory:
 6. **Integration / framework-specific test layers**: same loop. Write the failing test before the production code that satisfies it. Repository-policy rules from `cfg.rules.plan_rules_content` (for example, framework-specific test requirements, migration policies) are TDD targets, not afterthoughts.
 7. **If you discover during TDD that the plan is wrong**, revise it and continue. Update the plan on the issue thread. Pause only when the revision requires one of the documented judgment/authority classes; record the underlying problem as an open execution obligation with a concrete decision request.
 
+## Versioned artifact releases
+
+When the change generates a capture for a family declared under
+`cfg.release_families` (versioned evidence, snapshots, or another monotonic
+release artifact), reserve its identity **before** generating the capture
+(ADR-097, GC-O017):
+
+1. From the issue branch, call `gc_release_identity` with `action="reserve"`,
+   `repo_path`, `issue_number`, `family`, and an `idempotency_key` that names
+   this capture deterministically (for example `capture-1`). Never use a
+   timestamp, process id, or commit SHA; a retry or a restarted run must reuse
+   the same key.
+2. Write the capture only to the returned `reservation.paths`, and use the
+   returned `reservation.version` wherever the release names itself. Never
+   derive "next" from the checkout, and never renumber a capture by hand after a
+   base merge.
+3. If the run will not ship the capture, call `action="abandon"` from the same
+   issue branch with the same key and a `reason` code. The identity is burned,
+   not reissued.
+4. After the pull request merges, call `action="publish"` with the same key so
+   the log records the merged artifact's revision and blob.
+
+A `release_identity_issue_record_failed` or `release_identity_write_undecided`
+result is recovered by retrying with the same key; it never allocates another
+identity. Reservation does not replace or relax the completion, review, CI,
+SonarCloud, or merge gates for the capture itself.
+
 All tests around touched code must stay green at every step. If any test fails,
 fix the root cause; provenance or apparent unrelatedness is diagnostic context,
 not a reason to leave it broken.

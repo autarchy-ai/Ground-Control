@@ -214,6 +214,7 @@ export async function getRepoGroundControlContext(repoPath) {
     cross_cutting_concerns: parseResult.value.cross_cutting_concerns,
     routing: parseResult.value.routing,
     architecture: parseResult.value.architecture,
+    release_families: parseResult.value.release_families,
     errors: [],
   };
 }

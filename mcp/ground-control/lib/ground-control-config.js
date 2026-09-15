@@ -10,6 +10,7 @@ import { load as parseYaml } from "js-yaml";
 import { normalizeCrossCuttingConcernsConfig, normalizeExamplePathsConfig, normalizeKnowledgeConfig, normalizeRequirementsConfig } from "./constants.js";
 import { normalizeRoutingConfig, normalizeWorkflowConfig } from "./repo-context-2.js";
 import { SUPPORTED_GROUND_CONTROL_SCHEMA_VERSIONS, normalizeDocsConfig, normalizeRulesConfig, normalizeSonarcloudConfig } from "./repo-context.js";
+import { normalizeReleaseFamiliesConfig } from "./release-identity-config.js";
 import { normalizeArchitectureConfig } from "./repo-vocabulary.js";
 import { GITHUB_REPO_RE, GROUND_CONTROL_PROJECT_RE } from "./runtime-primitives.js";
 
@@ -42,6 +43,7 @@ export function parseGroundControlYaml(yamlText) {
     "telemetry",
     "architecture",
     "short_code",
+    "release_families",
   ];
   // `grc` is intentionally NOT in allowedTop's rejection path: a legacy
   // `grc.*` block from a consumer repo's .ground-control.yaml (ADR-057/058,
@@ -129,6 +131,11 @@ export function parseGroundControlYaml(yamlText) {
   const architectureResult = normalizeArchitectureConfig(parsed.architecture);
   if (!architectureResult.ok) errors.push(...architectureResult.errors);
 
+  const releaseFamiliesResult = normalizeReleaseFamiliesConfig(parsed.release_families, {
+    defaultBaseBranch: workflowResult.value?.base_branch ?? "dev",
+  });
+  if (!releaseFamiliesResult.ok) errors.push(...releaseFamiliesResult.errors);
+
   if (errors.length) return { ok: false, errors };
 
   return {
@@ -149,6 +156,7 @@ export function parseGroundControlYaml(yamlText) {
       cross_cutting_concerns: crossCuttingResult.value,
       routing: routingResult.value,
       architecture: architectureResult.value,
+      release_families: releaseFamiliesResult.value,
     },
   };
 }

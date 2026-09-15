@@ -7,7 +7,7 @@
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { CLAUDE_MODEL_BY_TIER, DEFAULT_IMPLEMENT_ROUTING_STAGES, ROUTING_STAGE_NAME_RE, ROUTING_TIERS } from "./repo-vocabulary.js";
-import { boundedOutputTail, describeChildProcessState, formatOutputTail } from "./command-failure-diagnostics.js";
+import { COMMAND_OUTPUT_TAIL_MAX, boundFailureMessage, boundedOutputTail, describeChildProcessState, formatOutputTail } from "./command-failure-diagnostics.js";
 
 // execFileWithInput and the GC_CODEX_TIMEOUT_MS parsing/bounds live in
 // model-subprocess.js (issue #1518, split out to stay under the 500-LOC file
@@ -28,12 +28,23 @@ export const GROUND_CONTROL_PROJECT_RE = /^[a-z0-9][a-z0-9-]*$/;
 // sibling rather than privately in whichever module happened to need it first: a second copy is how
 // two validators of the same value drift into disagreeing about what is well-formed.
 export const GITHUB_REPO_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*\/[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+// Node's execFile rejects with `Command failed: <cmd>\n<entire stderr>`, and codex echoes its whole
+// prompt to stderr. The streams are reported below as bounded tails, so the copy inside the message
+// is dropped rather than repeated unbounded (issue #1579: a 447 KB envelope no client could read).
+function boundedFailureHeadline(error) {
+  let message = typeof error.message === "string" ? error.message : "";
+  const stderr = typeof error.stderr === "string" ? error.stderr : "";
+  if (stderr !== "" && message.endsWith(stderr)) message = message.slice(0, message.length - stderr.length).trimEnd();
+  return message === "" ? null : boundFailureMessage(message, COMMAND_OUTPUT_TAIL_MAX);
+}
+
 export function formatCommandFailure(command, error) {
   const details = [];
   if (error.code === "ENOENT") {
     details.push(`${command} is not installed or not available on PATH`);
   } else {
-    if (error.message) details.push(error.message);
+    const message = boundedFailureHeadline(error);
+    if (message) details.push(message);
     const state = describeChildProcessState(error);
     if (state) details.push(state);
   }
@@ -159,6 +170,17 @@ function suggestedYamlPackagingSection() {
     "#   #   implementation:",
     "#   #     tier: medium",
     "#   #     model: claude-sonnet-5",
+    "",
+    "# Versioned artifact releases (ADR-097). Optional. gc_release_identity",
+    "# reserves each identity against the base branch so concurrent runs never",
+    "# derive the same version. A family is active once it is on base_branch.",
+    "# release_families:",
+    "#   evidence:",
+    "#     base_branch: dev          # optional; defaults to workflow.base_branch",
+    "#     sequence_floor: 1         # first sequence to allocate",
+    "#     version_template: \"{sequence}.0.0\"   # {sequence}, {sequence+K}, {sequence-K}",
+    "#     paths:",
+    "#       snapshot: docs/evidence/snapshot-v{sequence}.json",
     "",
   ];
 }
