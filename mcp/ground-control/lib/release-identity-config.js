@@ -243,6 +243,12 @@ export function isSafeRenderedReleasePath(path) {
   return typeof path === "string" && path.length <= RELEASE_RENDERED_PATH_MAX && isSafeRepoRelativePath(path);
 }
 
+function compareCodeUnits(left, right) {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 /** SHA-256 over the normalized definition with sorted keys, so key order never changes it. */
 export function releaseFamilyDigest(family) {
   const canonical = JSON.stringify({
@@ -250,7 +256,7 @@ export function releaseFamilyDigest(family) {
     sequence_floor: family.sequence_floor,
     version_template: family.version_template,
     // Explicit code-unit order keeps the durable digest byte-identical across host locales.
-    paths: Object.fromEntries(Object.entries(family.paths).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
+    paths: Object.fromEntries(Object.entries(family.paths).sort(([a], [b]) => compareCodeUnits(a, b))),
   });
   return createHash("sha256").update(canonical).digest("hex");
 }

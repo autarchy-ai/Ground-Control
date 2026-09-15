@@ -261,8 +261,22 @@ async function claimNext(ctx, base, fold, branch) {
   return { outcome: await createLedgerRef(api, releaseLedgerRef(family, "claims", fold.next_slot), commitSha) };
 }
 
+async function claimAvailableIdentity(ctx, base, fold, branch) {
+  for (let attempt = 0; attempt < CLAIM_ATTEMPTS_MAX; attempt += 1) {
+    const claimed = await claimNext(ctx, base, fold, branch);
+    if (claimed.result) return claimed.result;
+    if (claimed.outcome === "undecided") return undecided(ctx.action);
+    fold = await foldReleaseLedger(ctx.api, ctx.family);
+    if (!fold.ok) return logMalformed(fold);
+    // Whoever won the slot, re-check idempotency before considering the next one.
+    const owned = ownedBy(fold, ctx);
+    if (owned) return respondWithRecords(ctx, owned, claimed.outcome !== "created");
+  }
+  return refuse("release_identity_allocation_contended", `no identity could be claimed in ${CLAIM_ATTEMPTS_MAX} attempts`, "retry_with_the_same_idempotency_key", { action: ctx.action });
+}
+
 async function reserve(ctx) {
-  let fold = await foldReleaseLedger(ctx.api, ctx.family);
+  const fold = await foldReleaseLedger(ctx.api, ctx.family);
   if (!fold.ok) return logMalformed(fold);
   // Replay precedes every new-claim check: a reservation stays retrievable after its issue closes,
   // its family is removed from configuration, or its artifact lands.
@@ -281,19 +295,7 @@ async function reserve(ctx) {
   const run = await requireRunBranch(ctx, null);
   if (!run.ok) return run;
   const base = await readBaseFamily(ctx, local.base_branch);
-  if (!base.ok) return base;
-
-  for (let attempt = 0; attempt < CLAIM_ATTEMPTS_MAX; attempt += 1) {
-    const claimed = await claimNext(ctx, base, fold, run.branch);
-    if (claimed.result) return claimed.result;
-    if (claimed.outcome === "undecided") return undecided(ctx.action);
-    fold = await foldReleaseLedger(ctx.api, ctx.family);
-    if (!fold.ok) return logMalformed(fold);
-    // Whoever won the slot, re-check idempotency before considering the next one.
-    const owned = ownedBy(fold, ctx);
-    if (owned) return respondWithRecords(ctx, owned, claimed.outcome !== "created");
-  }
-  return refuse("release_identity_allocation_contended", `no identity could be claimed in ${CLAIM_ATTEMPTS_MAX} attempts`, "retry_with_the_same_idempotency_key", { action: ctx.action });
+  return base.ok ? claimAvailableIdentity(ctx, base, fold, run.branch) : base;
 }
 
 async function appendOutcome(ctx, reservation, fields) {

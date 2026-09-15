@@ -206,7 +206,8 @@ function outcomeFollowsClaim(outcome, claim) {
   if (commit.parents[0] !== claim.commit.sha || commit.treeSha !== claim.commit.treeSha) return false;
   if (event.sequence !== claim.event.sequence || event.issue_number !== claim.event.issue_number
     || event.idempotency_hash !== claim.event.idempotency_hash) return false;
-  return event.event !== "published" || sameJson(Object.keys(event.artifacts).sort(), Object.keys(claim.event.paths).sort());
+  const sortKeys = (keys) => keys.sort((a, b) => a.localeCompare(b));
+  return event.event !== "published" || sameJson(sortKeys(Object.keys(event.artifacts)), sortKeys(Object.keys(claim.event.paths)));
 }
 
 /**
