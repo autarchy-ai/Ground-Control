@@ -47,6 +47,7 @@ export const IMPLEMENT_MECHANICAL_ASYNC_ACTIONS = Object.freeze([
 ]);
 export const gcImplementMechanicalZodShape = {
   action: z.enum(IMPLEMENT_MECHANICAL_ACTIONS),
+  lane: z.enum(["implement", "quickfix"]).optional(),
   repo_path: z.string().min(1),
   invocation_root: z.string().min(1).optional(),
   issue_number: z.number().int().positive(),
@@ -79,7 +80,7 @@ export const gcImplementMechanicalZodShape = {
     ),
 };
 export const GC_IMPLEMENT_MECHANICAL_DESCRIPTION =
-  "Run coarse-grained deterministic /implement phases without a model turn per mechanical step. " +
+  "Run coarse-grained deterministic /implement and /quickfix phases without a model turn per mechanical step. " +
   "Actions: bootstrap (issue/branch/context/pickup), " +
   "publish (stage + pre-commit + commit + push + remote-base synchronization), monitor (CI + Sonar), " +
   "readiness (pre-merge completion assertion), finalize (post-merge assertion + idempotent issue close). " +
@@ -89,7 +90,8 @@ export const GC_IMPLEMENT_MECHANICAL_DESCRIPTION =
   "branch when it is this issue's branch (`<issue>-<slug>`), refusing a base/unrelated branch rather than acting on it. " +
   "Long actions publish and monitor accept async=true plus a required bounded idempotency_key; " +
   "poll the returned job_id through gc_codex_job and consume the terminal result as this tool's unchanged envelope. " +
-  "Bootstrap, readiness, and finalize remain synchronous. " +
+  "Bootstrap, readiness, and finalize remain synchronous. lane defaults to implement; lane=quickfix makes bootstrap " +
+  "reject requirement-backed issues before branch mutation and makes finalize post the slim quickfix outcome before close. " +
   "requested_requirement_uid names the requirement under test. Every action that can reach a repository gate resolves it " +
   "server-side against the target issue's Requirements section and refuses an unlisted UID; publish then exports " +
   "the bound value to every repo-authored gate as ACES_REQUIREMENT_UID, so a governance gate still receives requirement " +
@@ -171,6 +173,7 @@ export async function runImplementMechanical(args, overrides = {}) {
 export async function gcImplementMechanicalToolHandler(args, overrides = {}) {
   const mechanicalArgs = {
     action: args.action,
+    lane: args.lane,
     repoPath: args.repo_path,
     invocationRoot: args.invocation_root,
     issueNumber: args.issue_number,

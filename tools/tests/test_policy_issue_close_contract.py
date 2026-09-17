@@ -27,31 +27,34 @@ class IssueCloseContractTest(PolicyChecksFixture):
         self.assertNotIn(CLOSE_STEP_CODE, codes)
         self.assertNotIn(AUTO_CLOSE_CODE, codes)
 
-    def test_rejects_quickfix_without_a_post_merge_close_step(self):
+    def test_rejects_quickfix_without_a_post_merge_finalizer(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = self._implement_contract_root(tmp_dir)
             path = root / QUICKFIX
             text = path.read_text(encoding="utf-8")
-            self.assertIn("### Step Q20:", text)
-            path.write_text(text.replace("### Step Q20:", "### Wrap-up:"), encoding="utf-8")
+            self.assertIn("### Q7. Finalize after merge", text)
+            path.write_text(text.replace("### Q7. Finalize after merge", "### Wrap-up"), encoding="utf-8")
             violation = self._violation(root, CLOSE_STEP_CODE)
-            self.assertEqual(violation.details, [f"missing ### Step Q20 section in {QUICKFIX}"])
+            self.assertEqual(
+                violation.details,
+                [f"missing ### Q7. Finalize after merge section in {QUICKFIX}"],
+            )
 
-    def test_rejects_a_close_step_that_does_not_call_the_close_tool(self):
+    def test_rejects_a_finalizer_that_does_not_call_the_shared_action(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = self._implement_contract_root(tmp_dir)
             path = root / QUICKFIX
             text = path.read_text(encoding="utf-8")
-            section = re.search(r"### Step Q20:.*?(?=\n### |\n---\n)", text, re.DOTALL).group(0)
-            self.assertIn("gc_close_issue_after_merge", section)
+            section = re.search(r"### Q7\. Finalize after merge.*?(?=\n### |\n## )", text, re.DOTALL).group(0)
+            self.assertIn('action: "finalize"', section)
             path.write_text(
-                text.replace(section, section.replace("gc_close_issue_after_merge", "gh issue close")),
+                text.replace(section, section.replace('action: "finalize"', 'action: "monitor"')),
                 encoding="utf-8",
             )
             violation = self._violation(root, CLOSE_STEP_CODE)
             self.assertEqual(
                 violation.details,
-                [f"Step Q20 in {QUICKFIX} does not call gc_close_issue_after_merge"],
+                [f'Quickfix finalizer in {QUICKFIX} is missing action: "finalize"'],
             )
 
     def test_rejects_unconditional_auto_close_wording_on_each_lane_surface(self):

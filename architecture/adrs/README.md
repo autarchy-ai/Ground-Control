@@ -118,6 +118,7 @@ We use [MADR](https://adr.github.io/madr/) (Markdown Any Decision Records). Each
 | [096](096-host-wide-verification-dispatcher.md) | Host-Wide Verification Resource Dispatcher | Accepted |
 | [097](097-versioned-artifact-release-reservations.md) | Versioned Artifact-Release Identity Reservations | Accepted |
 | [098](098-native-agent-dashboard-connection.md) | Native Agent Dashboard Connection | Accepted |
+| [100](100-thin-quickfix-shared-mechanical-lane.md) | Thin Quickfix Lane over Shared Mechanical Modules | Accepted |
 
 Prior ADRs from the old project frame are archived in `archive/architecture/adrs/`.
 
