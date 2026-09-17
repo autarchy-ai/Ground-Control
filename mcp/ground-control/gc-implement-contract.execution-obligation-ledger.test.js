@@ -355,4 +355,31 @@ describe("execution obligation ledger", () => {
       rmSync(bin, { recursive: true, force: true });
     }
   });
+
+  it("records a lane-specific quickfix pickup comment", async () => {
+    const repo = initRepo();
+    const bin = mkdtempSync(join(tmpdir(), "gc-pickup-bin-"));
+    const log = join(bin, "gh.log");
+    writeFileSync(log, "");
+    installGhApiShim(bin, [], log);
+    try {
+      const result = await withPath(bin, () =>
+        runMarkImplementIssuePickedUp({
+          repoPath: repo,
+          issueNumber: 1637,
+          driver: "codex",
+          branchName: "1637-simplify-quickfix",
+          lane: "quickfix",
+        }, {
+          workspaceAuthorizationResolver: async () => authorizationForRepo(repo),
+          now: () => new Date("2026-09-17T12:00:00.000Z"),
+        }),
+      );
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.match(readFileSync(log, "utf8"), /Picked up by \/quickfix/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(bin, { recursive: true, force: true });
+    }
+  });
 });

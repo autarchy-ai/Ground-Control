@@ -33,12 +33,35 @@ When `workflow.review_disposition.enabled` is true, `gc_review_cap_disposition` 
 
 The workflow shall have exactly one human touchpoint: PR merge. Plan, review findings, and decisions on findings (fix / wontfix / not-applicable, each with a one-line rationale) shall be recorded as comments on the GitHub issue thread so the durable record survives PR merge/close. Agent silence on a finding is a process violation. `defer` is not a valid decision: all reviewer findings shall be fixed before the PR is presented; deferring a finding violates the workflow contract. All other gates are automated and enforced by the agent toolchain.
 
+The requirement-free `/quickfix` lane shall be a thin caller of the shared
+`gc_implement_mechanical` bootstrap, publish, monitor, and post-merge finalize
+actions (ADR-100, issue #1637). Bootstrap shall reject requirement-backed issues
+before branch mutation. Publish shall retain the configured pre-commit boundary,
+including secret scanning before commit and push. AI review shall be off by
+default; when explicitly requested, exactly one Codex cycle may run and the lane
+shall continue after its findings are fixed without requiring a clean verdict or
+a second cycle. The lane shall run no test-quality review, permit at most one
+automatic Sonar repair and re-analysis round, report rather than recursively
+implement unrelated concerns, and combine its trusted final record and issue
+close in one merge-gated finalizer.
+
 ## Rationale
 
 Ground Control's value proposition depends on agents maintaining traceability and quality gates as a side effect of normal development. The original GC-O007 (ADR-021) specified two human touchpoints — plan approval and PR merge — but empirically the plan-approval gate had >95% accept-as-is rate and added coordination tax without affecting outcomes. ADR-029 amends the contract to one human touchpoint (PR merge) and promotes the GitHub issue thread to the durable record of plan, review findings, and decisions on findings. Issue #804 collapses the previous two-step Codex review (pre-push Step 6.5 + post-push Step 12) into a single pre-push pass, bumps the cycle cap from 2 to 3 (one combined pass keeps the net iteration bound tighter than the old 2+2=4 across two steps while restoring "review feels like a real review, not a hot-cap" headroom), and makes every successful cycle post a verbatim findings record to the resolved issue thread so the durable record never depends on the agent's separate decision-summary comments. Issue #906 (2026-05) drops the default pre-push cap from 3 to 1 based on empirical observation that cycle 1 catches the production-readiness issues that matter while cycles 2–3 often surface defects the agent introduced WHILE fixing cycle 1's findings (compounding cost rather than catching net-new bugs); CI / SonarCloud / the human reviewer cover residual risk. The cap is configurable per repo (`workflow.codex_review.pre_push_cap`, bounds [1, 10]) for callers who want the older multi-cycle behavior. ADR-027 packages the workflow so it can be driven by Claude Code or Codex from a single canonical SKILL.md parameterized by .ground-control.yaml; ADR-029 ensures the gate model is uniform across drivers and repos. ADR-021 is amended (not superseded). A future driver may consume the same configuration model, but the current MCP tools and GitHub issue thread own the gate contract. Issue #963 (2026-06) moves the requirement DRAFT→ACTIVE transition, traceability reconciliation, and the reconciled final report from Phase D (pre-merge) to a new Phase E (post-merge), extending the #1058 post-merge close-ordering guarantee to the rest of the Ground Control state so a reviewed-but-abandoned PR never leaves a requirement ACTIVE with links to code that never shipped; mechanically gated by gc_assert_completion's phase parameter (post_merge is merge-gated; pre_merge posts the Phase D readiness record). Issue #1245 (2026-06) adds an optional, default-off automated review-cap disposition gate (`workflow.review_disposition`): rather than every over-cap boundary stopping for the user, the agent may call `gc_review_cap_disposition` after fixing the last-in-cap findings to get a deterministic `proceed` / `one_more_cycle` / `escalate_to_human` disposition, with a hard `max_auto_overrides` ceiling (default 1), authority carried by a durable `gc:review-auto-disposition` marker rather than agent text, and a `shadow` default mode that posts the disposition but still escalates while agreement data accrues. The goal is to cut the friction of always-asking while keeping runaway review cycles bounded; the cap evaluators, counter, and one-human-touchpoint contract are unchanged.
 
+ADR-100 applies the same cost lesson to `/quickfix`: safety controls remain at
+the shared mechanical boundaries, while duplicate orchestration, recursive
+scope expansion, and repeated review or Sonar loops are removed. Keeping secret
+scanning inside publish preserves the repository boundary without requiring a
+second workflow implementation.
+
 ## Traceability
 
+- IMPLEMENTS → GITHUB_ISSUE `1637` (Thin quickfix lane over shared mechanical modules)
+- DOCUMENTS → ADR `architecture/adrs/100-thin-quickfix-shared-mechanical-lane.md` (Quickfix shared-lane decision)
+- IMPLEMENTS → CODE_FILE `skills/quickfix/SKILL.md` (Bounded seven-step quickfix policy layer)
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/gc-implement-mechanical.js` (Shared lane-discriminated mechanical entry point)
+- TESTS → TEST `tools/tests/test_policy_implement_execution.py` (Thin-lane and retained secret-scanning policy contract)
 - IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/remote-gates.js` (Required hosted checks bound to current PR head, #1629)
 - IMPLEMENTS → CODE_FILE `mcp/ground-control/implement/monitor.js` (Concurrent CI/Sonar remediation and resumable jobs, #1628)
 - TESTS → TEST `mcp/ground-control/remote-gates.test.js` (Missing, stale, pending and failed hosted evidence)

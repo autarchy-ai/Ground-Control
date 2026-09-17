@@ -114,6 +114,58 @@ describe("extractInScopeRequirementUids", () => {
 });
 
 describe("runImplementMechanical bootstrap", () => {
+  it("rejects a requirement-backed quickfix before branch mutation or pickup", async () => {
+    let prepareCalls = 0;
+    let pickupCalls = 0;
+    const result = await runImplementMechanical({
+      action: "bootstrap",
+      lane: "quickfix",
+      repoPath: "/repo",
+      invocationRoot: "/repo",
+      issueNumber: 1426,
+      branchName: "1426-script-phases",
+      driver: "codex",
+    }, baseDeps({
+      prepareBranch: async () => {
+        prepareCalls += 1;
+        return { ok: true, repo_path: "/repo", branch: "1426-script-phases" };
+      },
+      markPickedUp: async () => {
+        pickupCalls += 1;
+        return { ok: true };
+      },
+    }));
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "quickfix_requirements_in_scope");
+    assert.deepEqual(result.requirement_uids, ["GC-O007"]);
+    assert.equal(prepareCalls, 0);
+    assert.equal(pickupCalls, 0);
+  });
+
+  it("uses the shared bootstrap with a quickfix-specific pickup on an empty scope", async () => {
+    let pickupInput;
+    const result = await runImplementMechanical({
+      action: "bootstrap",
+      lane: "quickfix",
+      repoPath: "/repo",
+      invocationRoot: "/repo",
+      issueNumber: 1426,
+      branchName: "1426-script-phases",
+      driver: "codex",
+    }, baseDeps({
+      getIssueThread: async () => ({ ok: true, title: "Small fix", body: "", comments: [] }),
+      markPickedUp: async (input) => {
+        pickupInput = input;
+        return { ok: true };
+      },
+    }));
+
+    assert.equal(result.ok, true);
+    assert.equal(pickupInput.lane, "quickfix");
+    assert.equal(result.next_action, "implement_the_bounded_fix_and_run_targeted_tests");
+  });
+
   it("prepares the branch, records pickup, and returns issue context in one call", async () => {
     let pickupCalls = 0;
     const result = await runImplementMechanical({

@@ -8,6 +8,14 @@ import { mapCompletion } from "./publish.js";
 
 export async function runReadiness(args, deps) {
   const action = "readiness";
+  if (args.lane === "quickfix") {
+    return failure(
+      action,
+      "quickfix_readiness_not_applicable",
+      "The quickfix lane has no pre-merge final-report phase",
+      "wait_for_user_merge_then_run_finalize",
+    );
+  }
   for (const field of ["prNumber", "completion"]) {
     const invalid = requireField(args, field, action);
     if (invalid) return invalid;

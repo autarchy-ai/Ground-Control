@@ -356,6 +356,7 @@ export function mapCompletion(args, phase) {
     plainEnglishOutcome: input.plain_english_outcome,
     touchedFiles: input.touched_files,
     project: input.project,
+    lane: args.lane ?? "implement",
     phase,
   };
 }

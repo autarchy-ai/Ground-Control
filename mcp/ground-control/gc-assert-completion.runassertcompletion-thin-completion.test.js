@@ -207,6 +207,30 @@ describe("runAssertCompletion — thin post-merge happy path", () => {
       shim.cleanup();
     }
   });
+
+  it("posts the slim quickfix report after merge without review or implement-only outcome", async () => {
+    const shim = makeCompletionShimRepo({ comments: [], commentIdSeq: [9510, 9511] });
+    try {
+      const r = await withShimPath(shim.binDir, () =>
+        runAssertCompletion({
+          repoPath: shim.repoDir,
+          issueNumber: 1103,
+          prNumber: 42,
+          lane: "quickfix",
+          requirements: [],
+          reviews: [],
+          ciStatus: "green",
+          sonarStatus: "skipped",
+          summary: "The bounded quickfix shipped.",
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) }),
+      );
+      assert.equal(r.ok, true, `expected ok:true; got: ${JSON.stringify(r)}`);
+      assert.equal(r.assertions.length, 0);
+      assert.ok(typeof r.final_report.comment_url === "string");
+    } finally {
+      shim.cleanup();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
