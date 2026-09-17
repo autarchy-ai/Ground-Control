@@ -469,6 +469,14 @@ in `.github/workflows/ci.yml`, `sonar` in `sonarcloud.yml`, and `trivy` plus
 `osv-scanner` in `security.yml`. Two further required contexts come from hosted
 apps: `SonarCloud Code Analysis` and `GitGuardian Security Checks`.
 
+`GitGuardian Security Checks` is user-owned. Agents never investigate,
+remediate, dismiss, suppress, bypass, or work around its findings, and they do
+not open the GitGuardian dashboard or handle suspected secret values. An agent
+may report only the GitHub check name, status, and check URL. When the check
+blocks progress, the agent states that the user owns the investigation and
+resolution, then waits. After the user resolves it, the agent may re-read the
+GitHub check status and continue when it passes.
+
 `docs/ci/CI_PIPELINE.md` is the job-by-job reference, including which contexts
 are required and how to reproduce each locally. ADR-091 carries the rationale.
 `make ci-timings` reports current wall clock and time to first failing check.
