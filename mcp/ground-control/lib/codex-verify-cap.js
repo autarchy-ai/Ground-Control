@@ -327,5 +327,5 @@ export function effectiveReviewerCap(workflow, reviewer) {
   if (reviewer !== "codex") return null;
   const block = workflow?.codex_review;
   const configured = block && Number.isInteger(block.pre_push_cap) ? block.pre_push_cap : null;
-  return configured != null ? configured : CODEX_REVIEW_PREPUSH_HARD_CAP;
+  return configured ?? CODEX_REVIEW_PREPUSH_HARD_CAP;
 }
