@@ -294,3 +294,16 @@ sensitive-path screening and commit-message validation. The
 existing `implement-verification-boundary-drift` check, now in the same module,
 requires the matching Step 4.4 and Step Q5 tokens. No mandatory gate is added,
 removed, or reordered.
+
+**2026-09-17 (issue #1626, exact-input verification reuse).** Phase B and the
+Phase C base-synchronization boundary retain both mandatory broad gates, but the
+MCP tool now owns their execution count. A successful verification attestation
+may satisfy a retry only when the repository, candidate content tree, base SHA,
+configured completion and policy commands, and toolchain fingerprint are
+identical. A process-local phase result may likewise be reused when a later gate
+fails and the caller retries the unchanged candidate. Any mismatch, unavailable
+fingerprint, process restart, or untrusted attestation fails closed to normal
+gate execution. The result envelope reports whether broad gates executed or
+trusted evidence was reused. Step 7 still runs the configured pre-commit command
+once; its following mechanical commit disables hooks so the same check cannot
+run a second time. Gate order and blocking behavior are unchanged.

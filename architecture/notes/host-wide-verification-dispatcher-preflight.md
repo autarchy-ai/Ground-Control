@@ -112,7 +112,8 @@ telemetry, verification attestations, or a success cache.
   tests under the existing Python `unittest` policy-test surface (or the Node
   MCP suite only if the executable is implemented in Node). Installation tests
   use temporary HOME/XDG directories. The implementation still runs
-  `make mcp-test` for its inner loop and `make policy` before completion.
+  targeted tests for its inner loop and the configured completion and policy
+  commands once at the final verification boundary.
 
 ## Security and validation layers
 

@@ -8,7 +8,7 @@ import { realpathSync } from "node:fs";
 import { promisify } from "node:util";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { runSynchronizeImplementBranch } from "./lib.js";
+import { computeVerificationAttestation, resolveVerificationReuse, runSynchronizeImplementBranch } from "./lib.js";
 
 const execFile = promisify(execFileCb);
 const REPO_ROOT = realpathSync(new URL("../..", import.meta.url).pathname);
@@ -145,5 +145,80 @@ describe("base synchronization verification reuse (issue #1497)", () => {
     assert.equal(result.outcome, "already_current");
     assert.equal(ranCompletionGate(second.calls), false, "a hit must not re-run the completion gate");
     assert.equal(secondWriter.length, 0, "a hit must not post a new attestation");
+  });
+
+  it("reuses trusted verification when recovering an already-committed merge", async () => {
+    const RESULT = "3".repeat(40);
+    const RECORD = "4".repeat(32);
+    const calls = [];
+    const runner = async (command, args) => {
+      calls.push([command, args]);
+      if (command === "bash") {
+        const script = args.at(-1);
+        if (script === FINGERPRINT_CMD) return { stdout: `${TOOLCHAIN}\n`, stderr: "" };
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "gh") {
+        return { stdout: JSON.stringify({ id: 7, html_url: "https://github.test/comment/7" }) };
+      }
+      const op = gitOp(args);
+      if (op[0] === "symbolic-ref") return { stdout: `${BRANCH}\n` };
+      if (op[0] === "status") return { stdout: "" };
+      if (op[0] === "rev-parse") {
+        const ref = op.at(-1);
+        if (ref.startsWith("MERGE_HEAD")) throw new Error("no merge head");
+        if (ref.endsWith("^{tree}")) return { stdout: `${TREE}\n` };
+        return { stdout: `${RESULT}\n` };
+      }
+      if (op[0] === "show") return { stdout: `${PRE} ${BASE}\n` };
+      if (op[0] === "write-tree") return { stdout: `${TREE}\n` };
+      if (op[0] === "push") return { stdout: "" };
+      if (op[0] === "ls-remote") return { stdout: `${RESULT}\trefs/heads/${BRANCH}\n` };
+      throw new Error(`unexpected git operation: ${op.join(" ")}`);
+    };
+    const attestation = computeVerificationAttestation({
+      issueNumber: ISSUE,
+      branchName: BRANCH,
+      baseSha: BASE,
+      treeOid: TREE,
+      requirementUid: null,
+      completionCommand: "make check",
+      policyCommand: "make policy",
+      toolchainFingerprintCommand: FINGERPRINT_CMD,
+      config: { base_branch: "dev", precommit_command: null },
+      toolchainDigest: TOOLCHAIN,
+    });
+    const attestationReader = async () => ({
+      ok: true,
+      records: [{ record: { ...attestation, valid: true, authenticated: true }, commentId: 5 }],
+    });
+    const directReuse = await resolveVerificationReuse({
+      context: context(), repoRoot: REPO_ROOT, owner: "autarchy-ai", name: "ground-control",
+      issueNumber: ISSUE, branchName: BRANCH, baseSha: BASE, requirementUid: null,
+      commandRunner: runner, attestationReader, treeOid: TREE,
+    });
+    assert.equal(directReuse.reused, true);
+    const result = await runSynchronizeImplementBranch({
+      repoPath: REPO_ROOT,
+      issueNumber: ISSUE,
+      branchName: BRANCH,
+      action: "complete",
+      recordId: RECORD,
+      preSyncSha: PRE,
+      fetchedBaseSha: BASE,
+      outcome: "merged_clean",
+    }, {
+      workspaceAuthorizationResolver: workspaceAuthorization,
+      commandRunner: runner,
+      contextResolver: async () => context(),
+      syncRecordReader: async () => ({ ok: false, error: "implement_pr_sync_record_missing" }),
+      issueThreadReader: async () => ({ ok: true, body: "## Requirements\n" }),
+      attestationReader,
+    });
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.verification_decision, "reused");
+    assert.equal(result.broad_gates_executed, 0);
+    assert.equal(ranCompletionGate(calls), false);
   });
 });

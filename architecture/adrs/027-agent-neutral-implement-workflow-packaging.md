@@ -458,3 +458,22 @@ about to reserve from. The tool derives the repository from the launch-workspace
 authorization and pins `gh api` to the github.com host that authorization
 accepts, so neither `GH_REPO` nor `GH_HOST` can redirect it. No environment
 variable is added.
+
+## 2026-09-17 amendment: exact-input verification ownership (issue #1626)
+
+The mechanical boundary now owns the decision to execute or reuse completion and
+policy. When a repository configures
+`workflow.verification.toolchain_fingerprint_command`, `verify`, already-current
+synchronization, and committed-merge recovery compute the same content address
+over tree, base, issue/branch, requirement context, commands/configuration, and
+toolchain inputs. A trusted full attestation skips both gates. A bounded
+process-local phase cache under that address lets a retry reuse completion after
+policy fails; it is cleared by process restart and cannot authorize reuse for
+changed inputs. Missing, malformed, unauthenticated, or nonmatching evidence
+remains a mandatory execution path.
+
+Gate results expose the execution/reuse decision, its reason, per-phase outcome,
+and the number of broad gates actually executed. Agent prose continues to own
+test selection during edit loops, but it cannot authorize broad-gate reuse.
+Ground Control's repository guidance now requires targeted inner-loop tests and
+one final broad boundary instead of naming the full MCP suite as the inner loop.

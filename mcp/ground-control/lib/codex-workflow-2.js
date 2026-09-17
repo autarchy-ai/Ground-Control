@@ -320,7 +320,7 @@ export async function readImplementTreeOid(repoRoot, ref, commandRunner = execFi
   }
   return oid;
 }
-async function readImplementIndexTreeOid(repoRoot, commandRunner = execFile) {
+export async function readImplementIndexTreeOid(repoRoot, commandRunner = execFile) {
   const { stdout } = await runImplementGit(repoRoot, ["write-tree"], commandRunner);
   const oid = stdout.trim().toLowerCase();
   if (!GIT_OBJECT_ID_RE.test(oid)) {
@@ -418,6 +418,7 @@ export async function runImplementFinalTreeGates(
   context,
   commandRunner = execFile,
   requestedRequirementUid = null,
+  reuseKey = null,
 ) {
   const completionCommand =
     context?.workflow?.completion_command ?? context?.workflow?.test_command;
@@ -455,5 +456,6 @@ export async function runImplementFinalTreeGates(
     commandRunner,
     readTreeOid: () => readImplementIndexTreeOid(repoRoot, commandRunner),
     readStatus,
+    reuseKey,
   });
 }
