@@ -296,7 +296,7 @@ export async function runCodexReview({
             `gc_codex_review refused to post the findings record to issue #${recordIssueNumber}: ` +
             `${sensitiveError}. The reviewer text would have published model-controlled content ` +
             `that matched the host-side guardrail; no cycle marker has been written, so a retry ` +
-            `is safe once codex emits a clean review.`,
+            `is safe once codex emits review output that passes the sensitive-content guardrail.`,
             sensitiveError,
           );
         }

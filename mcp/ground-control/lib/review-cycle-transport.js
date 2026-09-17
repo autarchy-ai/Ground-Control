@@ -12,7 +12,6 @@ import {
 
 const REVIEW_CYCLE_KINDS = Object.freeze({
   codex: "codex_review_cycle",
-  "test-quality": "test_quality_review_cycle",
 });
 
 function transportFailure(error, message) {

@@ -46,7 +46,7 @@ This step runs AFTER Step 10 (CI Monitor) reports green. A green CI run does not
 
 5. **Cycle cap: 5 iterations for SonarCloud.** If findings remain after the fifth fix→re-analyze cycle, record them as open execution obligations and escalate under the enforced-cycle-cap class with a concrete decision request. The cap pauses analysis; it does not defer or discard the repairs.
 
-6. Proceed to Step 15 only when: the quality gate is `OK` AND the issues summary's `open_count` is 0 AND the hotspots summary's `open_count` is 0. (Steps 13–14 were merged out in #906: test-quality review moved pre-push to Step 6.6, and there is no separate "final CI re-verify" because there is no post-push fix loop after Sonar clean.)
+6. Proceed to Step 15 only when: the quality gate is `OK` AND the issues summary's `open_count` is 0 AND the hotspots summary's `open_count` is 0. Steps 13–14 remain tombstones; there is no separate final CI re-verification after Sonar is clean.
 
 ## Return contract
 

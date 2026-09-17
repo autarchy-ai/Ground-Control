@@ -43,7 +43,7 @@ import { join } from "node:path";
  * This is the provenance boundary — where a value may come from — not a second
  * validation schema. Consumers keep owning their own values: parseCodexTimeoutMs
  * owns the timeout bounds, the review-size consumers own their numeric meanings,
- * and reviewEngineEnv owns Claude auth-mode selection.
+ * and reviewEngineEnv owns optional disposition-judge auth-mode selection.
  *
  * `server-env.inventory-parity.test.js` holds this list, the `process.env` reads
  * in the tree, and `.env.example` in agreement, so the template cannot drift
@@ -61,7 +61,7 @@ export const GROUND_CONTROL_ENV_VARS = Object.freeze([
   // that allowlist but are process state, not Ground Control configuration.
   "CODEX_HOME",
   "OPENAI_API_KEY",
-  // Forwarded to the `claude` review engine by reviewEngineEnv: the auth-mode
+  // Forwarded to the optional `claude` disposition judge by reviewEngineEnv: the auth-mode
   // selectors and the companion values each mode needs.
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",

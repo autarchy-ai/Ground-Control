@@ -167,7 +167,7 @@ function validateLaneAndReviews({ lane, prePushReviews }) {
   if (errors.length === 0 && resolvedReviews === "not_run" && resolvedLane !== PR_BODY_REVIEWS_OPTIONAL_LANE) {
     errors.push(
       `prePushReviews='not_run' requires lane='${PR_BODY_REVIEWS_OPTIONAL_LANE}'; `
-      + `lane='${resolvedLane}' runs both pre-push reviewers and must attest that they completed`,
+      + `lane='${resolvedLane}' runs the pre-push Codex review and must attest that it completed`,
     );
   }
   return errors;

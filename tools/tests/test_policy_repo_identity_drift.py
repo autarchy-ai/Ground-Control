@@ -32,7 +32,6 @@ from tools.policy.checks import (
     run_repo_identity_drift,
     run_no_deferral_disposition_check,
     run_pr_body_check,
-    run_test_quality_decision_record_contract,
     run_version_mirror_consistency_check,
     run_workflow_routing_contract,
     run_implement_execution_contract,

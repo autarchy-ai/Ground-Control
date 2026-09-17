@@ -5,13 +5,14 @@
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
 import { CODEX_REVIEW_PREPUSH_HARD_CAP, buildCodexReviewPrePushCycleMarker, parseCodexReviewPrePushCycleMarkers } from "./api-requirements.js";
-import { TEST_QUALITY_REVIEW_DEFAULT_MODEL, TEST_QUALITY_REVIEW_TIMEOUT_MS } from "./ci-watcher.js";
 import { classifyChangedSurface } from "./doc-coverage.js";
 import { getPullRequestClosingIssues, readIssueCommentBodies } from "./grc-legacy-compat-3.js";
 import { enrichCommentsWithThreadIds } from "./grc-legacy-compat-4.js";
 import { REVIEW_AUTO_DISPOSITION_JUDGE_SCHEMA, buildDispositionJudgePrompt, parseDispositionJudgeOutput, parseNumstatManifest, summarizeFindingsForDisposition } from "./review-cap-disposition.js";
 import { execFile, execFileWithInput, reviewEngineEnv } from "./runtime-primitives.js";
-import { TEST_QUALITY_REVIEW_HARD_CAP } from "./test-quality-runner.js";
+
+const REVIEW_DISPOSITION_JUDGE_DEFAULT_MODEL = "claude-sonnet-5";
+const REVIEW_DISPOSITION_JUDGE_TIMEOUT_MS = 1_800_000;
 
 export const CODEX_VERIFY_HARD_CAP = 2;
 export const CODEX_VERIFY_CYCLE_MARKER_PREFIX = "<!-- gc:codex-verify-cycle";
@@ -294,7 +295,7 @@ export async function runDispositionJudge({ repoRoot, signalsSnapshot, config, r
   const model =
     config?.judge && typeof config.judge.model === "string" && config.judge.model.trim() !== ""
       ? config.judge.model
-      : TEST_QUALITY_REVIEW_DEFAULT_MODEL;
+      : REVIEW_DISPOSITION_JUDGE_DEFAULT_MODEL;
   const prompt = buildDispositionJudgePrompt({ signalsSnapshot, reviewer, issueNumber, cycle, cap });
   const args = [
     "--print",
@@ -317,19 +318,14 @@ export async function runDispositionJudge({ repoRoot, signalsSnapshot, config, r
     cwd: repoRoot,
     env: childEnv,
     maxBuffer: 10 * 1024 * 1024,
-    timeoutMs: TEST_QUALITY_REVIEW_TIMEOUT_MS,
+    timeoutMs: REVIEW_DISPOSITION_JUDGE_TIMEOUT_MS,
     signal,
   });
   return parseDispositionJudgeOutput(stdout);
 }
 export function effectiveReviewerCap(workflow, reviewer) {
-  const block =
-    reviewer === "codex"
-      ? workflow?.codex_review
-      : reviewer === "test-quality"
-        ? workflow?.test_quality_review
-        : null;
+  if (reviewer !== "codex") return null;
+  const block = workflow?.codex_review;
   const configured = block && Number.isInteger(block.pre_push_cap) ? block.pre_push_cap : null;
-  const fallback = reviewer === "codex" ? CODEX_REVIEW_PREPUSH_HARD_CAP : TEST_QUALITY_REVIEW_HARD_CAP;
-  return configured != null ? configured : fallback;
+  return configured != null ? configured : CODEX_REVIEW_PREPUSH_HARD_CAP;
 }

@@ -12,7 +12,7 @@ export const REVIEW_DISPOSITIONS = Object.freeze([
 export const REVIEW_DISPOSITION_NEXT_ACTION = Object.freeze({
   proceed: "proceed_to_phase_c",
   one_more_cycle: "reinvoke_cycle_with_auto_override",
-  escalate_to_human: "post_summary_and_escalate_to_user",
+  escalate_to_human: "ask_over_cap_or_proceed",
 });
 export const REVIEW_DISPOSITION_HIGH_RISK_SURFACES = Object.freeze([
   "migration",

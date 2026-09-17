@@ -19,12 +19,11 @@
 //                                   gc_create_github_issue, gc_remember,
 //                                   gc_codex_architecture_preflight,
 //                                   gc_post_implementation_plan,
-//                                   gc_close_issue_after_merge, gc_codex_review,
-//                                   gc_test_quality_review
+//                                   gc_close_issue_after_merge, gc_codex_review
 //   tools/post-decision-record.js — gc_post_decision_record, gc_post_final_report,
 //                                   gc_assert_completion, gc_render_pr_body,
 //                                   gc_get_issue_thread, gc_watch_ci_run,
-//                                   gc_codex_review_cycle, gc_test_quality_review_cycle
+//                                   gc_codex_review_cycle
 //   tools/review-cap-disposition.js — gc_review_cap_disposition, gc_codex_job,
 //                                   gc_watch_sonar_analysis, gc_prepare_implement_branch,
 //                                   gc_implement_mechanical, gc_synchronize_implement_branch,

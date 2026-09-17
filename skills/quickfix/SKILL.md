@@ -30,19 +30,19 @@ Reuse a key only after a lost start response; create a new key after a repair.
 Judgment call, gating heuristic:
 
 - **`/quickfix`** when the fix is obvious from the issue description, touches **< ~10 files**, has **no architectural footprint**, and the agent has no open design questions. Examples: parser bug, doc typo, SonarCloud finding cleanup, dependency bump, lint fix, narrow refactor with no behavior change, "the reviewer told me exactly what to do" follow-up.
-- **`/implement`** when the issue carries a `## Requirements` section (UIDs in scope), or the diff is wider than ~10 files, or the design is unsettled, or there's any cross-aggregate blast radius. Anything that benefits from a codex production-readiness pass + test-quality review.
+- **`/implement`** when the issue carries a `## Requirements` section (UIDs in scope), or the diff is wider than ~10 files, or the design is unsettled, or there's any cross-aggregate blast radius. Anything that benefits from a Codex production-readiness pass.
 
 The user picks the lane explicitly at invocation time. The issue is the durable anchor - a `/quickfix` run can be upgraded to `/implement` mid-flight by re-invoking `/implement <same-issue>`.
 
 ## Per-step model routing (ADR-036)
 
-Routes through the same `gc_resolve_workflow_route` resolver as `/implement` (see ADR-036 + `skills/implement/SKILL.md` § "Per-step model routing"). Stages reused: `issue_branch_resolution`, `codebase_assessment`, `implementation`, `precommit`, `review_cycle_1_consume` (only when `--review`), `review_fix_application`, `git_publish`, `base_sync`, `pr_body`, `ci_monitor`, `sonarcloud`, `test_quality_review` (only when `--review`), `close_issue`. Stages NOT used (because the skill drops them): `architecture_preflight`, `planning`, `clause_mapping`, `transition_reconcile`, `final_report`. Routing and telemetry are opt-in per repo via `.ground-control.yaml` (same `cfg.routing.enabled` and `cfg.telemetry.enabled` knobs). A route is advisory capability selection only; it does not require the driver to delegate a stage or create another execution context.
+Routes through the same `gc_resolve_workflow_route` resolver as `/implement` (see ADR-036 + `skills/implement/SKILL.md` § "Per-step model routing"). Stages reused: `issue_branch_resolution`, `codebase_assessment`, `implementation`, `precommit`, `review_cycle_1_consume` (only when `--review`), `review_fix_application`, `git_publish`, `base_sync`, `pr_body`, `ci_monitor`, `sonarcloud`, and `close_issue`. Stages NOT used (because the skill drops them): `architecture_preflight`, `planning`, `clause_mapping`, `transition_reconcile`, and `final_report`. A route is advisory capability selection only; it does not require the driver to delegate a stage or create another execution context.
 
 ## Invocation
 
 ```
 /quickfix <issue-number>           # default: AI-assisted reviews off
-/quickfix --review <issue-number>  # opt-in: codex pre-push + test-quality pre-push, cap 1 each
+/quickfix --review <issue-number>  # opt-in: bounded Codex pre-push review
 ```
 
 The `<issue-number>` argument is a plain GitHub issue number, a `#`-prefixed integer, or `issue:N`. **Requirement UIDs are NOT a valid `/quickfix` input.** `/quickfix` runs are requirement-free by definition, so accepting a UID would be a lane-mismatch that quietly drops the requirement lifecycle. If the user passes a UID, STOP and tell them to use `/implement <uid>` instead.
@@ -105,16 +105,15 @@ Check the issue's acceptance criteria and any documentation-only carve-out
 against the actual diff. CI owns repository-wide completion and policy suites;
 there is no mechanical verify action or mandatory local broad test pass.
 
-### Step Q6.5 + Step Q6.6: AI-Assisted Reviews (OFF by default; `--review` to enable)
+### Step Q6.5: AI-Assisted Review (OFF by default; `--review` to enable)
 
-`/quickfix` skips both pre-push AI-assisted reviews by default. CI and SonarCloud (Steps Q10 / Q11) still run post-push and remain non-negotiable; the codex + test-quality reviewers are the optional add-ons.
+`/quickfix` skips the pre-push Codex review by default. CI and SonarCloud (Steps Q10 / Q11) still run post-push and remain non-negotiable; Codex is the optional add-on.
 
 When the user invokes `/quickfix --review <issue>`:
 
 - **Step Q6.5 = codex pre-push review.** Run `gc_codex_review` with `uncommitted=true` against the staged + unstaged diff, exactly as `/implement` Step 6.5 describes. Default cap is **1 cycle** (per the same `.ground-control.yaml::workflow.codex_review.pre_push_cap` knob `/implement` uses; per issue #906). Apply the Review loop rules; post `gc_post_decision_record` per cycle; respect the cap; `override_cap=true` + `override_reason` works the same way. The same diff-coverage contract applies (issue #1414): an over-cap diff is reviewed as bounded server-supplied slices within one logical cycle, the envelope carries `diff_mode` + `review_coverage`, and `error: "review_coverage_incomplete"` means re-invoke — nothing durable was written and no cycle was consumed.
-- **Step Q6.6 = test-quality pre-push review.** Run `gc_test_quality_review` exactly as `/implement` Step 6.6 describes. Default cap 1 (`workflow.test_quality_review.pre_push_cap`). Same Review loop rules. Same decision-record contract.
 
-When `--review` is absent, both steps skip. The skill still posts no decision records (the issue-thread durable record for a `/quickfix` run is the pickup comment + the open PR + the `gc_post_final_report` close comment in Step Q19; codex/test-quality records exist only when the reviewer actually ran).
+When `--review` is absent, Step Q6.5 skips. The skill still posts no decision records (the issue-thread durable record for a `/quickfix` run is the pickup comment + the open PR + the `gc_post_final_report` close comment in Step Q19; Codex records exist only when the reviewer actually ran).
 
 ---
 
@@ -245,7 +244,7 @@ Each drop is intentional and reversible mid-flight by re-invoking `/implement <s
 
 - **Codex architecture preflight** (`gc_codex_architecture_preflight`) - the design is settled at intake.
 - **Plan post + plan-phase marker** (`gc_post_implementation_plan`) - diff is the plan; PR is the durable record.
-- **Pre-push codex review** + **pre-push test-quality review** by default - off unless `--review` is supplied. Both still respect the configured cap (default 1) when enabled.
+- **Pre-push Codex review** by default - off unless `--review` is supplied. It still respects the configured cap (default 1) when enabled.
 - **Final-report tool full payload.** `gc_post_final_report` still runs (so its sensitive-content / no-defer / reserved-marker scrubs protect the public close comment on every driver), but with a slim payload: empty `requirements`, empty-or-one-line-per-reviewer `reviews`, no `traceability` block. The structured tool boundary is the only driver-neutral filter; a direct `gh issue comment` would bypass it.
 - **Implement-only outcome requirement.** Issue #1156 makes `plain_english_outcome` mandatory for `/implement` Step 19, but quickfix remains exempt because its closeout is intentionally lightweight and requirement-free.
 - **Requirement status transitions** (frontmatter `status:` edits) - `/quickfix` runs are requirement-free by definition.
@@ -268,10 +267,10 @@ If the surfaced problem means the *core* change now warrants full `/implement` d
 
 ## Upgrading mid-flight
 
-If at any step the agent realizes the work warrants `/implement` discipline (the diff grew, design forks surfaced, requirement transitions are needed, codex/test-quality reviews would have caught something), STOP and ask the user. Two options:
+If at any step the agent realizes the work warrants `/implement` discipline (the diff grew, design forks surfaced, requirement transitions are needed, or a Codex review is warranted), STOP and ask the user. Two options:
 
 1. Re-invoke `/implement <same-issue>` from where you are. The branch, in-progress signal, and any pushed commits carry over; `/implement` Step 1 will recognize the branch and resume.
-2. Continue `/quickfix` with `--review` to add the pre-push AI-assisted reviewers without the full preflight + plan ceremony.
+2. Continue `/quickfix` with `--review` to add the pre-push Codex review without the full preflight + plan ceremony.
 
 The user picks. Do not silently upgrade.
 
@@ -295,9 +294,8 @@ traceability sections. The /quickfix lane does NOT consume
 `.ground-control.yaml::architecture.vocabulary` itself; that block is
 consumed only by the pre-push reviewers and the preflight (when invoked).
 
-**2026-05-21 (issue #937), hardened by issue #943.** When `--review` is
-supplied, the optional codex and test-quality pre-push cycle wrappers (Steps
-Q6.5 / Q6.6) use the same async-only, idempotent start/poll contract as
+**2026-05-21 (issue #937), hardened by issue #943 and narrowed by ADR-099.** When `--review` is
+supplied, the optional Codex pre-push cycle wrapper (Step Q6.5) uses the same async-only, idempotent start/poll contract as
 `/implement`: pass one bounded `idempotency_key` per logical attempt, reuse it
 after a lost start response, and poll `gc_codex_job`. A missing job requires
 refreshing the issue thread before selecting a new key; cycle jobs do not
@@ -311,7 +309,9 @@ and `gc_post_decision_record` contract are unchanged. See ADR-036
 
 **2026-06-18 (issue #1181 model-tier refresh).** The high-tier capability model id resolved by the shared `gc_resolve_workflow_route` resolver was bumped from `claude-opus-4-7` to `claude-opus-4-8`. /quickfix routes a high-tier stage only when `--review` is supplied (the `review_cycle_1_consume` consume step), so this changes which Claude model runs that step; the reused stage set, the cap-1 default, and the routing/telemetry opt-in knobs are unchanged.
 
-**2026-07-01 (issue #1264 Sonnet-tier refresh).** The `medium`-tier capability model id resolved by the shared `gc_resolve_workflow_route` resolver (and the `gc_test_quality_review` engine default) was bumped from `claude-sonnet-4-6` to `claude-sonnet-5`. /quickfix routes `medium`-tier stages (e.g. `implementation`, `codebase_assessment`) and, when `--review` is supplied, the `test_quality_review` poll stage, so this changes which Claude model runs those steps; the reused stage set, the cap-1 default, and the routing/telemetry opt-in knobs are unchanged. The routing model-id validator now also accepts single-segment canonical ids such as `claude-sonnet-5`.
+**2026-07-01 (issue #1264 Sonnet-tier refresh).** The `medium`-tier capability model id resolved by the shared `gc_resolve_workflow_route` resolver was bumped from `claude-sonnet-4-6` to `claude-sonnet-5`. The routing model-id validator now also accepts single-segment canonical ids such as `claude-sonnet-5`.
+
+**2026-09-17 (ADR-099).** The dedicated test-quality reviewer and Step Q6.6 were removed. `--review` now enables only the bounded Codex pre-push review.
 
 **2026-07-25 (issue #1416 `/implement` execution contract).** The canonical
 development-principles file, same-checkout branch-preparation MCP boundary, and

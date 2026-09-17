@@ -82,7 +82,7 @@ describe("station-observation seam: recovery across invocations (issue #1582)", 
     // re-observation replay rightly refuses, and leave the real obligation open.
     for (const obligation of [
       stationObservation({ cycle: 2 }),
-      stationObservation({ station: "test_quality_review" }),
+      stationObservation({ station: "review_station_b" }),
       stationObservation({ schemaVersion: 1, kind: null }),
     ]) {
       const h = harness({ openObligations: [obligation] });

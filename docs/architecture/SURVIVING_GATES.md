@@ -99,7 +99,7 @@ and required CI unless a row says otherwise.
 | Bootstrap (Steps 1–2) | Resolve repo-local requirements and issue, bind the immutable principles/checkout contract, prepare and label one feature branch. MCP is mutation authority. | **KEEP.** Resumption is marker-based; a mismatched checkout or issue requirement scope refuses. |
 | Architecture/plan/TDD (2.5–5) | Preflight precedes code, plan is durable, each clause selects a TDD path, and targeted evidence is recorded. | **KEEP semantic agent work.** Prose-only changes may use static validation; runtime/config behavior may not. |
 | Verify (6) | Configured completion and policy commands pass for the full in-scope tree. | **KEEP mechanical gate.** Async transport does not weaken the result; command failure requires repair. |
-| Separated reviews (6.5–6.6) | Codex and test-quality engines review the coding agent's complete diff; findings receive durable decisions and fixes. | **KEEP.** Per-issue cap bounds cost; only recorded human or tool-attested cap authority extends it. No deferral disposition. |
+| Bounded Codex review (6.5) | Codex reviews the coding agent's complete diff; findings receive durable decisions and fixes. | **KEEP.** The per-issue cap bounds review iterations, not delivery. Declining an extra cycle advances after findings are resolved; no clean terminal verdict is required (ADR-099). |
 | Publish/sync (7–8.5) | Pre-commit passes, commit/push is serialized, latest integration base is merged, and the synchronized tree is reverified. | **KEEP.** Conflict returns bounded repair; no reset/rebase/force escape. |
 | PR/remote gates (9–11) | Server renders/creates a synchronized PR, watches all CI runs for the head, then evaluates Sonar. | **KEEP.** Unevaluable/skipped analysis does not pass. Fixes loop back through publish and sync. |
 | Specs reconciliation (15–16) | Requirement status and IMPLEMENTS/TESTS links are edited in the delivery diff before publish. | **KEEP repo-local.** No post-merge mutation or backend transition survives. |
@@ -120,7 +120,6 @@ other checkout with `<tool>_repo_not_authorized` before its first GitHub call
 (issue #1583): `gc_post_decision_record`, `gc_post_implementation_plan`,
 `gc_post_final_report`, `gc_assert_completion`, `gc_close_issue_after_merge`,
 `gc_codex_architecture_preflight`, `gc_codex_review`, `gc_codex_review_cycle`,
-`gc_test_quality_review`, `gc_test_quality_review_cycle`,
 `gc_codex_verify_finding`, `gc_review_cap_disposition`, `gc_create_github_issue`,
 and `gc_get_issue_thread`. The branch, obligation, synchronization, watcher,
 requirement-scope, and PR-review tools were already bound the same way.
@@ -139,10 +138,8 @@ requirement-scope, and PR-review tools were already bound the same way.
 | `gc_implement_mechanical` | gate/support | Owns bootstrap, verify, publish, monitor, readiness, and finalize sequencing over the immutable checkout contract. Returned `agent_required` is repair, not success. |
 | `gc_codex_job` | support | Starts/polls bounded async work by idempotency key; transport completion never converts `result.ok=false` to pass. No fake cancellation claim. |
 | `gc_codex_review` | gate/evidence | Separated engine reviews a bound PR/diff and returns structured findings; coverage/non-verdict failures refuse. |
-| `gc_codex_review_cycle` | gate/support | Enforces issue-thread cycle order/cap and persists verbatim findings. Only recorded cap authority bypasses the normal cap. |
+| `gc_codex_review_cycle` | gate/support | Enforces issue-thread cycle order/cap and persists verbatim findings. Only recorded cap authority permits another cycle; proceeding after the cap needs no override. |
 | `gc_codex_verify_finding` | evidence | Re-checks a named finding with a separated engine; caller assertion is not verification. |
-| `gc_test_quality_review` | gate/evidence | Reviews test design/coverage independently; non-verdict or incomplete coverage does not pass. |
-| `gc_test_quality_review_cycle` | gate/support | Applies the same durable cycle/cap contract to test-quality review. Explicit cap authority is the sole extension. |
 | `gc_review_cap_disposition` | gate/support | Scores the configured cap boundary and records a bounded proceed/one-more/escalate disposition. Hard ceiling and shadow mode prevent silent authority expansion. |
 | `gc_post_decision_record` | gate/support | Renders and posts fix/wontfix/not-applicable decisions with bounded rationale. `wontfix` is not self-authorizing. |
 | `gc_record_execution_obligation` | gate/support | Persists a real surfaced finding/repair obligation on the issue thread; it cannot be silently dropped between attempts. |

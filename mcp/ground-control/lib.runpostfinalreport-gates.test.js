@@ -243,7 +243,7 @@ describe("runPostFinalReport gate boundaries", () => {
           repoPath: dir,
           issueNumber: 1, prNumber: 1,
           requirements: [],
-          reviews: [{ reviewer: "test-quality", summary: "0 findings" }],
+          reviews: [{ reviewer: "other-reviewer", summary: "0 findings" }],
           ciStatus: "green", sonarStatus: "passed",
           plainEnglishOutcome: FINAL_REPORT_OUTCOME,
         })
@@ -297,7 +297,7 @@ describe("runPostFinalReport gate boundaries", () => {
           repoPath: dir,
           issueNumber: 1, prNumber: 1,
           requirements: [],
-          reviews: [{ reviewer: "test-quality", summary: "0 findings" }],
+          reviews: [{ reviewer: "other-reviewer", summary: "0 findings" }],
           ciStatus: "green", sonarStatus: "passed",
           lane: "implement",
           plainEnglishOutcome: FINAL_REPORT_OUTCOME,

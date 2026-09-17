@@ -55,11 +55,11 @@ export function registerReviewCapDisposition(server, ctx) {
 function _registerGcReviewCapDisposition(server) {
   server.tool(
     "gc_review_cap_disposition",
-    "Optional, config-gated auto-disposition of the pre-push review cap (workflow.review_disposition; disabled by default — when disabled this returns {ok:true,skipped:true,disposition:null} and does nothing else). Scores the change with a deterministic risk model (diff size, changed-surface class, security-finding shape, prior auto-overrides) and returns one of disposition='proceed' | 'one_more_cycle' | 'escalate_to_human' with a next_action directive. Cap/cycle authority is derived SERVER-SIDE (the effective reviewer cap from config, the over-cap count from durable cycle markers); the passed cycle/cap are advisory display only, and the call is refused (disposition_before_cap_boundary) before the cap boundary is reached. In mode='shadow' (default) the returned next_action is clamped to escalation — the disposition is recorded for agreement data but never drives control flow. A one_more_cycle disposition records a durable over-cap auto-grant (carrying its issuance mode + server-derived cap boundary) that gc_codex_review_cycle / gc_test_quality_review_cycle verify (via auto_grant=true) before running an over-cap cycle — honored only when posted by the trusted MCP identity, issued under authoritative mode, bound to the current cap, and not already spent. The hard ceiling (max_auto_overrides) is enforced in the scorer and re-clamped after any judge so the auto path can never grant a 2nd over-cap cycle. Returns {ok, disposition, next_action, mode, effective_cap, rationale, decided_by, risk_score, signals_snapshot, over_cap_grant_number, decision_record_url}.",
+    "Optional, config-gated auto-disposition of the Codex pre-push review cap (workflow.review_disposition; disabled by default — when disabled this returns {ok:true,skipped:true,disposition:null} and does nothing else). Scores the change with a deterministic risk model (diff size, changed-surface class, security-finding shape, prior auto-overrides) and returns one of disposition='proceed' | 'one_more_cycle' | 'escalate_to_human' with a next_action directive. Cap/cycle authority is derived SERVER-SIDE (the effective Codex cap from config, the over-cap count from durable cycle markers); the passed cycle/cap are advisory display only, and the call is refused (disposition_before_cap_boundary) before the cap boundary is reached. In mode='shadow' (default) the returned next_action is clamped to escalation — the disposition is recorded for agreement data but never drives control flow. A one_more_cycle disposition records a durable over-cap auto-grant that gc_codex_review_cycle verifies before running an over-cap cycle. Returns {ok, disposition, next_action, mode, effective_cap, rationale, decided_by, risk_score, signals_snapshot, over_cap_grant_number, decision_record_url}.",
     {
       repo_path: z.string(),
       issue_number: z.number().int().positive(),
-      reviewer: z.enum(["codex", "test-quality"]),
+      reviewer: z.literal("codex"),
       cycle: z.number().int().positive(),
       cap: z.number().int().positive(),
       base_branch: z.string().nullable().optional(),
@@ -85,8 +85,8 @@ function _registerGcReviewCapDisposition(server) {
         .nullable()
         .optional()
         .describe(
-          "The last-in-cap cycle's server-produced findings summary (from the gc_codex_review_cycle / " +
-            "gc_test_quality_review_cycle envelope). Feeds the risk scorer's finding-shape signal. When omitted, " +
+          "The last-in-cap cycle's server-produced findings summary from gc_codex_review_cycle. " +
+            "Feeds the risk scorer's finding-shape signal. When omitted, " +
             "the scorer treats finding shape as unknown and refuses the proceed fast-path (fail-safe).",
         ),
       async: z.boolean().optional().describe(ASYNC_REVIEW_PARAM_DESC),
@@ -119,7 +119,7 @@ function _registerGcCodexJob(server) {
   server.tool(
     "gc_codex_job",
     "Poll or cancel a shared async job started by gc_codex_review, gc_codex_review_cycle, " +
-      "gc_codex_architecture_preflight, gc_test_quality_review, gc_test_quality_review_cycle, or " +
+      "gc_codex_architecture_preflight, or " +
       "gc_implement_mechanical with async=true. action='poll' returns {ok:true,status:'running'} while " +
       "work continues, and {ok:true,status:'done',result:<original tool envelope>} once it finishes. " +
       "A running poll may carry a bounded `progress` snapshot (current gate phase plus last child-output " +

@@ -34,8 +34,8 @@ backend:
   issue creation from a requirement file.
 - **CI / quality signals**, `gc_watch_ci_run` (GitHub) and
   `gc_watch_sonar_analysis` (direct), read live.
-- **Reviewer separation**, the codex review, architecture-preflight, and
-  verify tools, the test-quality review tools, and the review-cap disposition,
+- **Reviewer separation**, the Codex review, architecture-preflight, and
+  verify tools plus the review-cap disposition;
   the coding agent never reviews its own work.
 - **Durable records**, plan, decision records, execution obligations, and the
   final report all post to the GitHub issue thread (ADR-029).

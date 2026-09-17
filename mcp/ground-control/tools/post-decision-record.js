@@ -22,7 +22,6 @@ import {
   runPostDecisionRecord,
   runPostFinalReport,
   runRenderPrBody,
-  runTestQualityReviewCycle,
   runWatchCiRun,
   runReviewCycleTransport,
 } from "../lib.js";
@@ -40,13 +39,12 @@ export function registerPostDecisionRecord(server, ctx) {
   _registerGcGetIssueThread(server);
   _registerGcWatchCiRun(server);
   _registerGcCodexReviewCycle(server);
-  _registerGcTestQualityReviewCycle(server);
 }
 
 function _registerGcPostDecisionRecord(server) {
   server.tool(
     "gc_post_decision_record",
-    "Post the canonical review-cycle decision record as a comment on the GitHub issue (per ADR-029, the issue thread is the durable record). Renders the verdict envelope (verdict, architectural_read, blocking, notes) into the standard decision-record Markdown layout; rejects 'defer' decisions and any body containing detected secrets. Replaces free-prose decision comments from the Step 6.5 / 6.6 review loops. The verdict + architectural_read fields are optional for back-compat; new callers (issue #931) populate them. Returns the posted comment's URL and id. A GitHub update gives exactly what's needed — not more, not less. No restating context the reader already has, no padding sections, no hedging prose.",
+    "Post the canonical review-cycle decision record as a comment on the GitHub issue (per ADR-029, the issue thread is the durable record). Renders the verdict envelope (verdict, architectural_read, blocking, notes) into the standard decision-record Markdown layout; rejects 'defer' decisions and any body containing detected secrets. Replaces free-prose decision comments from the Step 6.5 review loop. The verdict + architectural_read fields are optional for back-compat; new callers (issue #931) populate them. Returns the posted comment's URL and id. A GitHub update gives exactly what's needed — not more, not less. No restating context the reader already has, no padding sections, no hedging prose.",
     {
       repo_path: z.string(),
       issue_number: z.number().int().positive(),
@@ -381,50 +379,6 @@ function _registerGcCodexReviewCycle(server) {
           asyncMode,
           cycleInput: params,
           runCycle: runCodexReviewCycle,
-        }), null, 2));
-      } catch (e) { return err(e); }
-    },
-  );
-}
-
-function _registerGcTestQualityReviewCycle(server) {
-  server.tool(
-    "gc_test_quality_review_cycle",
-    "Async-only pre-push test-quality review cycle wrapper. Requires one bounded idempotency_key per logical attempt, returns a gc_codex_job handle immediately, runs gc_test_quality_review, and auto-posts the canonical per-cycle decision record. Reuse the same key when the start response is lost; changed input conflicts and concurrent distinct starts for the same repository, issue, and reviewer are refused. Poll gc_codex_job for the same compact terminal result as gc_codex_review_cycle. Verbatim reviewer prose remains server-side.",
-    {
-      repo_path: z.string(),
-      issue_number: z.number().int().positive(),
-      base_branch: z.string().nullable().optional(),
-      override_cap: z.boolean().optional(),
-      override_reason: z.string().nullable().optional(),
-      auto_grant: z.boolean().optional(),
-      model: z.string().optional(),
-      async: z.boolean().optional().describe(ASYNC_REVIEW_CYCLE_PARAM_DESC),
-      idempotency_key: z
-        .string()
-        .min(1)
-        .max(ASYNC_JOB_IDEMPOTENCY_KEY_MAX)
-        .regex(ASYNC_JOB_IDEMPOTENCY_KEY_RE),
-    },
-    async ({ repo_path, issue_number, base_branch, override_cap, override_reason, auto_grant, model, async: asyncMode, idempotency_key }) => {
-      try {
-        const params = {
-          repoPath: repo_path,
-          issueNumber: issue_number,
-          baseBranch: base_branch ?? null,
-          overrideCap: Boolean(override_cap),
-          overrideReason: override_reason ?? null,
-          autoGrant: Boolean(auto_grant),
-          model,
-        };
-        return ok(JSON.stringify(await runReviewCycleTransport({
-          reviewer: "test-quality",
-          repoPath: repo_path,
-          issueNumber: issue_number,
-          idempotencyKey: idempotency_key,
-          asyncMode,
-          cycleInput: params,
-          runCycle: runTestQualityReviewCycle,
         }), null, 2));
       } catch (e) { return err(e); }
     },

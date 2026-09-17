@@ -16,10 +16,6 @@ import {
 } from "./execution-obligation-v2.js";
 import { parseCodexReviewPrePushCycleMarkerEntries } from "./api-requirements.js";
 import { parseCodexPrePushFindingsHeader } from "./codex-review.js";
-import {
-  parseTestQualityReviewCycleMarkerEntries,
-  parseTestQualityReviewFindingsMarker,
-} from "./test-quality-runner.js";
 
 /**
  * How each station's verdict is recognized on the thread. Closed set: a station with no entry here
@@ -29,10 +25,6 @@ const STATION_EVIDENCE = Object.freeze({
   codex_review: {
     parseRecord: parseCodexPrePushFindingsHeader,
     parseCycleMarkers: parseCodexReviewPrePushCycleMarkerEntries,
-  },
-  test_quality_review: {
-    parseRecord: parseTestQualityReviewFindingsMarker,
-    parseCycleMarkers: parseTestQualityReviewCycleMarkerEntries,
   },
 });
 

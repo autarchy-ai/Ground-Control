@@ -240,7 +240,7 @@ export function summarizeReviewFindings(findings, topCategoriesLimit = 5) {
   };
 }
 export function _statusForReviewerAction(nextAction, hasFindings) {
-  if (nextAction === "post_summary_and_escalate_to_user") return "capped";
+  if (nextAction === "ask_over_cap_or_proceed") return "capped";
   if (
     nextAction === "post_clean_decision_record_and_advance_to_phase_c" ||
     nextAction === "proceed_clean"
@@ -249,7 +249,7 @@ export function _statusForReviewerAction(nextAction, hasFindings) {
   }
   if (
     nextAction === "fix_findings_and_reinvoke" ||
-    nextAction === "fix_findings_then_summarize_and_escalate"
+    nextAction === "fix_findings_then_ask_over_cap_or_proceed"
   ) {
     return "findings";
   }
@@ -264,7 +264,7 @@ export function normalizeReviewCycleNextAction(reviewerAction, status) {
     return "post_clean_decision_record_and_advance_to_phase_c";
   }
   if (status === "capped") {
-    return "post_summary_and_escalate_to_user";
+    return "ask_over_cap_or_proceed";
   }
   // For "findings" and "post_failed" the underlying vocabulary already
   // matches the wrapper's. Pass through.
