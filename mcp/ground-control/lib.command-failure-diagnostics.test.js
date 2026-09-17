@@ -54,6 +54,36 @@ describe("formatCommandFailure diagnostics (issue #1568)", () => {
     assert.match(formatted, /stdout: the trace that explains the failure/);
   });
 
+  it("does not repeat an exited child's whole stderr through the error message (issue #1579)", () => {
+    // Node's execFile rejects with `Command failed: <cmd>\n<entire stderr>`. Codex echoes its prompt,
+    // diff included, to stderr, so a usage-limit exit once produced a 447 KB review envelope no MCP
+    // client could read, even though both streams were already reported as bounded tails.
+    const stderr = `OpenAI Codex v0.153.4\nUser instructions:\n${"diff line\n".repeat(20_000)}ERROR: You've hit your usage limit.`;
+    const error = new Error(`Command failed: codex exec --sandbox read-only -\n${stderr}`);
+    error.code = 1;
+    error.stderr = stderr;
+    error.stdout = "";
+
+    const formatted = formatCommandFailure("codex", error);
+
+    assert.ok(formatted.length < 4 * COMMAND_OUTPUT_TAIL_MAX, `formatted failure is ${formatted.length} chars`);
+    assert.match(formatted, /^Command failed: codex exec --sandbox read-only -/);
+    assert.match(formatted, /state: code=1/);
+    assert.match(formatted, /ERROR: You've hit your usage limit\.$/);
+    assert.doesNotMatch(formatted, /User instructions:/, "the prompt echo at the head of stderr is not repeated");
+  });
+
+  it("bounds an unexpectedly long message that does not carry the stderr copy", () => {
+    const error = new Error(`HEADLINE ${"m".repeat(50_000)} TRAILER`);
+    error.code = 1;
+
+    const formatted = formatCommandFailure("codex", error);
+
+    assert.ok(formatted.length < 2 * COMMAND_OUTPUT_TAIL_MAX);
+    assert.match(formatted, /^HEADLINE/);
+    assert.match(formatted, /TRAILER/);
+  });
+
   it("still reports a missing binary without child-process noise", () => {
     const error = new Error("spawn codex ENOENT");
     error.code = "ENOENT";

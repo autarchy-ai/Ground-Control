@@ -18,7 +18,7 @@ This boundary is mandatory after Step 8 and immediately before Step 9.
    `FETCH_HEAD`, tag, raw SHA, another remote, worktree, rebase, or force-push.
 3. Dispatch on the returned status:
    - `complete` / `already_current`: cache the attestation fields and continue.
-     Reuse existing completion/policy evidence because the tree did not change.
+     CI owns the broad checks on the published head.
    - `merge_ready`: run targeted tests only when the fetched changes affect an
      integration seam that benefits from a narrow check, then continue to
      `complete`.
@@ -27,13 +27,11 @@ This boundary is mandatory after Step 8 and immediately before Step 9.
      while iterating, then continue to `complete`.
 4. For `merge_ready` or `conflicts`, call the same tool with
    `action: "complete"` plus the exact `record_id`, `pre_sync_sha`,
-   `fetched_base_sha`, and `outcome` returned by `start`. The tool runs the
-   configured completion command and the configured policy command
-   (`cfg.workflow.policy_command`, default `make policy`), requires the Git index and
-   checkout to remain identical across both gates, binds the verified tree to
-   the merge commit, verifies the merge graph, pushes normally, and writes the
-   durable issue-thread attestation. A retry resumes a valid merge commit after
-   a transient push, remote-read, or attestation failure.
+   `fetched_base_sha`, and `outcome` returned by `start`. The tool requires every
+   merge change to be staged, binds the index tree to the merge commit, checks
+   the merge graph, pushes normally, and records synchronization identity.
+   It runs no completion or policy suites. A retry resumes a valid merge commit
+   after a transient push, remote-read, or recording failure.
 5. A fetch, identity, graph, conflict, gate, push, or attestation failure keeps
    this step incomplete. Preserve inspectable Git state, fix the condition, and
    retry this boundary.
@@ -52,7 +50,7 @@ This boundary is mandatory after Step 8 and immediately before Step 9.
     "fetched_base_sha": "<object id>",
     "synchronization_outcome": "already_current | merged_clean | merged_conflicts_resolved",
     "synchronized_feature_sha": "<published object id>",
-    "verified_tree_sha": "<object id bound to final gate execution>"
+    "verified_tree_sha": "<object id of the synchronized tree>"
   }
 }
 ```

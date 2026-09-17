@@ -22,14 +22,14 @@ pushes, and attests a preserved merge.
    files, credentials, secrets, and sensitive key material.
 2. The action runs the workflow's single mandatory pre-publish hook invocation:
    `cfg.workflow.precommit_command`, default
-   `pre-commit run --all-files`. The boundary is mandatory; a repo on lefthook,
+   `pre-commit run --hook-stage pre-commit`. The boundary is mandatory; a repo on lefthook,
    husky, or a bespoke script configures that field. Do not duplicate a
    successful boundary elsewhere, and do not run the hook chain by hand before
    calling `publish` to check first: a hook failure is a completed `publish`
    result carrying repair evidence. The explicit invocation exists because
-   commit-time hook installation is per clone and cannot be assumed; the
-   commit then also fires whatever hooks the clone has installed, which is Git's
-   behavior rather than a second workflow step.
+   commit-time hook installation is per clone and cannot be assumed. The
+   mechanical commit deliberately disables Git hook dispatch after that explicit
+   boundary, so an installed hook cannot execute the same checks a second time.
 3. If the completed result names a hook failure, read its bounded output, fix
    the issue, and retry `publish` with a new idempotency key. Repeat up to 5
    failed attempts. If it still fails, escalate with the failure details and

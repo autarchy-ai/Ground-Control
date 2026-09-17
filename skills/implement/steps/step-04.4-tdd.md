@@ -32,7 +32,7 @@ a documentation-like extension.
 - The plan (Step 4) explicitly declared the carve-out and named the structural gate that protects each clause/criterion.
 - A second comment on the issue thread re-states the carve-out and the named structural gate, so the durable record is unambiguous (per ADR-029). One issue comment per `/implement` run is fine; bullets per clause are encouraged.
 - A substring or snapshot test against the changed prose ("ADR-007 contains 'AIOPS-ACC-003'") does NOT count as a structural gate. If the only test you can write is one that asserts the doc says what it says, add a real structural gate as part of this work. Do not remove a real clause or criterion merely to avoid implementing its gate; unresolved ambiguity or unexpectedly material expansion uses the durable escalation path and remains an open obligation.
-- **Re-validate the carve-out against the actual diff at the end of implementation.** The carve-out is checked against the *planned* diff at Step 4 and the *actual* diff at Step 4.5 (clause-by-clause verification) and again at Step 6 (completion gate). The Step 6 re-validation is a two-check sweep: (a) every changed path must be in the documentation set (`*.md`, ADRs, notes, docs, README, skills prose), and (b) every diff hunk's *content* must be free of executable behavior (no embedded code, no schema/grammar/policy data consumed by a runtime parser, no runnable fixtures). The path check alone is not enough - a doc file can carry executable behavior. If either check fails for any clause, the carve-out is invalidated retroactively for that clause; revert to the mandatory red-green loop for the executable portion AND for any clause whose structural gate was only a "no executable behavior" claim. The plan-time declaration is provisional; the actual diff is what counts.
+- **Re-validate the carve-out against the actual diff at the end of implementation.** The carve-out is checked against the *planned* diff at Step 4 and the *actual* diff at Step 4.5 (clause-by-clause verification) and again before publishing. The pre-publish re-validation is a two-check sweep: (a) every changed path must be in the documentation set (`*.md`, ADRs, notes, docs, README, skills prose), and (b) every diff hunk's *content* must be free of executable behavior (no embedded code, no schema/grammar/policy data consumed by a runtime parser, no runnable fixtures). The path check alone is not enough - a doc file can carry executable behavior. If either check fails for any clause, the carve-out is invalidated retroactively for that clause; revert to the mandatory red-green loop for the executable portion AND for any clause whose structural gate was only a "no executable behavior" claim. The plan-time declaration is provisional; the actual diff is what counts.
 
 If the carve-out applies, jump to Step 4.5; the loop below does not apply.
 
@@ -46,6 +46,33 @@ For all other diffs, the loop is mandatory:
    - **Security-enforcing behavior gets a behavioral test.** When the diff adds or materially changes production logic that enforces a protection (authentication, authorization, tenant/project isolation, input validation or sanitization, access restriction, secret handling, audit integrity), it ships with a test that drives the protected behavior through its boundary and asserts the enforcement effect, so it goes red if the enforcement is removed, bypassed, or materially weakened. A test that only asserts existence or configuration — that a rule, annotation, row, link, or status is present, that a snapshot contains an identifier, or that a mock was called — provides false assurance and is flagged by the Step 6.6 test-quality reviewer. Ask: if I removed the enforcement, would this test still pass? Use the narrowest layer that genuinely exercises the boundary; an existing controller slice test is fine.
 6. **Integration / framework-specific test layers**: same loop. Write the failing test before the production code that satisfies it. Repository-policy rules from `cfg.rules.plan_rules_content` (for example, framework-specific test requirements, migration policies) are TDD targets, not afterthoughts.
 7. **If you discover during TDD that the plan is wrong**, revise it and continue. Update the plan on the issue thread. Pause only when the revision requires one of the documented judgment/authority classes; record the underlying problem as an open execution obligation with a concrete decision request.
+
+## Versioned artifact releases
+
+When the change generates a capture for a family declared under
+`cfg.release_families` (versioned evidence, snapshots, or another monotonic
+release artifact), reserve its identity **before** generating the capture
+(ADR-097, GC-O017):
+
+1. From the issue branch, call `gc_release_identity` with `action="reserve"`,
+   `repo_path`, `issue_number`, `family`, and an `idempotency_key` that names
+   this capture deterministically (for example `capture-1`). Never use a
+   timestamp, process id, or commit SHA; a retry or a restarted run must reuse
+   the same key.
+2. Write the capture only to the returned `reservation.paths`, and use the
+   returned `reservation.version` wherever the release names itself. Never
+   derive "next" from the checkout, and never renumber a capture by hand after a
+   base merge.
+3. If the run will not ship the capture, call `action="abandon"` from the same
+   issue branch with the same key and a `reason` code. The identity is burned,
+   not reissued.
+4. After the pull request merges, call `action="publish"` with the same key so
+   the log records the merged artifact's revision and blob.
+
+A `release_identity_issue_record_failed` or `release_identity_write_undecided`
+result is recovered by retrying with the same key; it never allocates another
+identity. Reservation does not replace or relax the completion, review, CI,
+SonarCloud, or merge gates for the capture itself.
 
 All tests around touched code must stay green at every step. If any test fails,
 fix the root cause; provenance or apparent unrelatedness is diagnostic context,

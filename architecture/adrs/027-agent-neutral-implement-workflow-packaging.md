@@ -440,3 +440,55 @@ from the caller. Any other checkout gets a structured
 any review engine starts. The runners accept an injected workspace resolver, so
 tests authorize their own temporary repository and the real check still runs.
 The context contract and `.ground-control.yaml` schema are unchanged.
+
+## 2026-09-14 amendment: `release_families` configuration (issue #1579)
+
+`.ground-control.yaml` gains an optional top-level `release_families` mapping that
+opts a repository into `gc_release_identity` (ADR-097). Its normalizer,
+`normalizeReleaseFamiliesConfig` in `lib/release-identity-config.js`, is imported
+by `parseGroundControlYaml`, so the canonical parser stays the only reader of the
+file, and `gc_get_repo_ground_control_context` returns the normalized block. The
+block has strict unknown-key rejection, bounded identifiers and templates, and an
+empty mapping as its feature-off default.
+
+The local block is a branch-discovery hint only. Allocation reads the family
+definition from `.ground-control.yaml` at the head of the family's base branch,
+through the same parser, so a feature branch cannot redefine the family it is
+about to reserve from. The tool derives the repository from the launch-workspace
+authorization and pins `gh api` to the github.com host that authorization
+accepts, so neither `GH_REPO` nor `GH_HOST` can redirect it. No environment
+variable is added.
+
+## 2026-09-17 amendment: exact-input verification ownership (issue #1626)
+
+The mechanical boundary now owns the decision to execute or reuse completion and
+policy. When a repository configures
+`workflow.verification.toolchain_fingerprint_command`, `verify`, already-current
+synchronization, and committed-merge recovery compute the same content address
+over tree, base, issue/branch, requirement context, commands/configuration, and
+toolchain inputs. A trusted full attestation skips both gates. A bounded
+process-local phase cache under that address lets a retry reuse completion after
+policy fails; it is cleared by process restart and cannot authorize reuse for
+changed inputs. Missing, malformed, unauthenticated, or nonmatching evidence
+remains a mandatory execution path.
+
+Gate results expose the execution/reuse decision, its reason, per-phase outcome,
+and the number of broad gates actually executed. Agent prose continues to own
+test selection during edit loops, but it cannot authorize broad-gate reuse.
+Ground Control's repository guidance now requires targeted inner-loop tests and
+one final broad boundary instead of naming the full MCP suite as the inner loop.
+
+## 2026-09-17 amendment: CI-owned verification and progressive remediation
+
+Issues #1628 and #1629 retire the mandatory local mechanical verification phase
+and completion/policy execution during base synchronization. CI owns broad
+verification of the published head. Targeted local tests and the single publish
+pre-commit boundary remain. The exact-input verification attestations, toolchain
+fingerprints, and phase caches from #1497/#1626 are removed; synchronization
+records continue to bind Git identity, not test results.
+
+Monitoring observes CI and Sonar concurrently and returns actionable failures
+before unrelated checks finish, preserving child job handles for ongoing
+observation. Readiness reads required hosted checks for the current head SHA and
+refuses missing, pending, failed, or unavailable evidence. A later push invalidates
+old-head completion claims. Review and human merge gates remain in place.

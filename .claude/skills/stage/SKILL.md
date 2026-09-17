@@ -1,6 +1,6 @@
 ---
 name: stage
-description: Stage files, run pre-commit, fix failures, loop until clean
+description: Stage files for review without duplicating commit-time hooks
 disable-model-invocation: true
 ---
 
@@ -15,21 +15,17 @@ disable-model-invocation: true
 
 1. `git add` all relevant changed files.
 
-## Step 3: Pre-commit Loop
+## Step 3: Preserve the Commit Boundary
 
-Run up to 5 iterations:
-
-1. Run `pre-commit run --all-files`.
-2. If it passes, proceed to Step 4.
-3. If it fails:
-   - Read the failure output.
-   - Fix the issues.
-   - Re-stage any modified files with `git add`.
-   - Go back to step 1.
-4. If still failing after 5 attempts, report the failure details to the user and stop.
+Do not run `pre-commit` while staging. An ordinary commit invokes the installed
+commit-time hook, and the Ground Control publish action owns its explicit
+pre-commit boundary while disabling hook dispatch for the following commit.
+Running the all-files hook here would duplicate either path on the same staged
+snapshot.
 
 ## Step 4: Report
 
 - List what is staged: `git diff --cached --name-only`
-- Confirm pre-commit passes.
-- "All files staged and pre-commit clean. Ready for commit."
+- State that validation remains owned by the subsequent commit or publish
+  boundary.
+- "All relevant files staged. Ready for the commit or publish boundary."

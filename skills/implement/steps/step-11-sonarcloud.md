@@ -39,7 +39,7 @@ This step runs AFTER Step 10 (CI Monitor) reports green. A green CI run does not
 
 4. For each fix cycle:
    - Apply the fixes.
-   - Re-run the local completion gate to confirm nothing regressed locally.
+   - Run targeted tests for the repaired behavior.
    - `git add`, `git commit` with message `Fix SonarCloud findings (cycle <N>)`, `git push`.
    - Re-run Step 10 (CI Monitor) so SonarCloud re-analyzes the PR.
    - After CI is green, re-invoke this step.
@@ -64,3 +64,12 @@ This step runs AFTER Step 10 (CI Monitor) reports green. A green CI run does not
 ```
 
 An unevaluable gate (sub-step 2a) does not return this contract: the step escalates with the obligation open and no `sonar_status` is produced. `sonar_status` carries only an evaluated outcome, so a later record can never attest a gate that was never read.
+
+## Progressive remediation (issue #1628)
+
+Begin diagnosis and repair as soon as any CI job or Sonar findings are actionable.
+Do not wait for unrelated pending gates. The mechanical monitor observes CI and
+Sonar concurrently and returns `head_sha`, `monitor_jobs`, and `resume` on failure.
+Poll the remaining child jobs through `gc_codex_job` while batching related fixes.
+A new push starts monitoring the new head; old results are diagnostic only.
+Required current-head checks must all pass before readiness.

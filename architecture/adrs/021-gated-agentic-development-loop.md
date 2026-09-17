@@ -294,3 +294,31 @@ sensitive-path screening and commit-message validation. The
 existing `implement-verification-boundary-drift` check, now in the same module,
 requires the matching Step 4.4 and Step Q5 tokens. No mandatory gate is added,
 removed, or reordered.
+
+**2026-09-17 (issue #1626, exact-input verification reuse).** Phase B and the
+Phase C base-synchronization boundary retain both mandatory broad gates, but the
+MCP tool now owns their execution count. A successful verification attestation
+may satisfy a retry only when the repository, candidate content tree, base SHA,
+configured completion and policy commands, and toolchain fingerprint are
+identical. A process-local phase result may likewise be reused when a later gate
+fails and the caller retries the unchanged candidate. Any mismatch, unavailable
+fingerprint, process restart, or untrusted attestation fails closed to normal
+gate execution. The result envelope reports whether broad gates executed or
+trusted evidence was reused. Step 7 still runs the configured pre-commit command
+once; its following mechanical commit disables hooks so the same check cannot
+run a second time. Gate order and blocking behavior are unchanged.
+
+## 2026-09-17 amendment: CI-owned verification and progressive remediation
+
+Issues #1628 and #1629 retire the mandatory local mechanical verification phase
+and completion/policy execution during base synchronization. CI owns broad
+verification of the published head. Targeted local tests and the single publish
+pre-commit boundary remain. The exact-input verification attestations, toolchain
+fingerprints, and phase caches from #1497/#1626 are removed; synchronization
+records continue to bind Git identity, not test results.
+
+Monitoring observes CI and Sonar concurrently and returns actionable failures
+before unrelated checks finish, preserving child job handles for ongoing
+observation. Readiness reads required hosted checks for the current head SHA and
+refuses missing, pending, failed, or unavailable evidence. A later push invalidates
+old-head completion claims. Review and human merge gates remain in place.

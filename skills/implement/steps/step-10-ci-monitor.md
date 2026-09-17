@@ -53,3 +53,12 @@ Sonar polling remains server-side and raw logs remain there. (Issues #934 and
 ```
 
 When `ci_conclusion` is not `"success"` and the agent was unable to recover, return `status: "escalated"` with `escalation_reason` set.
+
+## Progressive remediation (issue #1628)
+
+Begin diagnosis and repair as soon as any CI job or Sonar findings are actionable.
+Do not wait for unrelated pending gates. The mechanical monitor observes CI and
+Sonar concurrently and returns `head_sha`, `monitor_jobs`, and `resume` on failure.
+Poll the remaining child jobs through `gc_codex_job` while batching related fixes.
+A new push starts monitoring the new head; old results are diagnostic only.
+Required current-head checks must all pass before readiness.

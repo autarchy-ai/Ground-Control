@@ -42,6 +42,7 @@ function producer(name, conclusion, { status = "COMPLETED", workflowName = null 
 async function watch({
   yaml = VALID_CONFIG,
   checks = [],
+  expectedHeadSha = null,
   token = "test-token-stub",
   fetchImpl = null,
   initialWaitSeconds = 60,
@@ -66,6 +67,7 @@ async function watch({
     const result = await runWatchSonarAnalysis({
       repoPath: dir,
       prNumber: 2114,
+      expectedHeadSha,
       initialWaitSeconds,
       totalTimeoutSeconds,
       pollIntervalSeconds,
@@ -91,6 +93,21 @@ async function watch({
 }
 
 describe("runWatchSonarAnalysis — scope pre-check (issue #1559)", () => {
+  it("does not read a stale analysis while the current producer is pending", async () => {
+    const { result, calls } = await watch({
+      expectedHeadSha: "a9df89dae32854f0915230ffd17ba2fcb65aee68",
+      checks: [producer("sonar", null, { status: "IN_PROGRESS" })],
+      totalTimeoutSeconds: 60,
+    });
+    assert.equal(result.error, "sonar_watch_producer_pending");
+    assert.deepEqual(calls.fetches, []);
+  });
+  it("rejects an analysis read after the PR head changes", async () => {
+    const { result, calls } = await watch({ expectedHeadSha: "b".repeat(40) });
+    assert.equal(result.error, "sonar_watch_head_changed");
+    assert.deepEqual(calls.fetches, []);
+  });
+
   it("stops on a terminally skipped producer without alleging a credential fault", async () => {
     const { result } = await watch({ checks: [producer("sonar", "SKIPPED", { workflowName: "SonarCloud" })], token: null });
     assert.equal(result.ok, false);

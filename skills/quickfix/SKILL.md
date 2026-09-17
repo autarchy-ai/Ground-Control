@@ -14,7 +14,7 @@ Canonical, agent-neutral implementation of the Ground Control `/quickfix` workfl
 The shared successful-path mechanics introduced by issue #1426 also apply
 here where the lane contracts match: Q1 uses
 `gc_implement_mechanical action="bootstrap"` after issue-only input
-validation; Q6 uses `action="verify"` after quickfix acceptance mapping; Q7
+validation; Q6 checks acceptance mapping without a local broad suite; Q7
 through Q8.5 use `action="publish"`; and Q10 through Q11 use
 `action="monitor"`. Quickfix does not use `readiness` or `finalize`, because
 its lightweight close record and requirement-free lifecycle intentionally
@@ -36,7 +36,7 @@ The user picks the lane explicitly at invocation time. The issue is the durable 
 
 ## Per-step model routing (ADR-036)
 
-Routes through the same `gc_resolve_workflow_route` resolver as `/implement` (see ADR-036 + `skills/implement/SKILL.md` § "Per-step model routing"). Stages reused: `issue_branch_resolution`, `codebase_assessment`, `implementation`, `precommit`, `completion_gate`, `review_cycle_1_consume` (only when `--review`), `review_fix_application`, `git_publish`, `base_sync`, `pr_body`, `ci_monitor`, `sonarcloud`, `test_quality_review` (only when `--review`), `close_issue`. Stages NOT used (because the skill drops them): `architecture_preflight`, `planning`, `clause_mapping`, `transition_reconcile`, `final_report`. Routing and telemetry are opt-in per repo via `.ground-control.yaml` (same `cfg.routing.enabled` and `cfg.telemetry.enabled` knobs). A route is advisory capability selection only; it does not require the driver to delegate a stage or create another execution context.
+Routes through the same `gc_resolve_workflow_route` resolver as `/implement` (see ADR-036 + `skills/implement/SKILL.md` § "Per-step model routing"). Stages reused: `issue_branch_resolution`, `codebase_assessment`, `implementation`, `precommit`, `review_cycle_1_consume` (only when `--review`), `review_fix_application`, `git_publish`, `base_sync`, `pr_body`, `ci_monitor`, `sonarcloud`, `test_quality_review` (only when `--review`), `close_issue`. Stages NOT used (because the skill drops them): `architecture_preflight`, `planning`, `clause_mapping`, `transition_reconcile`, `final_report`. Routing and telemetry are opt-in per repo via `.ground-control.yaml` (same `cfg.routing.enabled` and `cfg.telemetry.enabled` knobs). A route is advisory capability selection only; it does not require the driver to delegate a stage or create another execution context.
 
 ## Invocation
 
@@ -87,7 +87,7 @@ If during implementation the diff grows unexpectedly large (10+ files) or surfac
 
 ### Step Q4.4: Implement
 
-Apply the fix. TDD is **encouraged** but not policed for `/quickfix` runs - for a one-file parser bug the test that catches it usually drops in alongside the fix without a formal red-green-refactor cycle. The existing test suite + Step Q6 completion gate are the safety net.
+Apply the fix. TDD is **encouraged** but not policed for `/quickfix` runs - for a one-file parser bug the test that catches it usually drops in alongside the fix without a formal red-green-refactor cycle. Targeted tests and required CI are the safety net.
 
 The full TDD discipline from `skills/implement/SKILL.md` Step 4.4 (write failing test first, watch it fail for the right reason, make it pass with minimum code, refactor with green, repeat per clause) applies whenever the fix introduces new behavior. It's just not enforced as a per-clause invariant for fix-shaped work.
 
@@ -99,15 +99,11 @@ The full TDD discipline from `skills/implement/SKILL.md` Step 4.4 (write failing
 
 **Identical to `skills/implement/SKILL.md` Step 5.** Run the narrowest tests that exercise the changed behavior, widening only for shared, cross-cutting, or security-sensitive changes. Do not run `pre-commit` here, and do not commit locally: Step Q7's `publish` action owns the single mandatory pre-publish hook boundary (`workflow.precommit_command`), commits behind its sensitive-path screening, and returns a hook failure as repair evidence for up to 5 attempts before escalation (issue #899).
 
-### Step Q6: Completion Gate
+### Step Q6: Acceptance Check
 
-**Identical to `skills/implement/SKILL.md` Step 6.** All three checks apply, non-negotiable:
-
-1. Completion gate command exits successfully (`cfg.workflow.completion_command` or `cfg.workflow.test_command` fallback).
-2. Clause/criterion mapping done. For `/quickfix` runs the issue title + body + any user comments are the acceptance contract (`/quickfix` runs are requirement-free by definition - if the issue has a `## Requirements` section, the user should be using `/implement` instead).
-3. Documentation-only carve-out re-validation (path check + content check). Same rules as `/implement`.
-
-Do NOT move to Phase C until all three pass.
+Check the issue's acceptance criteria and any documentation-only carve-out
+against the actual diff. CI owns repository-wide completion and policy suites;
+there is no mechanical verify action or mandatory local broad test pass.
 
 ### Step Q6.5 + Step Q6.6: AI-Assisted Reviews (OFF by default; `--review` to enable)
 
@@ -140,10 +136,7 @@ initial feature push and immediately before Step Q9. The tool fetches the
 configured integration branch from `origin` with an explicit remote-tracking
 refspec, performs a real merge when needed, verifies the merge graph, pushes
 normally, and records the durable synchronization attestation. Run
-proportionate targeted checks while resolving integration conflicts; the tool's
-completion action mechanically runs the configured completion command and the
-configured policy command (`workflow.policy_command`, default `make policy`)
-once on the exact tree it binds to the merge commit. Do not
+proportionate targeted checks while resolving integration conflicts; CI owns broad verification of the published merge commit. Do not
 substitute a local base branch, worktree, rebase, force-push, or discarded
 feature state.
 

@@ -365,7 +365,7 @@ describe("resolveWorkflowPrecommitCommand / runImplementPreCommit", () => {
   it("defaults to the pre-commit framework invocation", async () => {
     const { calls, runner } = recordingRunner();
     await runImplementPreCommit("/repo", runner, { workflow: {} });
-    assert.equal(DEFAULT_PRECOMMIT_COMMAND, "pre-commit run --all-files");
+    assert.equal(DEFAULT_PRECOMMIT_COMMAND, "pre-commit run --hook-stage pre-commit");
     assert.deepEqual(calls[0][1], ["-c", DEFAULT_PRECOMMIT_COMMAND]);
   });
 

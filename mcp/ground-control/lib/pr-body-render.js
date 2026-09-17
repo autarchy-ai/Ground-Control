@@ -228,14 +228,14 @@ function testPlanLines(changeClass, testNotes) {
   // so a rendered Make target would be a false claim in a repo that runs else.
   const lines = changeClass === "doc-only"
     ? [
-      "- [x] Configured completion command passes",
-      "- [x] Configured repository policy command passes (documentation/workflow guardrails)",
+      "- [x] Full completion suite required in CI before merge",
+      "- [x] Repository policy checks required in CI before merge (documentation/workflow guardrails)",
       "- Unit tests / integration tests: N/A — docs-only change",
     ]
     : [
       "- [x] Unit tests pass",
       "- [x] Integration tests pass if applicable",
-      "- [x] Configured completion command passes",
+      "- [x] Full completion suite required in CI before merge",
       "- [x] No coverage regression",
     ];
   if (testNotes && testNotes.trim() !== "") lines.push("", testNotes.trim());

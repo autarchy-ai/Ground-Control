@@ -1,3 +1,6 @@
+import { _resetAsyncJobsForTest } from "./lib/async-job-registry.js";
+import { beforeEach } from "node:test";
+beforeEach(_resetAsyncJobsForTest);
 // Branch resolution for publish/monitor (issue #1507 shakeout).
 //
 // The /implement orchestrator hit `branchName is required for action=publish`
@@ -150,7 +153,7 @@ describe("runPublish branch derivation", () => {
 describe("runMonitor branch derivation", () => {
   const stubEmitter = { station: async (_name, fn) => { await fn(); } };
 
-  it("watches CI on the branch derived from the checkout when branchName is omitted", async () => {
+  it("watches the authoritative PR head branch when branchName is omitted", async () => {
     let watchedBranch;
     const result = await runMonitor(
       { action: "monitor", repoPath: "/repo", issueNumber: 1507, prNumber: 99 },
@@ -158,7 +161,9 @@ describe("runMonitor branch derivation", () => {
         runGit: passGit,
         execFile: execWith(ISSUE_BRANCH),
         emitter: stubEmitter,
-        watchCi: async ({ branch }) => {
+        remoteSnapshot: async () => ({ ok: true, head_sha: "a".repeat(40), branch: ISSUE_BRANCH, failures: [], passed: true }),
+    monitorSleep: async () => new Promise((resolve) => setImmediate(resolve)),
+    watchCi: async ({ branch }) => {
           watchedBranch = branch;
           return { ok: true, conclusion: "success" };
         },
@@ -169,7 +174,7 @@ describe("runMonitor branch derivation", () => {
     assert.equal(watchedBranch, ISSUE_BRANCH);
   });
 
-  it("refuses to monitor when omitted and the checkout is a base branch", async () => {
+  it("refuses when the authoritative PR snapshot is unavailable", async () => {
     let ciRan = false;
     const result = await runMonitor(
       { action: "monitor", repoPath: "/repo", issueNumber: 1507, prNumber: 99 },
@@ -177,12 +182,14 @@ describe("runMonitor branch derivation", () => {
         runGit: passGit,
         execFile: execWith("main"),
         emitter: stubEmitter,
-        watchCi: async () => { ciRan = true; return { ok: true, conclusion: "success" }; },
+        remoteSnapshot: async () => ({ ok: false, error: "remote_gate_evidence_unavailable" }),
+    monitorSleep: async () => new Promise((resolve) => setImmediate(resolve)),
+    watchCi: async () => { ciRan = true; return { ok: true, conclusion: "success" }; },
         watchSonar: async () => ({ ok: true, skipped: true }),
       },
     );
     assert.equal(result.ok, false);
-    assert.equal(result.error, "implement_mechanical_branch_unresolved");
+    assert.equal(result.error, "remote_gate_evidence_unavailable");
     assert.equal(ciRan, false, "CI must not be watched on an unresolved branch");
   });
 });

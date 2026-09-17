@@ -69,6 +69,17 @@ describe("runWatchCiRun queued_too_long is a per-run wait for a first runner (is
   });
   after(() => rmSync(repoDir, { recursive: true, force: true }));
 
+  it("returns a failed job without waiting for a slow sibling workflow", async () => {
+    const result = await watch(repoDir, [21, 26], () => [
+      run(21, "lint", "in_progress", "", [job("lint", "completed", "failure")]),
+      run(26, "tests", "in_progress", "", [job("tests", "in_progress")]),
+    ], { sleep: async () => { throw new Error("must not wait after failure"); } });
+    assert.equal(result.conclusion, "failure");
+    assert.equal(result.run_id, 21);
+    assert.deepEqual(result.pending_run_ids, [21, 26]);
+    assert.equal(result.wait_after_actionable_ms, 0);
+  });
+
   it("completes as success when a run shows queued between jobs after the queued cap", async () => {
     // OpenRAE/env-packs PR #351: tests ran 00:36:29-00:43:55, then sonar and
     // verify (needs: tests) waited for runners, so the CI run read `queued`

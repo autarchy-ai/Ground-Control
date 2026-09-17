@@ -159,6 +159,15 @@ if (/\\/pulls\\/\\d+$/.test(restPath)) {
   process.stdout.write(JSON.stringify(cfg.restPull));
   process.exit(0);
 }
+if (restPath.includes("/protection/required_status_checks")) {
+  process.stdout.write(JSON.stringify({ contexts: ["tests"] })); process.exit(0);
+}
+if (restPath.includes("/check-runs")) {
+  process.stdout.write(JSON.stringify([{ check_runs: [{ name: "tests", status: "completed", conclusion: "success" }] }])); process.exit(0);
+}
+if (restPath.endsWith("/status")) {
+  process.stdout.write(JSON.stringify({ statuses: [] })); process.exit(0);
+}
 const permissionEndpoint = argv.find((arg) => arg.includes("/collaborators/") && arg.endsWith("/permission"));
 if (permissionEndpoint) {
   const login = decodeURIComponent(permissionEndpoint.split("/collaborators/")[1].split("/permission")[0]);

@@ -94,9 +94,6 @@ routing:
     precommit:
       tier: low
       model: claude-haiku-4-5
-    completion_gate:
-      tier: low
-      model: claude-haiku-4-5
     review_cycle_1_consume:
       tier: high
       model: claude-opus-4-8

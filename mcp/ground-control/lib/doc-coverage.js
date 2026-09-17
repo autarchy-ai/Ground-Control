@@ -283,7 +283,7 @@ export async function _fetchCiRunSnapshot(repoRoot, repoSlug, runId) {
       "view",
       String(runId),
       "--json",
-      "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs",
+      "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs,headSha",
     ]),
     { cwd: repoRoot },
   );

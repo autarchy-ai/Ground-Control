@@ -98,7 +98,7 @@ non-obvious rationale rather than restating the code.
 
 ## The tool surface
 
-The surviving 33 tools (down from 215 before the re-platform) are exactly what
+The surviving 34 tools (down from 215 before the re-platform) are exactly what
 the `/implement` workflow needs, each operating over `gh` / `git` / files:
 
 - **Orchestration.** `gc_implement_mechanical` drives the mechanical bands (bootstrap,
@@ -113,6 +113,9 @@ the `/implement` workflow needs, each operating over `gh` / `git` / files:
   its own work.
 - **Durable records.** Plan, decision records, execution obligations, and the final
   report all post to the GitHub issue thread.
+- **Release identities.** `gc_release_identity` allocates versioned evidence-release
+  identities through create-only Git references under `refs/gc/release-identities/`,
+  the one repository-scoped compare-and-swap GitHub enforces (ADR-097).
 
 The complete per-tool inventory and the placement doctrine for policy, hooks,
 CI, protection, skills, and retired surfaces is
@@ -170,3 +173,4 @@ CLI at `mcp/ground-control/knowledge_ingest_cli.js`
 | [ADR-092](../../architecture/adrs/092-file-size-limit-gate.md) | Enforce the 500-LOC file-size limit in repo policy |
 | [ADR-093](../../architecture/adrs/093-requirements-specs-as-code.md) | Requirements are repo-local files, not a backend/graph record |
 | [ADR-094](../../architecture/adrs/094-graphify-comprehension-index.md) | Graphify is an optional, not-required comprehension index |
+| [ADR-098](../../architecture/adrs/098-native-agent-dashboard-connection.md) | Optional dashboard through pinned native agent harnesses; never a workflow authority |

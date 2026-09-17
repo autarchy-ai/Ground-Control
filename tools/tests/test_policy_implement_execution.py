@@ -101,7 +101,7 @@ class ImplementExecutionChecksTest(PolicyChecksFixture):
             step8_5 = root / "skills/implement/steps/step-08.5-sync-base.md"
             step8_5.write_text(
                 step8_5.read_text(encoding="utf-8").replace(
-                    "cfg.workflow.policy_command", "make policy"
+                    "It runs no completion or policy suites", "Run the local broad suites"
                 ),
                 encoding="utf-8",
             )
@@ -187,7 +187,7 @@ class ImplementExecutionChecksTest(PolicyChecksFixture):
             rules = root / "skills/implement/steps/_review-loop-rules.md"
             rules.write_text(
                 rules.read_text(encoding="utf-8").replace(
-                    "`cfg.workflow.policy_command` after every small fix",
+                    "CI owns repository-wide completion and policy suites",
                     "the policy gate after every small fix",
                 ),
                 encoding="utf-8",
@@ -229,8 +229,8 @@ class ImplementExecutionChecksTest(PolicyChecksFixture):
             REPO_ROOT / "skills/implement/steps/step-07-stage-precommit.md"
         ).read_text(encoding="utf-8")
         self.assertIn("narrowest tests", principles)
-        self.assertIn("repository-wide completion and policy suites once", principles)
-        self.assertIn("never waives the mandatory", review_rules)
+        self.assertIn("CI owns repository-wide completion and policy suites", principles)
+        self.assertIn("Preserve pre-commit, review, CI, Sonar, and final-report gates", review_rules)
         self.assertIn("Do not run `pre-commit` here", step5)
         self.assertIn("single mandatory pre-publish", step7)
     def test_gc_render_pr_body_output_passes_check_pr_body(self):

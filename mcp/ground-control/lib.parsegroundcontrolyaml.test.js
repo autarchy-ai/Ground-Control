@@ -39,7 +39,7 @@ describe("parseGroundControlYaml", () => {
       lint_command: null,
       format_command: null,
       policy_command: "make policy",
-      precommit_command: "pre-commit run --all-files",
+      precommit_command: "pre-commit run --hook-stage pre-commit",
       base_branch: null,
       codex_review: { pre_push_cap: null, non_verdict_retry_limit: null },
       test_quality_review: { pre_push_cap: null, non_verdict_retry_limit: null },
@@ -53,7 +53,6 @@ describe("parseGroundControlYaml", () => {
         required_fields: [...DEFAULT_DEV_START_GATE_REQUIRED_FIELDS],
       },
       review_disposition: { enabled: false, mode: "shadow", max_auto_overrides: 1, judge: { enabled: false, model: null } },
-      verification: { toolchain_fingerprint_command: null },
     });
     assert.equal(result.value.sonarcloud, null);
     assert.equal(result.value.rules.plan_rules_path, null);

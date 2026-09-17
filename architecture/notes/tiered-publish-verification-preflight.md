@@ -1,5 +1,7 @@
 # Tiered Publish Verification Preflight
 
+> Superseded by #1629: CI owns broad verification; local attestations, fingerprints, and phase caches are retired.
+
 Issue #1497 reduces repeated repository-wide verification without reducing the
 coverage of the final published tree. This note is architecture guidance only.
 It does not implement an attestation, configuration key, command runner,
@@ -251,3 +253,22 @@ thread.
 - No cancellation claim for mechanical jobs and no automatic recovery from an
   unresponsive external command.
 - No changes to `/integrate`, PR merge authority, or protected-branch policy.
+
+## 2026-09-17 implementation extension (issue #1626)
+
+The original design optimized only publish/base-sync reuse. Issue #1626 extends
+the same content identity to repeated `verify` calls and committed-merge
+recovery. A trusted full attestation skips both local broad gates. Successful
+individual phases are retained in a bounded process-local cache under the same
+candidate identity, allowing a policy retry to reuse completion without
+claiming durable cross-process evidence. Each phase rechecks tree, status, and
+toolchain identity before it becomes reusable. A process restart or any input
+change is a miss.
+
+The result envelope now identifies whether verification executed or was reused,
+why, and how many broad gates actually ran. Ground Control opts into the feature
+with `tools/verification-fingerprint.mjs`, which binds the Node and Python
+versions plus the repository files that determine dependencies and lint/hook
+behavior. Publish continues to run one explicit configured pre-commit boundary;
+the following mechanical Git commit has hooks disabled so it cannot repeat that
+boundary.

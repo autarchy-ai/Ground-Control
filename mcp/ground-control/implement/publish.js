@@ -3,9 +3,8 @@
 // The module had reached 1,231 lines against the repo's 500-LOC limit
 // (docs/CODING_STANDARDS.md). gc-implement-mechanical.js remains the tool entry point.
 
-import { classifySonarGateFailure, sonarGatePassed } from "../lib/sonar-gate.js";
-import { commandFailure, failure, requireField, resolveIssueBranch } from "./gate-helpers.js";
-import { isSensitivePublishPath, readPublishPaths, validateCommitMessage } from "./verify.js";
+import { commandFailure, failure, resolveIssueBranch } from "./gate-helpers.js";
+import { isSensitivePublishPath, readPublishPaths, validateCommitMessage } from "./publish-inputs.js";
 
 export async function runPublish(args, deps) {
   const action = "publish";
@@ -333,80 +332,7 @@ async function runFeatureBaseSync(args, deps, { repoRoot, branchName, authorized
   if (!completed.ok) return baseSyncFailure(completed);
   return publishComplete(completed);
 }
-export async function runMonitor(args, deps) {
-  const action = "monitor";
-  const invalidPr = requireField(args, "prNumber", action);
-  if (invalidPr) return invalidPr;
-  // branchName is optional: derive it from the checkout ONLY when omitted, so an
-  // explicit branch keeps monitor's original behavior (watch CI for exactly that
-  // branch, no checkout assertion) while an omitted one is inferred from the
-  // issue branch in the working tree.
-  let branchName = args.branchName;
-  if (branchName == null || branchName === "") {
-    const { stdout: activeBranch } = await deps.runGit(
-      args.repoPath,
-      ["branch", "--show-current"],
-      deps.execFile,
-    );
-    const resolved = resolveIssueBranch({
-      branchName,
-      activeBranch,
-      issueNumber: args.issueNumber,
-      action,
-    });
-    if (!resolved.ok) return resolved.failure;
-    branchName = resolved.branchName;
-  }
-  const ci = await deps.watchCi({
-    repoPath: args.repoPath,
-    branch: branchName,
-  });
-  if (!ci.ok || ci.conclusion !== "success") {
-    return failure(
-      action,
-      ci.error ?? `ci_${ci.conclusion ?? "unknown"}`,
-      ci.message ?? ci.log_summary ?? `CI concluded '${ci.conclusion ?? "unknown"}'`,
-      "diagnose_and_fix_ci_then_rerun_publish_and_monitor",
-      { failed_stage: "ci", ci },
-    );
-  }
-  const sonar = await deps.watchSonar({
-    repoPath: args.repoPath,
-    prNumber: args.prNumber,
-  });
-  const sonarPassed = sonarGatePassed(sonar);
-  if (!sonarPassed) {
-    // An envelope Sonar never produced is an unevaluable gate, not a set of
-    // findings, and the two need different repairs (issue #946).
-    const classified = classifySonarGateFailure(sonar);
-    return failure(
-      action,
-      classified.error,
-      classified.message,
-      classified.next_action,
-      {
-        failed_stage: "sonar",
-        sonar_gate: classified.sonar_gate,
-        sonar,
-        // Lifted to the envelope's top level so the durable obligation record
-        // names what was observed rather than a guess (issue #1559). Already
-        // normalized and bounded at its origin: `failure()` scrubs its message,
-        // not a nested object.
-        ...(sonar?.scope_evidence ? { sonar_scope_evidence: sonar.scope_evidence } : {}),
-      },
-    );
-  }
-  return {
-    ok: true,
-    action,
-    phase: "remote_gates_complete",
-    ci,
-    sonar,
-    ci_status: "green",
-    sonar_status: sonar.skipped ? "skipped" : "passed",
-    next_action: "post_pre_merge_readiness",
-  };
-}
+export { runMonitor } from "./monitor.js";
 export function mapCompletion(args, phase) {
   const input = args.completion;
   return {

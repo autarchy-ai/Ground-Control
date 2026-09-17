@@ -51,17 +51,13 @@ Both AI-assisted reviews run **pre-push**: codex review at Step 6.5, test-qualit
    related fixes and run the narrowest tests that exercise their changed
    behavior. Expand to broader suites when the fix changes a shared or
    cross-cutting boundary, is security-sensitive, or targeted evidence exposes
-   wider risk. Do not run `cfg.workflow.completion_command` or
-   `cfg.workflow.policy_command` after every small fix. Run those
-   repository-wide gates once before leaving
-   the review band on the final post-fix tree; if no relevant tree state
-   changed since their last successful required boundary, reuse that evidence
-   instead of rerunning it. This batching rule never waives the mandatory
-   completion, policy, review, pre-commit, CI, Sonar, or final-report gates.
+   wider risk. CI owns repository-wide completion and policy suites.
+   Do not run broad local suites as a mandatory review exit condition.
+   Preserve pre-commit, review, CI, Sonar, and final-report gates.
    Local verification proves the fix does the agent's intended thing; the
    reviewer's re-read catches what the agent did not intend.
 
-7. **Dispatch on `next_action`, do not blindly re-invoke.** The loop continues only on `next_action: "fix_findings_and_reinvoke"`: fix, run proportionate targeted verification, re-stage (`git add -A`), and re-invoke the cycle tool. On `next_action: "fix_findings_then_summarize_and_escalate"` (the **last-in-cap** action - under the cap-1 default this fires on cycle 1 when findings are present), fix and run proportionate verification, then run the repository-wide completion and policy gates once on the final post-fix tree before returning `status: "escalated"`; **do not re-invoke**. On `next_action: "post_clean_decision_record_and_advance_to_phase_c"`, run those broad gates once only when fixes changed the tree since their last successful boundary, then advance. On `next_action: "post_summary_and_escalate_to_user"` (`status: "capped"`), the tool did NOT run a review and made no tree change; do not manufacture redundant verification - summarize the cap state to the user.
+7. **Dispatch on `next_action`, do not blindly re-invoke.** The loop continues only on `next_action: "fix_findings_and_reinvoke"`: fix, run proportionate targeted verification, re-stage (`git add -A`), and re-invoke the cycle tool. On `next_action: "fix_findings_then_summarize_and_escalate"` (the **last-in-cap** action - under the cap-1 default this fires on cycle 1 when findings are present), fix and run proportionate verification, then record targeted-test evidence before returning `status: "escalated"`; **do not re-invoke**. On `next_action: "post_clean_decision_record_and_advance_to_phase_c"`, advance with the targeted-test evidence. On `next_action: "post_summary_and_escalate_to_user"` (`status: "capped"`), the tool did NOT run a review and made no tree change; do not manufacture redundant verification - summarize the cap state to the user.
 
    The reason caps exist is bounded review depth - each pass surfaces one or two classes of defect that the prior pass couldn't reach, but cycle 2/3 gains compound the agent's own fix-introduced bugs more than they catch net-new bugs (the empirical observation that drove the #906 cap-1 default). Cycles are NOT for "fix verification" (that's the agent's own loop); they are for finding new classes of defect in the *current* state of the diff. The status field on the cycle envelope mirrors `next_action` - `clean` / `findings` / `capped` / `post_failed` - for ease of branching.
 
