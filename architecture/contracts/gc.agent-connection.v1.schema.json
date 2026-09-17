@@ -1,0 +1,470 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ground-control.dev/contracts/gc.agent-connection/v1",
+  "title": "Ground Control native-agent dashboard connection v1",
+  "description": "A bounded deployment profile around provider-native session protocols. It carries no Ground Control workflow authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "message_id",
+    "message_type",
+    "issued_at",
+    "session",
+    "payload"
+  ],
+  "properties": {
+    "schema": {
+      "const": "gc.agent-connection/v1"
+    },
+    "message_id": {
+      "$ref": "#/$defs/opaqueId"
+    },
+    "message_type": {
+      "type": "string",
+      "enum": [
+        "connection",
+        "observation",
+        "message",
+        "delivery_result"
+      ]
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "session": {
+      "$ref": "#/$defs/sessionIdentity"
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "connection"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/connectionPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "observation"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/observationPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "message"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/messagePayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "delivery_result"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/deliveryResultPayload"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "opaqueId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "sessionIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "machine_id",
+        "checkout_id",
+        "harness",
+        "account_profile_id",
+        "native_session_id"
+      ],
+      "properties": {
+        "machine_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "checkout_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "harness": {
+          "type": "string",
+          "enum": [
+            "claude-code",
+            "codex"
+          ]
+        },
+        "account_profile_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "native_session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
+    "capabilityStatus": {
+      "type": "string",
+      "enum": [
+        "available",
+        "unavailable"
+      ]
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/capabilityStatus"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "native_surface_absent",
+            "unqualified_version",
+            "profile_policy",
+            "disconnected",
+            "session_not_controllable",
+            "provider_not_reporting",
+            "not_applicable"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "unavailable"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "reason"
+            ]
+          }
+        }
+      ]
+    },
+    "connectionPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connector_version",
+        "harness_version",
+        "capabilities",
+        "egress_mode",
+        "transport"
+      ],
+      "properties": {
+        "connector_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "harness_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "observe": {
+              "$ref": "#/$defs/capability"
+            },
+            "resume": {
+              "$ref": "#/$defs/capability"
+            },
+            "send_message": {
+              "$ref": "#/$defs/capability"
+            },
+            "approve": {
+              "$ref": "#/$defs/capability"
+            },
+            "select_model": {
+              "$ref": "#/$defs/capability"
+            },
+            "select_effort": {
+              "$ref": "#/$defs/capability"
+            }
+          }
+        },
+        "egress_mode": {
+          "type": "string",
+          "enum": [
+            "metadata",
+            "transcript",
+            "workspace"
+          ]
+        },
+        "transport": {
+          "type": "string",
+          "enum": [
+            "loopback",
+            "private_network",
+            "tls_reverse_proxy",
+            "e2e_relay"
+          ]
+        }
+      }
+    },
+    "completeness": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "unknown"
+      ]
+    },
+    "observationPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "captured_at",
+        "event_kind",
+        "egress_mode",
+        "metadata",
+        "source",
+        "completeness"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "event_kind": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96
+        },
+        "egress_mode": {
+          "type": "string",
+          "enum": [
+            "metadata",
+            "transcript",
+            "workspace"
+          ]
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "attention_state"
+          ],
+          "properties": {
+            "attention_state": {
+              "type": "string",
+              "enum": [
+                "active",
+                "waiting_for_input",
+                "waiting_for_approval",
+                "idle",
+                "disconnected",
+                "unknown"
+              ]
+            },
+            "has_pending_approval": {
+              "type": "boolean"
+            }
+          }
+        },
+        "transcript_payload": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "workspace_payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path_label",
+            "content"
+          ],
+          "properties": {
+            "path_label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "content": {
+              "type": "string",
+              "maxLength": 32768
+            }
+          }
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "live_protocol",
+            "native_history"
+          ]
+        },
+        "completeness": {
+          "$ref": "#/$defs/completeness"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "egress_mode": {
+                "const": "metadata"
+              }
+            },
+            "required": [
+              "egress_mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "transcript_payload": false,
+              "workspace_payload": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "egress_mode": {
+                "const": "transcript"
+              }
+            },
+            "required": [
+              "egress_mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "workspace_payload": false
+            }
+          }
+        }
+      ]
+    },
+    "messagePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "caller_message_id",
+        "text"
+      ],
+      "properties": {
+        "caller_message_id": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        }
+      }
+    },
+    "deliveryOutcome": {
+      "type": "string",
+      "enum": [
+        "accepted_by_harness",
+        "rejected",
+        "unsupported",
+        "session_unavailable",
+        "unknown_after_disconnect"
+      ]
+    },
+    "deliveryResultPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "caller_message_id",
+        "outcome",
+        "observed_at"
+      ],
+      "properties": {
+        "caller_message_id": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "outcome": {
+          "$ref": "#/$defs/deliveryOutcome"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}
