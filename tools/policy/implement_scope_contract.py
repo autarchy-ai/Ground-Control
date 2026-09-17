@@ -57,6 +57,27 @@ SCOPE_WRITER_SURFACES = (
     "skills/implement/steps/step-04-planning.md",
 )
 
+STARTING_WORKTREE_BOUNDARY = (
+    "MUST NOT make repository changes outside the starting worktree without "
+    "explicit user authorization"
+)
+STARTING_WORKTREE_SURFACES = (
+    "AGENTS.md",
+    "skills/implement/_development-principles.md",
+    "skills/implement/steps/step-01-issue-branch-resolution.md",
+    "docs/DEVELOPMENT_WORKFLOW.md",
+)
+
+PHASE_E_IMMEDIATE_TOKENS = (
+    "Once the linked PR is observed as merged, enter Phase E immediately.",
+    "Do not wait for post-merge GitHub Actions or other additional actions to complete",
+)
+PHASE_E_IMMEDIATE_SURFACES = (
+    "skills/implement/SKILL.md",
+    "skills/implement/steps/step-17-completion.md",
+    "docs/DEVELOPMENT_WORKFLOW.md",
+)
+
 
 def _missing_scope_writer_surfaces(root: Path) -> list[str]:
     """Find workflow files missing the scope-writer tool or its reconciliation contract."""
@@ -64,6 +85,17 @@ def _missing_scope_writer_surfaces(root: Path) -> list[str]:
     for rel in SCOPE_WRITER_SURFACES:
         text = (root / rel).read_text(encoding="utf-8")
         missing.extend(f"missing {token} in {rel}" for token in SCOPE_WRITER_TOKENS if token not in text)
+    return missing
+
+
+def _missing_contract_tokens(
+    root: Path, surfaces: tuple[str, ...], tokens: tuple[str, ...]
+) -> list[str]:
+    """Return missing token/surface pairs for a mirrored instruction contract."""
+    missing = []
+    for rel in surfaces:
+        text = " ".join((root / rel).read_text(encoding="utf-8").split())
+        missing.extend(f"missing {token} in {rel}" for token in tokens if token not in text)
     return missing
 
 
@@ -105,6 +137,36 @@ def check_scope_and_completion_contract(root: Path) -> list[Violation]:
                     "Requirements section and require reconciling the cached scope after it."
                 ),
                 details=missing_scope_writer,
+            )
+        )
+
+    missing_worktree_boundary = _missing_contract_tokens(
+        root, STARTING_WORKTREE_SURFACES, (STARTING_WORKTREE_BOUNDARY,)
+    )
+    if missing_worktree_boundary:
+        violations.append(
+            Violation(
+                code="agent-starting-worktree-boundary",
+                message=(
+                    "Agent and implement surfaces must prohibit repository mutations "
+                    "outside the starting worktree without explicit user authorization."
+                ),
+                details=missing_worktree_boundary,
+            )
+        )
+
+    missing_phase_e_immediate = _missing_contract_tokens(
+        root, PHASE_E_IMMEDIATE_SURFACES, PHASE_E_IMMEDIATE_TOKENS
+    )
+    if missing_phase_e_immediate:
+        violations.append(
+            Violation(
+                code="implement-phase-e-immediate-after-merge",
+                message=(
+                    "Phase E must begin immediately after merge without waiting for "
+                    "unrelated post-merge actions."
+                ),
+                details=missing_phase_e_immediate,
             )
         )
 

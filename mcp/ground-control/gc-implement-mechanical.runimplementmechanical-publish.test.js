@@ -443,9 +443,11 @@ describe("runImplementMechanical monitor and completion", () => {
     assert.equal(sonarCalls, 1);
   });
 
-  it("runs pre-merge readiness and post-merge close in the required order", async () => {
+  it("runs post-merge close without waiting on additional hosted actions", async () => {
     const calls = [];
     const deps = baseDeps({
+      watchCi: async () => { throw new Error("finalize must not wait for post-merge CI"); },
+      watchSonar: async () => { throw new Error("finalize must not wait for post-merge Sonar"); },
       assertCompletion: async ({ phase }) => {
         calls.push(phase);
         return { ok: true, readiness_report: "ready" };

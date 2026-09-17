@@ -90,7 +90,8 @@ export const GC_IMPLEMENT_MECHANICAL_DESCRIPTION =
   "branch when it is this issue's branch (`<issue>-<slug>`), refusing a base/unrelated branch rather than acting on it. " +
   "Long actions publish and monitor accept async=true plus a required bounded idempotency_key; " +
   "poll the returned job_id through gc_codex_job and consume the terminal result as this tool's unchanged envelope. " +
-  "Bootstrap, readiness, and finalize remain synchronous. lane defaults to implement; lane=quickfix makes bootstrap " +
+  "Bootstrap, readiness, and finalize remain synchronous. Once the linked PR is merged, run finalize immediately; " +
+  "do not wait for post-merge hosted actions to complete. lane defaults to implement; lane=quickfix makes bootstrap " +
   "reject requirement-backed issues before branch mutation and makes finalize post the slim quickfix outcome before close. " +
   "requested_requirement_uid names the requirement under test. Every action that can reach a repository gate resolves it " +
   "server-side against the target issue's Requirements section and refuses an unlisted UID; publish then exports " +
