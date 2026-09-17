@@ -14,6 +14,27 @@ from .core import Violation
 PRECOMMIT_BOUNDARY_OWNER = "skills/implement/steps/step-07-stage-precommit.md"
 QUICKFIX_SKILL_PATH = "skills/quickfix/SKILL.md"
 MANUAL_PRECOMMIT_INVOCATION = "pre-commit run"
+QUICKFIX_MAX_LINES = 200
+QUICKFIX_REQUIRED_TOKENS = (
+    'action: "bootstrap"',
+    'action: "publish"',
+    'action: "monitor"',
+    'action: "finalize"',
+    'lane: "quickfix"',
+    "pre-commit boundary and its secret scanning are non-negotiable",
+    "one automatic repair and re-analysis round",
+    "does not recursively create another issue, pull request, or implementation run",
+    "Never call `gc_synchronize_implement_branch` separately",
+    "Never invoke `gc_watch_ci_run` or `gc_watch_sonar_analysis` separately",
+)
+QUICKFIX_RETIRED_TOKENS = (
+    "test-quality",
+    "Q6.6",
+    "both reviewers",
+    "Open a tracked issue AND a PR",
+    "## Amendments",
+    "gc_post_final_report",
+)
 
 
 def _read(root: Path, rel: str) -> str:
@@ -83,6 +104,35 @@ def check_verification_surface_contract(root: Path) -> list[Violation]:
                     "action owns the single mandatory pre-publish hook boundary."
                 ),
                 details=[f"manual pre-commit instruction in {rel}" for rel in manual],
+            )
+        )
+
+    quickfix = _read(root, QUICKFIX_SKILL_PATH)
+    quickfix_flat = " ".join(quickfix.split())
+    quickfix_details = [
+        f"missing token: {token}"
+        for token in QUICKFIX_REQUIRED_TOKENS
+        if token not in quickfix_flat
+    ]
+    quickfix_details.extend(
+        f"retired token remains: {token}"
+        for token in QUICKFIX_RETIRED_TOKENS
+        if token in quickfix
+    )
+    line_count = len(quickfix.splitlines())
+    if line_count > QUICKFIX_MAX_LINES:
+        quickfix_details.append(
+            f"quickfix runtime instruction has {line_count} lines; maximum is {QUICKFIX_MAX_LINES}"
+        )
+    if quickfix_details:
+        violations.append(
+            Violation(
+                code="quickfix-thin-lane-drift",
+                message=(
+                    "/quickfix must remain a bounded wrapper over shared bootstrap, publish, "
+                    "monitor, and finalize modules."
+                ),
+                details=quickfix_details,
             )
         )
 
