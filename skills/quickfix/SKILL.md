@@ -172,6 +172,15 @@ The renderer's `change_class` is typically `source` for `/quickfix` runs; `doc-o
 
 **Identical to `skills/implement/SKILL.md` Step 10.** Bounded poll (5-min queued-too-long guard, 45-min in-progress cap), diagnose-and-fix loop on failure.
 
+`GitGuardian Security Checks` is the exception to failure remediation. Agents
+must never investigate, remediate, dismiss, suppress, bypass, or work around a
+GitGuardian finding. Report only the GitHub check name, status, and check URL;
+state that the user owns every GitGuardian investigation and resolution; then
+stop and wait. Do not access the GitGuardian dashboard, handle suspected secret
+values, rotate credentials, rewrite history, or change code, configuration, and
+allowlists in response. After the user reports resolution, re-read only the
+GitHub check status and continue when it passes.
+
 ### Step Q11: SonarCloud
 
 **Identical to `skills/implement/SKILL.md` Step 11.** Quality gate + open-issues sweep + security hotspots. 5-iteration cap on fix → re-analyze cycles. Same `$SONAR_TOKEN`-direct REST fallback.
