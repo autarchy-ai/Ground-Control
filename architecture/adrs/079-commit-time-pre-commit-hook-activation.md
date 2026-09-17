@@ -145,3 +145,24 @@ disabled. This prevents the installed hook from repeating the same all-files
 checks immediately after the explicit boundary. The standalone staging skill no
 longer runs pre-commit in advance of an ordinary commit; the commit-time hook owns
 that path. CI remains the independent hosted replay.
+
+## 2026-09-17 amendment: CI-owned verification and progressive remediation
+
+Issues #1628 and #1629 retire the mandatory local mechanical verification phase
+and completion/policy execution during base synchronization. CI owns broad
+verification of the published head. Targeted local tests and the single publish
+pre-commit boundary remain. The exact-input verification attestations, toolchain
+fingerprints, and phase caches from #1497/#1626 are removed; synchronization
+records continue to bind Git identity, not test results.
+
+Monitoring observes CI and Sonar concurrently and returns actionable failures
+before unrelated checks finish, preserving child job handles for ongoing
+observation. Readiness reads required hosted checks for the current head SHA and
+refuses missing, pending, failed, or unavailable evidence. A later push invalidates
+old-head completion claims. Review and human merge gates remain in place.
+
+The default publish pre-commit command now selects the commit stage and staged
+files. This repository sets `default_stages: [pre-commit]` and removes its local
+PR-body policy push hook; CI validates the body and scans all files. Secret and
+private-key checks remain local. Existing managed push hook dispatchers have no
+configured checks to repeat. The installer retains its explicit onboarding audit.

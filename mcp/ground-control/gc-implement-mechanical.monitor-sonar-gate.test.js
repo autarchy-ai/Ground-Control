@@ -1,3 +1,6 @@
+import { _resetAsyncJobsForTest } from "./lib/async-job-registry.js";
+import { beforeEach } from "node:test";
+beforeEach(_resetAsyncJobsForTest);
 // runMonitor's SonarCloud branch (issue #946).
 //
 // A Codex-spawned MCP host carries no SONAR_TOKEN, so gc_watch_sonar_analysis
@@ -18,7 +21,9 @@ async function monitorWithSonar(sonar) {
       {
         runGit: async () => ({ stdout: ISSUE_BRANCH }),
         execFile: async () => ({ stdout: ISSUE_BRANCH }),
-        watchCi: async () => ({ ok: true, conclusion: "success" }),
+        remoteSnapshot: async () => ({ ok: true, head_sha: "a".repeat(40), branch: "1426-script-phases", failures: [], passed: true }),
+    monitorSleep: async () => new Promise((resolve) => setImmediate(resolve)),
+    watchCi: async () => ({ ok: true, conclusion: "success" }),
         watchSonar: async () => sonar,
       },
     );

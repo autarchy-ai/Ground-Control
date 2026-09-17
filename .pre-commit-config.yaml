@@ -1,4 +1,5 @@
 fail_fast: true
+default_stages: [pre-commit]
 
 repos:
   # =============================================================================
@@ -38,30 +39,5 @@ repos:
     hooks:
       - id: gitleaks
 
-  # =============================================================================
-  # STAGE 3: Push-time checks
-  # =============================================================================
-  #
-  # Broad verification (`make mcp-test`, `bin/policy`, Vale) is deliberately
-  # absent here. Each already runs twice per change: once at the /implement
-  # completion and policy gates (Step 6, then again on the post-base-sync tree
-  # at Step 8.5) and once in the CI `policy` job. Re-running them at commit time
-  # made every commit pay for verification the workflow had just performed on
-  # the same tree, and the commit-time copy is the weakest of the three: it is
-  # skippable with `--no-verify`, it is path-filtered so it degrades silently on
-  # diffs outside its patterns, and it leaves no record any gate can attest to.
-  # Commit time keeps only what nothing else does: file hygiene and secret
-  # scanning.
-  #
-  # `make mcp-test` and `make policy` remain the local way to run the broad
-  # gates on demand; nothing about their coverage changed.
-
-  - repo: local
-    hooks:
-      - id: pr-body-policy
-        name: pr body template (only on push, when a PR exists)
-        entry: scripts/check-pr-body.sh
-        language: system
-        stages: [pre-push]
-        pass_filenames: false
-        always_run: true
+  # Full tests, repository policy, prose lint, and PR-body validation run in CI.
+  # Commit checks inspect staged files; push does not repeat the hook set.

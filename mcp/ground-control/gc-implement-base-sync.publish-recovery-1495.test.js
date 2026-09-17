@@ -130,7 +130,7 @@ describe("bounded mechanical-publish recovery (#1495)", () => {
     });
     const wrappedRunner = async (command, args, options) => {
       const result = await runner(command, args, options);
-      if (command === "bash") gatesRan = true;
+      if (command === "git" && gitOperation(args)[0] === "write-tree") gatesRan = true;
       return result;
     };
     const result = await runSynchronizeImplementBranch(completeInput(), {

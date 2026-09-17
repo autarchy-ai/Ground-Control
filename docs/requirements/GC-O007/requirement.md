@@ -17,9 +17,9 @@ The system's agentic development workflow shall enforce a gated loop with the fo
 
 (A) Plan and Implement: The agent shall read each in-scope requirement from its repository-local specification, create or resolve the linked GitHub issue, explore existing codebase coverage, produce an implementation plan, post the plan as a comment on the GitHub issue, and proceed directly to TDD without waiting for synchronous user approval. Implementation shall verify clause-by-clause against the requirement statement.
 
-(B) Quality Gate: Before publishing, the agent shall pass the configured completion command and repository policy command, complete clause-by-clause mapping, and satisfy the repository's quality gates. Release Please owns `CHANGELOG.md` and product-version updates; feature work supplies a valid Conventional Commit title instead of editing release artifacts directly. The requirement-status transition to ACTIVE and the IMPLEMENTS/TESTS traceability edits are made in the requirement files as part of the delivery diff before publish, so they are reviewed in — and become authoritative through — the delivery pull request (issue #1541). Pre-merge readiness names that state as proposed, not authoritative.
+(B) Quality Gate: Before publishing, the agent shall run proportionate targeted tests and complete clause-by-clause mapping. CI shall own the full completion and repository policy suites; readiness shall require successful hosted checks for the current PR head. Release Please owns `CHANGELOG.md` and product-version updates; feature work supplies a valid Conventional Commit title instead of editing release artifacts directly. The requirement-status transition to ACTIVE and the IMPLEMENTS/TESTS traceability edits are made in the requirement files as part of the delivery diff before publish, so they are reviewed in — and become authoritative through — the delivery pull request (issue #1541). Pre-merge readiness names that state as proposed, not authoritative.
 
-(C) Review, Stage, Commit, Push, and Synchronize: Before the first push, the agent shall run the configured pre-push Codex and test-quality review cycles against the complete local diff, fix findings locally with proportionate self-verification, and re-stage as directed by the bounded review contract. It shall then run the configured pre-commit command, commit and push the feature branch, synchronize it with the latest integration branch, and re-verify the synchronized tree before PR creation.
+(C) Review, Stage, Commit, Push, and Synchronize: Before the first push, the agent shall run the configured pre-push Codex and test-quality review cycles against the complete local diff, fix findings locally with proportionate self-verification, and re-stage as directed by the bounded review contract. It shall then run the configured pre-commit command, commit and push the feature branch, synchronize it with the latest integration branch, and bind the synchronization record to the published tree before PR creation without running local completion or policy suites.
 
 (D) Ship Pipeline: The agent shall create a synchronized PR, monitor CI, validate the SonarCloud quality gate, and present the PR for human review and merge with a pre-merge readiness record (the Phase D terminal signal). The agent shall not merge PRs.
 
@@ -39,6 +39,12 @@ Ground Control's value proposition depends on agents maintaining traceability an
 
 ## Traceability
 
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/remote-gates.js` (Required hosted checks bound to current PR head, #1629)
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/implement/monitor.js` (Concurrent CI/Sonar remediation and resumable jobs, #1628)
+- TESTS → TEST `mcp/ground-control/remote-gates.test.js` (Missing, stale, pending and failed hosted evidence)
+- TESTS → TEST `mcp/ground-control/monitor-progressive.test.js` (Early findings, pending child jobs and head invalidation)
+
+
 - DOCUMENTS → DOCUMENTATION `docs/DEVELOPMENT_WORKFLOW.md` (Development Workflow documentation)
 - DOCUMENTS → DOCUMENTATION `docs/WORKFLOW.md` (Workflow navigation page pointing at the owning references)
 - DOCUMENTS → ADR `architecture/adrs/021-gated-agentic-development-loop.md` (ADR-021: Gated Agentic Development Loop)
@@ -57,13 +63,6 @@ Ground Control's value proposition depends on agents maintaining traceability an
 - DOCUMENTS → DOCUMENTATION `architecture/notes/implement-cost-routing-tool-surfaces-preflight.md` (Preflight design note for issue #868 (codex architecture preflight))
 - TESTS → TEST `tools/render_pr_body_fixture.mjs` (Renderer-vs-check_pr_body subprocess fixture (binds JS renderer to Python policy))
 - IMPLEMENTS → CONFIG `.ground-control.yaml` (repository workflow, routing, policy, and review configuration)
-- IMPLEMENTS → CODE_FILE `mcp/ground-control/implement/verify.js` (Exact-input verification reuse decision at the mechanical verify boundary (#1626))
-- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/verification-gates.js` (Content-bound full and per-phase gate reuse with fail-closed invalidation (#1626))
-- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/codex-workflow-4.js` (Base-sync and committed-merge recovery verification reuse (#1626))
-- IMPLEMENTS → CODE_FILE `tools/verification-fingerprint.mjs` (Repository toolchain and gate-input fingerprint (#1626))
-- TESTS → TEST `mcp/ground-control/gc-implement-mechanical.verification-reuse-1626.test.js` (Repeated verify invocation-count regression test)
-- TESTS → TEST `mcp/ground-control/lib.verification-gates.test.js` (Verification binding, mutation, and attestation tests)
-- TESTS → TEST `mcp/ground-control/lib.verification-phase-reuse.test.js` (Per-phase retry reuse and content-address invalidation tests)
 - IMPLEMENTS → GITHUB_ISSUE `1626` (Eliminate redundant full-suite and pre-commit runs during implementation)
 - IMPLEMENTS → CODE_FILE `tools/policy/checks.py` (run_step13_decision_record_contract — make policy structural gate (#884))
 - DOCUMENTS → DOCUMENTATION `architecture/notes/test-quality-clean-continuation-preflight.md` (Issue #884 architecture preflight note (test-quality clean continuation))

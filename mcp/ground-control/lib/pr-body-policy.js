@@ -11,7 +11,7 @@
 
 import { EXACT_REQUIREMENT_UID_RE, REQUIREMENT_UID_CONTRACT_DESCRIPTION } from "./runtime-primitives.js";
 
-export const PR_BODY_POLICY_CHECK_LINE = "- [x] Configured repository policy command passes";
+export const PR_BODY_POLICY_CHECK_LINE = "- [x] Repository policy checks required in CI before merge";
 // Repo-neutral Ground Control Checks (issue #1199): the section attests only
 // gates the /implement workflow actually enforces for every repository, named
 // semantically. The previous lines named `gc_evaluate_quality_gates` /

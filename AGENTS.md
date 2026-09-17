@@ -14,6 +14,6 @@ workflow config in a single call.
 
 - Pass full requirement UIDs exactly as they appear at `docs/requirements/<UID>/requirement.md`.
 - Do not synthesize or rewrite requirement prefixes.
-- During implementation, run the narrowest tests that exercise the changed behavior. Run `make mcp-test` and `make policy` once through the final verification boundary; reuse its exact-input evidence while the tree and bound inputs remain unchanged. Those are the shared repo-native gates for both Claude and Codex.
+- During implementation, run the narrowest tests that exercise the changed behavior. CI owns the full MCP suite and repository policy checks; do not run them as a mandatory local publish or synchronization step.
 - Do not rely on agent-specific user-level hooks as the only enforcement layer. Keep repo-native checks and docs in sync; the tool layer is the trust boundary, so prose the MCP tools cannot enforce is not a control.
 - See `docs/DEVELOPMENT_WORKFLOW.md` for the full `/implement` workflow and its sibling lanes.

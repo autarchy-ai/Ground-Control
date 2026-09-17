@@ -22,7 +22,7 @@ pushes, and attests a preserved merge.
    files, credentials, secrets, and sensitive key material.
 2. The action runs the workflow's single mandatory pre-publish hook invocation:
    `cfg.workflow.precommit_command`, default
-   `pre-commit run --all-files`. The boundary is mandatory; a repo on lefthook,
+   `pre-commit run --hook-stage pre-commit`. The boundary is mandatory; a repo on lefthook,
    husky, or a bespoke script configures that field. Do not duplicate a
    successful boundary elsewhere, and do not run the hook chain by hand before
    calling `publish` to check first: a hook failure is a completed `publish`

@@ -402,6 +402,7 @@ export async function runWatchSonarAnalysis({
   repoPath,
   prNumber,
   initialWaitSeconds = 60,
+  expectedHeadSha = null,
   totalTimeoutSeconds = 1800,
   pollIntervalSeconds = 30,
   fetchProducerEvidence = fetchSonarProducerEvidence,
@@ -444,6 +445,22 @@ export async function runWatchSonarAnalysis({
   // SHA or check metadata can leave in `scope_evidence`, because the request is
   // never made.
   const authorized = await authorizeRepoRead({ repoRoot, errorPrefix: "sonar_watch" });
+  // A previous PR analysis must not be reused while this head's producer is
+  // still running. Direct callers retain their existing unbound watch behavior.
+  if (expectedHeadSha) {
+    if (!authorized.ok) return authorized;
+    while (true) {
+      const observed = await fetchProducerEvidence({ repoRoot, repoSlug: authorized.repoSlug, prNumber, execFile });
+      if (observed?.headSha !== expectedHeadSha) {
+        return { ok: false, error: "sonar_watch_head_changed", pr_number: prNumber, head_sha: expectedHeadSha };
+      }
+      const checks = selectSonarProducerChecks(observed.entries, selector);
+      if (checks.length && checks.every((check) =>
+        check.status === "completed")) break;
+      if (budget.expired()) return { ok: false, error: "sonar_watch_producer_pending", pr_number: prNumber, head_sha: expectedHeadSha };
+      await budget.sleep(pollIntervalSeconds * 1000);
+    }
+  }
   const notProduced = authorized.ok
     ? await resolveSonarProducerScope({
       repoRoot, repoSlug: authorized.repoSlug, prNumber, projectKey, selector, fetchProducerEvidence, execFile,

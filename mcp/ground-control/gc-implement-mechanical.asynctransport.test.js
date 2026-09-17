@@ -1,3 +1,6 @@
+import { _resetAsyncJobsForTest } from "./lib/async-job-registry.js";
+import { beforeEach } from "node:test";
+beforeEach(_resetAsyncJobsForTest);
 // Re-homed from gc-implement-mechanical.test.js under issue #1473 (async
 // mechanical transport) atop the issue #1467 500-LOC split
 // (docs/CODING_STANDARDS.md). Test bodies are unchanged; the shared deps
@@ -46,6 +49,8 @@ function baseDeps(overrides = {}) {
     getTraceabilityByArtifact: async () => [{ id: "link-1" }],
     markPickedUp: async () => ({ ok: true, comment_url: "https://github.test/pickup" }),
     synchronize: async () => ({ ok: true, status: "complete", recordId: RECORD_ID }),
+    remoteSnapshot: async () => ({ ok: true, head_sha: "a".repeat(40), branch: "1426-script-phases", failures: [], passed: true }),
+    monitorSleep: async () => new Promise((resolve) => setImmediate(resolve)),
     watchCi: async () => ({ ok: true, conclusion: "success" }),
     watchSonar: async () => ({
       ok: true,
@@ -73,7 +78,7 @@ function baseDeps(overrides = {}) {
   deps.preCommit ??= async (repoRoot, commandRunner, context) =>
     commandRunner(
       "bash",
-      ["-c", context?.workflow?.precommit_command ?? "pre-commit run --all-files"],
+      ["-c", context?.workflow?.precommit_command ?? "pre-commit run --hook-stage pre-commit"],
       { cwd: repoRoot },
     );
   return deps;
@@ -82,84 +87,7 @@ function baseDeps(overrides = {}) {
 describe("gcImplementMechanicalToolHandler async transport", () => {
   const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-  it("starts verify in the shared job registry and preserves its exact terminal envelope", async () => {
-    const { pollAsyncJob, _resetAsyncJobsForTest } = await import("./lib.js");
-    _resetAsyncJobsForTest();
-    const start = await gcImplementMechanicalToolHandler({
-      action: "verify",
-      repo_path: "/repo",
-      issue_number: 1473,
-      requirements: [],
-      async: true,
-      idempotency_key: "issue-1473-verify-attempt-1",
-    }, {
-      ...baseDeps(),
-      canonicalizeRepoPath: () => "/repo",
-    });
-
-    assert.equal(start.ok, true);
-    assert.equal(start.status, "running");
-    assert.equal(start.kind, "implement_mechanical_verify");
-    await flush();
-    const done = pollAsyncJob(start.job_id);
-    assert.equal(done.status, "done");
-    // timings/dominant_gate carry non-deterministic durations (issue #1497); assert
-    // the stable envelope exactly and the timing shape separately.
-    const { timings, dominant_gate, ...stable } = done.result;
-    assert.deepEqual(stable, {
-      ok: true,
-      action: "verify",
-      phase: "verification_complete",
-      completion_command: "make check",
-      policy_command: "make policy",
-      policy: "passed",
-      verification_decision: "executed",
-      verification_reason: "verification_reuse_disabled",
-      broad_gates_executed: 2,
-      next_action: "run_required_agent_reviews_or_publish",
-    });
-    assert.deepEqual(timings.map((entry) => [entry.phase, entry.outcome]), [
-      ["completion", "passed"],
-      ["policy", "passed"],
-    ]);
-    assert.ok(["completion", "policy"].includes(dominant_gate));
-  });
-
-  it("keeps an expected mechanical gate failure under a completed job result", async () => {
-    const { pollAsyncJob, _resetAsyncJobsForTest } = await import("./lib.js");
-    _resetAsyncJobsForTest();
-    const start = await gcImplementMechanicalToolHandler({
-      action: "verify",
-      repo_path: "/repo",
-      issue_number: 1473,
-      requirements: [],
-      async: true,
-      idempotency_key: "issue-1473-verify-attempt-2",
-    }, {
-      ...baseDeps({
-        execFile: async (file) => {
-          if (file === "bash") {
-            const error = new Error("completion failed");
-            error.stderr = "one test failed";
-            throw error;
-          }
-          return { stdout: "", stderr: "" };
-        },
-      }),
-      canonicalizeRepoPath: () => "/repo",
-    });
-
-    await flush();
-    const done = pollAsyncJob(start.job_id);
-    assert.equal(done.ok, true);
-    assert.equal(done.status, "done");
-    assert.equal(done.result.ok, false);
-    assert.equal(done.result.action, "verify");
-    assert.equal(done.result.agent_required, true);
-    assert.equal(done.result.failed_stage, "completion_gate");
-  });
-
-  for (const action of ["verify", "publish", "monitor"]) {
+  for (const action of ["publish", "monitor"]) {
     it(`reuses one ${action} job for a repeated idempotent start`, async () => {
       const { _resetAsyncJobsForTest } = await import("./lib.js");
       _resetAsyncJobsForTest();
@@ -193,7 +121,7 @@ describe("gcImplementMechanicalToolHandler async transport", () => {
     const { _resetAsyncJobsForTest } = await import("./lib.js");
     _resetAsyncJobsForTest();
     const common = {
-      action: "verify",
+      action: "publish",
       repo_path: "/repo",
       issue_number: 1473,
       async: true,
@@ -216,7 +144,7 @@ describe("gcImplementMechanicalToolHandler async transport", () => {
     assert.equal(conflict.error, "job_idempotency_conflict");
   });
 
-  it("prevents verify and publish from racing on the same canonical checkout", async () => {
+  it("prevents two publish attempts from racing on the same canonical checkout", async () => {
     const { _resetAsyncJobsForTest } = await import("./lib.js");
     _resetAsyncJobsForTest();
     const never = new Promise(() => {});
@@ -227,7 +155,7 @@ describe("gcImplementMechanicalToolHandler async transport", () => {
       canonicalizeRepoPath: () => "/canonical/repo",
     };
     const verify = await gcImplementMechanicalToolHandler({
-      action: "verify",
+      action: "publish",
       repo_path: "/repo-via-symlink",
       issue_number: 1473,
       async: true,
@@ -268,7 +196,7 @@ describe("gcImplementMechanicalToolHandler async transport", () => {
 
   it("requires an idempotency key for a background mechanical start", async () => {
     const result = await gcImplementMechanicalToolHandler({
-      action: "verify",
+      action: "publish",
       repo_path: "/repo",
       issue_number: 1473,
       async: true,
@@ -282,7 +210,7 @@ describe("gcImplementMechanicalToolHandler async transport", () => {
 
   it("returns a bounded transport failure when the repository path cannot be canonicalized", async () => {
     const result = await gcImplementMechanicalToolHandler({
-      action: "verify",
+      action: "publish",
       repo_path: "/missing/repo",
       issue_number: 1473,
       async: true,
@@ -298,16 +226,11 @@ describe("gcImplementMechanicalToolHandler async transport", () => {
     assert.equal(result.agent_required, false);
   });
 
-  it("keeps omitted async mode synchronous for direct callers", async () => {
+  it("rejects the retired verify action for direct callers", async () => {
     const result = await gcImplementMechanicalToolHandler({
-      action: "verify",
-      repo_path: "/repo",
-      issue_number: 1473,
-      requirements: [],
+      action: "verify", repo_path: "/repo", issue_number: 1473,
     }, baseDeps());
-    assert.equal(result.ok, true);
-    assert.equal(result.phase, "verification_complete");
-    assert.equal(result.status, undefined);
-    assert.equal(result.job_id, undefined);
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "implement_mechanical_action_invalid");
   });
 });

@@ -1,3 +1,6 @@
+import { _resetAsyncJobsForTest } from "./lib/async-job-registry.js";
+import { beforeEach } from "node:test";
+beforeEach(_resetAsyncJobsForTest);
 // Split from gc-implement-mechanical.test.js under issue #1467 for the 500-LOC limit
 // (docs/CODING_STANDARDS.md). Test bodies are unchanged.
 
@@ -49,6 +52,8 @@ function baseDeps(overrides = {}) {
     getTraceabilityByArtifact: async () => [{ id: "link-1" }],
     markPickedUp: async () => ({ ok: true, comment_url: "https://github.test/pickup" }),
     synchronize: async () => ({ ok: true, status: "complete", recordId: RECORD_ID }),
+    remoteSnapshot: async () => ({ ok: true, head_sha: "a".repeat(40), branch: "1426-script-phases", failures: [], passed: true }),
+    monitorSleep: async () => new Promise((resolve) => setImmediate(resolve)),
     watchCi: async () => ({ ok: true, conclusion: "success" }),
     watchSonar: async () => ({
       ok: true,
@@ -83,7 +88,7 @@ function baseDeps(overrides = {}) {
   deps.preCommit ??= async (repoRoot, commandRunner, context) =>
     commandRunner(
       "bash",
-      ["-c", context?.workflow?.precommit_command ?? "pre-commit run --all-files"],
+      ["-c", context?.workflow?.precommit_command ?? "pre-commit run --hook-stage pre-commit"],
       { cwd: repoRoot },
     );
   return deps;
@@ -309,7 +314,7 @@ describe("runImplementMechanical publish", () => {
     assert.equal(result.phase, "publish_complete");
     assert.deepEqual(syncCalls.map(({ action }) => action), ["start", "complete"]);
     assert.equal(
-      git.calls.filter(([file, ...argv]) => file === "bash" && argv.includes("pre-commit run --all-files")).length,
+      git.calls.filter(([file, ...argv]) => file === "bash" && argv.includes("pre-commit run --hook-stage pre-commit")).length,
       1,
       "publish owns exactly one explicit hook boundary",
     );
@@ -415,7 +420,7 @@ describe("runImplementMechanical monitor and completion", () => {
     assert.equal(result.sonar_status, "passed");
   });
 
-  it("does not run Sonar after an actionable CI failure", async () => {
+  it("starts Sonar concurrently with CI and returns an actionable failure", async () => {
     let sonarCalls = 0;
     const result = await runImplementMechanical({
       action: "monitor",
@@ -424,7 +429,9 @@ describe("runImplementMechanical monitor and completion", () => {
       branchName: "1426-script-phases",
       prNumber: 99,
     }, baseDeps({
-      watchCi: async () => ({ ok: true, conclusion: "failure", log_summary: "lint failed" }),
+      remoteSnapshot: async () => ({ ok: true, head_sha: "a".repeat(40), branch: "1426-script-phases", failures: [], passed: true }),
+    monitorSleep: async () => new Promise((resolve) => setImmediate(resolve)),
+    watchCi: async () => ({ ok: true, conclusion: "failure", log_summary: "lint failed" }),
       watchSonar: async () => {
         sonarCalls += 1;
         return { ok: true, skipped: true };
@@ -433,7 +440,7 @@ describe("runImplementMechanical monitor and completion", () => {
 
     assert.equal(result.agent_required, true);
     assert.equal(result.failed_stage, "ci");
-    assert.equal(sonarCalls, 0);
+    assert.equal(sonarCalls, 1);
   });
 
   it("runs pre-merge readiness and post-merge close in the required order", async () => {

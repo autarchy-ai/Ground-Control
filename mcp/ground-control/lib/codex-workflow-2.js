@@ -6,7 +6,6 @@ import { assertSafeImplementCheckoutConfiguration, authorizeImplementRepoRoot, e
 import { isSafeGitRefName, resolveWorkflowPrecommitCommand } from "./repo-context.js";
 import { extractInScopeRequirementUids } from "./issue-requirements-scope.js";
 import { EXACT_REQUIREMENT_UID_RE, execFile } from "./runtime-primitives.js";
-import { runVerifiedGateBoundary } from "./verification-gates.js";
 
 function validatePrepareImplementBranchInput({
   invocationRoot,
@@ -412,50 +411,4 @@ export async function readRemoteImplementBranchSha(repoRoot, branchName, command
     return null;
   }
   return oid.toLowerCase();
-}
-export async function runImplementFinalTreeGates(
-  repoRoot,
-  context,
-  commandRunner = execFile,
-  requestedRequirementUid = null,
-  reuseKey = null,
-) {
-  const completionCommand =
-    context?.workflow?.completion_command ?? context?.workflow?.test_command;
-  if (typeof completionCommand !== "string" || completionCommand.trim() === "") {
-    const error = new Error("No completion command is configured");
-    error.code = "implement_base_sync_completion_command_missing";
-    throw error;
-  }
-  const readStatus = async () =>
-    (await runImplementGit(repoRoot, ["status", "--porcelain=v1", "--untracked-files=normal"], commandRunner)).stdout;
-  // The gates read the working tree, but the merge commit is built from the
-  // index. An unstaged modification or an untracked file gets verified and then
-  // left behind, so refuse before running the gates. Staged entries (`X ` in
-  // porcelain v1) are the merge itself and are expected here.
-  const unstaged = (await readStatus())
-    .split(/\r?\n/)
-    .filter((line) => line !== "")
-    .filter((line) => line[1] !== " ");
-  if (unstaged.length > 0) {
-    const error = new Error(
-      "The final-tree gates require every change to be staged; "
-      + "stage or revert the working-tree changes and retry",
-    );
-    error.code = "implement_base_sync_worktree_not_staged";
-    throw error;
-  }
-  // Completion and policy run through the ONE shared invariant-preserving
-  // boundary (issue #1497) so this path and Step 6 verify bind identical inputs
-  // and cannot drift; it re-validates the staged index tree after the fingerprint
-  // and after each gate. Returns { treeOid, toolchainDigest, timings }.
-  return runVerifiedGateBoundary({
-    repoRoot,
-    context,
-    gateEnv: implementGateEnvironment(requestedRequirementUid),
-    commandRunner,
-    readTreeOid: () => readImplementIndexTreeOid(repoRoot, commandRunner),
-    readStatus,
-    reuseKey,
-  });
 }

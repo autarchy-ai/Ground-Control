@@ -145,36 +145,6 @@ export function normalizeDevStartGateConfig(raw) {
   if (errors.length) return { ok: false, errors };
   return { ok: true, value };
 }
-export function normalizeVerificationConfig(raw) {
-  if (raw == null) {
-    return { ok: true, value: { toolchain_fingerprint_command: null } };
-  }
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    return { ok: false, errors: ["workflow.verification must be a mapping when set"] };
-  }
-  const allowed = new Set(["toolchain_fingerprint_command"]);
-  const errors = [];
-  for (const key of Object.keys(raw)) {
-    if (!allowed.has(key)) {
-      errors.push(`workflow.verification has unknown key '${key}'`);
-    }
-  }
-  let command = null;
-  if (raw.toolchain_fingerprint_command != null) {
-    if (
-      typeof raw.toolchain_fingerprint_command !== "string"
-      || raw.toolchain_fingerprint_command.trim() === ""
-    ) {
-      errors.push(
-        "workflow.verification.toolchain_fingerprint_command must be a non-empty string when set",
-      );
-    } else {
-      command = raw.toolchain_fingerprint_command;
-    }
-  }
-  if (errors.length) return { ok: false, errors };
-  return { ok: true, value: { toolchain_fingerprint_command: command } };
-}
 function applyWorkflowScalarKeys(raw, value, allowed, allowedNested, errors) {
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
@@ -205,7 +175,6 @@ function applyWorkflowNestedKeys(raw, value, errors) {
     ["integration_manager", () => normalizeIntegrationManagerConfig(raw.integration_manager)],
     ["dev_start_gate", () => normalizeDevStartGateConfig(raw.dev_start_gate)],
     ["review_disposition", () => normalizeReviewDispositionConfig(raw.review_disposition)],
-    ["verification", () => normalizeVerificationConfig(raw.verification)],
   ];
   for (const [key, run] of nested) {
     const result = run();
@@ -223,7 +192,7 @@ export function normalizeWorkflowConfig(raw) {
   // Scalar string-typed keys handled inline; nested-mapping keys delegated to
   // their own normalizers below.
   const allowedScalar = ["test_command", "completion_command", "lint_command", "format_command", "policy_command", "precommit_command", "base_branch"];
-  const allowedNested = new Set(["codex_review", "test_quality_review", "pr_title", "integration_manager", "dev_start_gate", "review_disposition", "verification"]);
+  const allowedNested = new Set(["codex_review", "test_quality_review", "pr_title", "integration_manager", "dev_start_gate", "review_disposition"]);
   const allowed = new Set([...allowedScalar, ...allowedNested]);
   const value = emptyWorkflowConfig();
   const errors = [];

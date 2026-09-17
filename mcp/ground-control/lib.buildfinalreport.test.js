@@ -264,7 +264,7 @@ describe("buildPrBody", () => {
     // Make target the repo may not have, and must not copy command text
     // (which can carry repo-internal paths) into the record.
     const body = buildPrBody(baseInput());
-    assert.equal(PR_BODY_POLICY_CHECK_LINE, "- [x] Configured repository policy command passes");
+    assert.equal(PR_BODY_POLICY_CHECK_LINE, "- [x] Repository policy checks required in CI before merge");
     assert.ok(!body.includes("`make policy`"), "PR body must not name a concrete policy command");
   });
 
@@ -278,7 +278,7 @@ describe("buildPrBody", () => {
         changelogFragment: changeClass === "doc-only" ? null : "changelog.d/868.changed.md",
       }));
       assert.ok(
-        body.includes("- [x] Configured completion command passes"),
+        body.includes("- [x] Full completion suite required in CI before merge"),
         `${changeClass}: missing semantic completion line`,
       );
       for (const target of ["`make check`", "`make test`", "`make integration`"]) {

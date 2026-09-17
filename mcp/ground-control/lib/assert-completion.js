@@ -13,6 +13,7 @@ import { runGetIssueThread } from "./issue-thread.js";
 import { findRecoverableStationObservations } from "./station-observation-reconcile.js";
 import { verifyMergedRequirementState } from "./merged-requirement-state.js";
 import { validateFinalReportInput } from "./plan-posting.js";
+import { readRemoteGateSnapshot } from "./remote-gates.js";
 import { execFile } from "./runtime-primitives.js";
 
 const FULL_GIT_OID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -391,6 +392,12 @@ export async function runAssertCompletion(input, { workspaceAuthorizationResolve
   // on the post-merge DRAFT→ACTIVE transition and is verified by the
   // phase="post_merge" completion.
   if (phase === "pre_merge") {
+    if (ciStatus !== "green") return { ok: false, error: "final_report_ci_not_green", assertions, final_report: null };
+    const hosted = await readRemoteGateSnapshot({ repoPath: authorizedRepoPath, prNumber }, { workspaceAuthorizationResolver });
+    if (!hosted.ok || !hosted.passed || hosted.state !== "OPEN") {
+      return { ok: false, error: "completion_hosted_checks_not_green", hosted,
+        next_action: "repair_or_wait_for_current_head_hosted_checks", assertions, final_report: null };
+    }
     return _runPreMergeReadiness({
       subInput, repoPath: authorizedRepoPath, issueNumber, prNumber, assertions, workspaceAuthorizationResolver,
     });

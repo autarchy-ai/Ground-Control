@@ -307,3 +307,18 @@ gate execution. The result envelope reports whether broad gates executed or
 trusted evidence was reused. Step 7 still runs the configured pre-commit command
 once; its following mechanical commit disables hooks so the same check cannot
 run a second time. Gate order and blocking behavior are unchanged.
+
+## 2026-09-17 amendment: CI-owned verification and progressive remediation
+
+Issues #1628 and #1629 retire the mandatory local mechanical verification phase
+and completion/policy execution during base synchronization. CI owns broad
+verification of the published head. Targeted local tests and the single publish
+pre-commit boundary remain. The exact-input verification attestations, toolchain
+fingerprints, and phase caches from #1497/#1626 are removed; synchronization
+records continue to bind Git identity, not test results.
+
+Monitoring observes CI and Sonar concurrently and returns actionable failures
+before unrelated checks finish, preserving child job handles for ongoing
+observation. Readiness reads required hosted checks for the current head SHA and
+refuses missing, pending, failed, or unavailable evidence. A later push invalidates
+old-head completion claims. Review and human merge gates remain in place.

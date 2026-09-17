@@ -86,7 +86,7 @@ def _check_adr_impact(body: str) -> Violation | None:
 # `mcp/ground-control/lib/runtime-primitives.js` — the render→check compose
 # fixture is the parity contract. The former `gc_evaluate_quality_gates` /
 # `gc_run_sweep` lines named tools removed with the #1500 teardown.
-PR_BODY_POLICY_CHECK_LINE = "- [x] Configured repository policy command passes"
+PR_BODY_POLICY_CHECK_LINE = "- [x] Repository policy checks required in CI before merge"
 
 # The pre-push review attestation (Steps 6.5/6.6) has two accurate forms
 # (issue #1551): /implement runs both reviewers before the body is rendered,

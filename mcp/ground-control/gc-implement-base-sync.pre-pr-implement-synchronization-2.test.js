@@ -129,7 +129,7 @@ function gitOperation(args) {
 
 describe("pre-PR implement synchronization", () => {
 
-  it("auto-resolves the issue's sole in-scope requirement UID when none is requested (#1434 follow-up)", async () => {
+  it("synchronizes a requirement-scoped issue without running local gates", async () => {
     // A branch named for the issue number carries no UID to pass, so the gate
     // would otherwise fail requirement-context-missing. The issue's single
     // in-scope requirement is unambiguous context and reaches both gates.
@@ -145,7 +145,7 @@ describe("pre-PR implement synchronization", () => {
     const gateEnvs = calls
       .filter(([command]) => command === "bash")
       .map(([, , options]) => options?.env?.[REQUIREMENT_UID_GATE_ENV_VAR]);
-    assert.deepEqual(gateEnvs, ["DSL-437", "DSL-437"]);
+    assert.deepEqual(gateEnvs, []);
   });
 
   it("injects no requirement UID override when the issue lists multiple in-scope requirements (#1434 follow-up)", async () => {
@@ -235,19 +235,6 @@ describe("pre-PR implement synchronization", () => {
   });
 
 
-  it("does not commit, push, or attest when the configured policy command fails", async () => {
-    const { calls, runner } = completeRunner({ failCommand: "bin/policy-gate" });
-    const result = await runSynchronizeImplementBranch(completeInput(), {
-      workspaceAuthorizationResolver: workspaceAuthorization,
-      commandRunner: runner,
-      contextResolver: async () => context("dev", { policy_command: "bin/policy-gate" }),
-    });
-    assert.equal(result.ok, false);
-    assert.equal(result.error, "implement_base_sync_gate_failed");
-    assert.equal(calls.some(([, args]) => args[0] === "-C" && gitOperation(args)[0] === "commit"), false);
-    assert.equal(calls.some(([, args]) => args[0] === "-C" && gitOperation(args)[0] === "push"), false);
-    assert.equal(calls.some(([command]) => command === "gh"), false);
-  });
 
 
   it("refuses to bind a verified tree while unstaged work is on disk (#1429)", async () => {
@@ -378,7 +365,7 @@ describe("pre-PR implement synchronization", () => {
   });
 
 
-  it("carries the requested requirement UID through the committed-retry gates (#1434)", async () => {
+  it("committed retry validates requirement scope without executing broad gates", async () => {
     const calls = [];
     const runner = async (command, args, options) => {
       calls.push([command, args, options]);
@@ -433,6 +420,6 @@ describe("pre-PR implement synchronization", () => {
     const gateEnvs = calls
       .filter(([command]) => command === "bash")
       .map(([, , options]) => options?.env?.[REQUIREMENT_UID_GATE_ENV_VAR]);
-    assert.deepEqual(gateEnvs, ["DSL-437", "DSL-437"]);
+    assert.deepEqual(gateEnvs, []);
   });
 });
