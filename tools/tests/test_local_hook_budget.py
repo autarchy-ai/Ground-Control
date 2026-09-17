@@ -15,7 +15,7 @@ class LocalHookBudgetTests(unittest.TestCase):
         for hook in hooks:
             self.assertEqual(hook["stages"], ["pre-commit"], "Override upstream manifest stages explicitly")
         ids = {hook["id"] for hook in hooks}
-        self.assertTrue({"gitleaks", "detect-private-key", "check-merge-conflict"} <= ids)
+        self.assertLessEqual({"gitleaks", "detect-private-key", "check-merge-conflict"}, ids)
         self.assertNotIn("pr-body-policy", ids)
         local = [hook for repo in config["repos"] if repo["repo"] == "local" for hook in repo["hooks"]]
         self.assertEqual([hook["id"] for hook in local], ["bash-syntax"])

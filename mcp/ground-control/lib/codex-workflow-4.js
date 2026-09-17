@@ -317,7 +317,6 @@ async function finalizeBaseSyncRecord(args) {
 async function runBaseSyncComplete(args) {
   const {
     repoRoot, input, baseBranch, commandRunner,
-    repoAuthorization,
   } = args;
   const inputError = validateBaseSyncCompletionInput(input);
   if (inputError) return inputError;
