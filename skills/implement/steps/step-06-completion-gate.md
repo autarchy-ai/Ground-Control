@@ -1,7 +1,6 @@
 ---
-stage_id: completion_gate
+status: retired
 step: "Step 6 (retired)"
-tier: low
 ---
 
 # Step 6: Retired local broad verification

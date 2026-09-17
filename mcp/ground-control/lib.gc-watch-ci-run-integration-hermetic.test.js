@@ -102,7 +102,7 @@ process.exit(2);
           argv_prefix: [
             "--repo", "test-owner/test-repo",
             "run", "view", "123",
-            "--json", "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs",
+            "--json", "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs,headSha",
           ],
           stdout: JSON.stringify({
             status: "completed",
@@ -145,7 +145,7 @@ process.exit(2);
           argv_prefix: [
             "--repo", "test-owner/test-repo",
             "run", "view", "456",
-            "--json", "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs",
+            "--json", "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs,headSha",
           ],
           stdout: JSON.stringify({
             status: "completed",
@@ -211,7 +211,7 @@ process.exit(2);
           argv_prefix: [
             "--repo", "test-owner/test-repo",
             "run", "view", "789",
-            "--json", "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs",
+            "--json", "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs,headSha",
           ],
           stdout: JSON.stringify({
             status: "completed",
@@ -264,7 +264,7 @@ process.exit(2);
           argv_prefix: [
             "--repo", "test-owner/test-repo",
             "run", "view", "111",
-            "--json", "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs",
+            "--json", "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs,headSha",
           ],
           stdout: JSON.stringify({
             status: "completed", conclusion: "success", databaseId: 111,
@@ -275,7 +275,7 @@ process.exit(2);
           argv_prefix: [
             "--repo", "test-owner/test-repo",
             "run", "view", "222",
-            "--json", "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs",
+            "--json", "status,conclusion,databaseId,url,createdAt,startedAt,updatedAt,workflowName,jobs,headSha",
           ],
           stdout: JSON.stringify({
             status: "completed", conclusion: "failure", databaseId: 222,
