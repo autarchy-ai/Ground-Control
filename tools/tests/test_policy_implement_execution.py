@@ -181,6 +181,67 @@ class ImplementExecutionChecksTest(PolicyChecksFixture):
             {item.code for item in violations},
         )
 
+    def test_quickfix_contract_requires_shared_boundaries_and_secret_scanning(self):
+        mutations = (
+            (
+                'action: "bootstrap"',
+                'action: "start"',
+            ),
+            (
+                "pre-commit boundary and its secret scanning are non-negotiable",
+                "pre-commit is optional",
+            ),
+            (
+                "one automatic repair and re-analysis round",
+                "automatic repair rounds",
+            ),
+        )
+        for anchor, replacement in mutations:
+            with self.subTest(anchor=anchor), tempfile.TemporaryDirectory() as tmp_dir:
+                root = self._implement_contract_root(tmp_dir)
+                path = root / "skills/quickfix/SKILL.md"
+                text = path.read_text(encoding="utf-8")
+                self.assertIn(anchor, text)
+                path.write_text(text.replace(anchor, replacement), encoding="utf-8")
+                violations = run_implement_execution_contract(root=root)
+                self.assertIn(
+                    "quickfix-thin-lane-drift",
+                    {item.code for item in violations},
+                )
+
+    def test_quickfix_contract_rejects_retired_review_ceremony(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = self._implement_contract_root(tmp_dir)
+            path = root / "skills/quickfix/SKILL.md"
+            path.write_text(
+                path.read_text(encoding="utf-8") + "\n## Amendments\n",
+                encoding="utf-8",
+            )
+            violations = run_implement_execution_contract(root=root)
+            drift = [
+                item for item in violations if item.code == "quickfix-thin-lane-drift"
+            ]
+            self.assertEqual(len(drift), 1)
+            self.assertIn("retired token remains: ## Amendments", drift[0].details)
+
+    def test_quickfix_contract_caps_runtime_instruction_size(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = self._implement_contract_root(tmp_dir)
+            path = root / "skills/quickfix/SKILL.md"
+            path.write_text(
+                path.read_text(encoding="utf-8") + ("\nBounded filler." * 60),
+                encoding="utf-8",
+            )
+            violations = run_implement_execution_contract(root=root)
+            drift = [
+                item for item in violations if item.code == "quickfix-thin-lane-drift"
+            ]
+            self.assertEqual(len(drift), 1)
+            self.assertTrue(
+                any("maximum is 200" in detail for detail in drift[0].details),
+                drift[0].details,
+            )
+
     def test_implement_execution_contract_rejects_dropped_review_batching_token(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = self._implement_contract_root(tmp_dir)

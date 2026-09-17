@@ -24,6 +24,7 @@ export async function runMarkImplementIssuePickedUp(input, {
     || input.issueNumber <= 0
     || typeof input.driver !== "string"
     || !/^[a-z0-9._-]{1,40}$/i.test(input.driver)
+    || (input.lane != null && input.lane !== "implement" && input.lane !== "quickfix")
   ) {
     return {
       ok: false,
@@ -33,6 +34,7 @@ export async function runMarkImplementIssuePickedUp(input, {
   }
   const branchValidation = validateImplementBranchName(input.branchName, input.issueNumber);
   if (!branchValidation.ok) return branchValidation;
+  const lane = input.lane === "quickfix" ? "quickfix" : "implement";
   const repoRoot = await ensureGitRepo(input.repoPath);
   const repoAuthorization = await authorizeImplementRepoRoot(
     repoRoot,
@@ -61,7 +63,7 @@ export async function runMarkImplementIssuePickedUp(input, {
           "-f",
           "color=FBCA04",
           "-f",
-          "description=An agent is actively working this issue via /implement",
+          "description=An agent is actively working this issue through Ground Control",
         ],
         { cwd: repoRoot },
       );
@@ -94,7 +96,7 @@ export async function runMarkImplementIssuePickedUp(input, {
     };
   }
   const body =
-    `🛠️ Picked up by /implement - driver ${input.driver}, branch ` +
+    `🛠️ Picked up by /${lane} - driver ${input.driver}, branch ` +
     `\`${input.branchName}\`, ${now().toISOString()}.`;
   try {
     const { stdout } = await execFile(

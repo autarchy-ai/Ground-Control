@@ -145,7 +145,7 @@ The complete keep/delete and placement record is in
 
 | Tool | Purpose |
 |---|---|
-| `gc_implement_mechanical` | Run a deterministic phase - `bootstrap`, `verify`, `publish`, `monitor`, `readiness`, `finalize`. The long three accept `async` + `idempotency_key` and return a job handle |
+| `gc_implement_mechanical` | Run a shared deterministic phase - `bootstrap`, `publish`, `monitor`, `readiness`, or `finalize`; `lane: quickfix` reuses the compatible phases while rejecting requirement scope and implement-only readiness. The two long actions accept `async` + `idempotency_key` and return a job handle |
 | `gc_prepare_implement_branch` | Same-checkout branch preparation for an issue |
 | `gc_mark_implement_issue_picked_up` | Apply the in-progress label and post the pickup comment |
 | `gc_synchronize_implement_branch` | Fetch and really merge the integration branch, verify the graph, push, and post the synchronization attestation |
@@ -173,7 +173,7 @@ The complete keep/delete and placement record is in
 | Tool | Purpose |
 |---|---|
 | `gc_post_decision_record` | Render a review cycle's decision record from structured findings |
-| `gc_post_final_report` | Render the Step 19 / Q19 close comment; `lane` selects the `/implement` or `/quickfix` shape |
+| `gc_post_final_report` | Render the trusted final record used inside the shared post-merge finalizer; `lane` selects the `/implement` or slim `/quickfix` shape |
 | `gc_assert_completion` | The merge-gated composite completion assertion |
 | `gc_render_pr_body` | Compose a PR body that satisfies `check_pr_body`'s policy gates from structured input |
 | `gc_get_issue_thread` | Fetch the issue body and comments through a content-addressed cache |

@@ -325,6 +325,7 @@ export async function runAssertCompletion(input, { workspaceAuthorizationResolve
     summary,
     plainEnglishOutcome,
     documentation_outcome,
+    lane = "implement",
     phase = "post_merge",
   } = input;
 
@@ -349,7 +350,7 @@ export async function runAssertCompletion(input, { workspaceAuthorizationResolve
     summary: summary ?? null,
     plainEnglishOutcome: plainEnglishOutcome ?? null,
     documentation_outcome: documentation_outcome ?? null,
-    lane: "implement",
+    lane,
   };
   const validation = validateFinalReportInput(subInput);
   if (!validation.ok) {
