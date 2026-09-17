@@ -113,6 +113,9 @@ describe("gcImplementMechanicalToolHandler async transport", () => {
       completion_command: "make check",
       policy_command: "make policy",
       policy: "passed",
+      verification_decision: "executed",
+      verification_reason: "verification_reuse_disabled",
+      broad_gates_executed: 2,
       next_action: "run_required_agent_reviews_or_publish",
     });
     assert.deepEqual(timings.map((entry) => [entry.phase, entry.outcome]), [

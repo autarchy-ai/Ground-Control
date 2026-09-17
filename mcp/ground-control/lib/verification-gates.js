@@ -19,6 +19,25 @@ const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 // Coalesce chunk-level activity into at most one progress snapshot per interval;
 // the poll cadence is coarse, so per-chunk reporting would be pure overhead.
 const PROGRESS_THROTTLE_MS = 500;
+const PHASE_CACHE_MAX = 1000;
+const successfulPhaseCache = new Map();
+
+function phaseCacheKey(reuseKey, phase) {
+  return typeof reuseKey === "string" && reuseKey !== "" ? `${reuseKey}:${phase}` : null;
+}
+
+function rememberSuccessfulPhase(key) {
+  if (!key) return;
+  successfulPhaseCache.delete(key);
+  successfulPhaseCache.set(key, true);
+  if (successfulPhaseCache.size > PHASE_CACHE_MAX) {
+    successfulPhaseCache.delete(successfulPhaseCache.keys().next().value);
+  }
+}
+
+export function resetVerificationPhaseCacheForTest() {
+  successfulPhaseCache.clear();
+}
 
 // Per-phase progress reporter: the initial-and-throttled snapshot emitter plus
 // the onActivity byte counter the gate runner drives. Extracted so the gate loop
@@ -84,6 +103,7 @@ export async function runImplementCompletionPolicyGates({
   commandRunner = execFile,
   reportProgress = null,
   revalidate = null,
+  reuseKey = null,
 }) {
   const completionCommand =
     context?.workflow?.completion_command ?? context?.workflow?.test_command;
@@ -103,6 +123,12 @@ export async function runImplementCompletionPolicyGates({
   const report = typeof reportProgress === "function" ? reportProgress : null;
   const timings = [];
   for (const { phase, command } of gates) {
+    const cacheKey = phaseCacheKey(reuseKey, phase);
+    if (cacheKey && successfulPhaseCache.has(cacheKey)) {
+      if (typeof revalidate === "function") await revalidate();
+      timings.push({ phase, duration_ms: 0, outcome: "reused" });
+      continue;
+    }
     // Snapshots carry only numbers and the phase name — never command text,
     // child output, paths, or environment (issue #1497).
     const { timing, failure } = await _runGatePhase({
@@ -118,6 +144,7 @@ export async function runImplementCompletionPolicyGates({
     // gate that mutates a binding another gate later restores cannot pass the
     // boundary (issue #1497 codex review). A revalidation fault aborts the run.
     if (typeof revalidate === "function") await revalidate();
+    rememberSuccessfulPhase(cacheKey);
   }
   return { timings };
 }
@@ -131,15 +158,17 @@ export async function runImplementCompletionPolicyGates({
  * fingerprint command is treated as a mutation boundary like any gate: it runs
  * before the gates (never after — a post-gate, pre-push run could amend the
  * verified commit), and any change to the tree, status, or digest across a
- * boundary aborts with implement_mechanical_gate_tree_changed. `toolchainDigest`
- * is null when the feature is off or the digest could not be proven stable, which
- * disables reuse (fail-closed). `readTreeOid`/`readStatus` are injected so the
+ * boundary aborts with implement_mechanical_gate_tree_changed. A configured
+ * fingerprint that starts valid and changes during a gate aborts with
+ * implement_verification_inputs_changed; a fingerprint that cannot initially
+ * be resolved leaves `toolchainDigest` null and disables reuse. `readTreeOid`/
+ * `readStatus` are injected so the
  * base-sync boundary binds the staged index tree while verify binds the working
  * tree, without either module importing the other.
  */
 export async function runVerifiedGateBoundary({
   repoRoot, context, gateEnv, commandRunner = execFile, reportProgress = null,
-  readTreeOid, readStatus,
+  readTreeOid, readStatus, reuseKey = null,
 }) {
   const fingerprintCommand = context?.workflow?.verification?.toolchain_fingerprint_command ?? null;
   const baseTree = await readTreeOid();
@@ -162,15 +191,19 @@ export async function runVerifiedGateBoundary({
   };
   let toolchainDigest = null;
   if (fingerprintCommand) toolchainDigest = await fingerprint();
-  const { timings } = await runImplementCompletionPolicyGates({
-    repoRoot, context, gateEnv, commandRunner, reportProgress, revalidate: assertUnchanged,
-  });
-  if (fingerprintCommand) {
-    // A gate that changed a fingerprinted non-tree input (compiler, container,
-    // generated schema) must not leave a reusable attestation.
+  const revalidate = async () => {
+    await assertUnchanged();
+    if (!fingerprintCommand || toolchainDigest == null) return;
     const recheck = await fingerprint();
-    if (!recheck || recheck !== toolchainDigest) toolchainDigest = null;
-  }
+    if (!recheck || recheck !== toolchainDigest) {
+      const error = new Error("A completion or policy gate changed a fingerprinted verification input");
+      error.code = "implement_verification_inputs_changed";
+      throw error;
+    }
+  };
+  const { timings } = await runImplementCompletionPolicyGates({
+    repoRoot, context, gateEnv, commandRunner, reportProgress, revalidate, reuseKey,
+  });
   return { treeOid: baseTree, toolchainDigest, timings };
 }
 
@@ -178,8 +211,13 @@ export async function runVerifiedGateBoundary({
  * timing envelope reports. Returns null for an empty list. */
 export function dominantGate(timings) {
   if (!Array.isArray(timings) || timings.length === 0) return null;
+  const executed = timings.filter(({ outcome }) => outcome !== "reused");
+  if (executed.length === 0) return null;
   // Explicit initial value (S6959) — the empty case already returned above.
-  return timings.reduce((max, entry) => (entry.duration_ms > max.duration_ms ? entry : max), timings[0]).phase;
+  return executed.reduce(
+    (max, entry) => (entry.duration_ms > max.duration_ms ? entry : max),
+    executed[0],
+  ).phase;
 }
 
 /**

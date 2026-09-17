@@ -139,14 +139,18 @@ describe("runVerifiedGateBoundary", () => {
     );
   });
 
-  it("drops the toolchain digest when a gate changed a fingerprinted input", async () => {
+  it("rejects the boundary when a gate changed a fingerprinted input", async () => {
     let fp = 0;
     const r = async (file, args) => (file === "bash" && args.at(-1) === FP ? { stdout: `${(fp++ === 0 ? "e" : "f").repeat(64)}\n`, stderr: "" } : { stdout: "", stderr: "" });
-    const boundary = await runVerifiedGateBoundary({
-      repoRoot: "/r", context: boundaryCtx(), gateEnv: {}, commandRunner: r, readTreeOid: stableTree, readStatus: stableStatus,
-    });
-    assert.equal(boundary.toolchainDigest, null); // recheck differs → not reusable
+    await assert.rejects(
+      runVerifiedGateBoundary({
+        repoRoot: "/r", context: boundaryCtx(), gateEnv: {}, commandRunner: r,
+        readTreeOid: stableTree, readStatus: stableStatus,
+      }),
+      (error) => error.code === "implement_verification_inputs_changed",
+    );
   });
+
 });
 
 describe("dominantGate", () => {
@@ -159,6 +163,10 @@ describe("dominantGate", () => {
       "completion",
     );
     assert.equal(dominantGate([]), null);
+    assert.equal(dominantGate([
+      { phase: "completion", duration_ms: 0, outcome: "reused" },
+      { phase: "policy", duration_ms: 0, outcome: "reused" },
+    ]), null);
   });
 });
 

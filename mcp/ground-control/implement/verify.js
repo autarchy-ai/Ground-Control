@@ -3,7 +3,7 @@
 // The module had reached 1,231 lines against the repo's 500-LOC limit
 // (docs/CODING_STANDARDS.md). gc-implement-mechanical.js remains the tool entry point.
 
-import { dominantGate, implementGateEnvironment, isVerificationAttestationActive, produceVerificationAttestation, readImplementWorkingTreeOid, resolveWorkflowPolicyCommand, runImplementCompletionPolicyGates, runVerifiedGateBoundary } from "../lib.js";
+import { dominantGate, implementGateEnvironment, isVerificationAttestationActive, parseRepoIdentity, produceVerificationAttestation, readImplementBaseCommitOid, readImplementWorkingTreeOid, resolveVerificationReuse, resolveWorkflowPolicyCommand, runImplementCompletionPolicyGates, runVerifiedGateBoundary } from "../lib.js";
 import { commandFailure, failure, readStatus } from "./gate-helpers.js";
 
 // Resolve and validate everything verify needs before running gates: repository
@@ -65,7 +65,7 @@ async function resolveVerifyInputs(args, deps, action) {
 // the shared runner (feature OFF). Returns the bound tree/toolchain identity and
 // timings, or `{ ok: false, failure }` mapping the gate error to a refusal.
 async function executeVerificationGates(
-  { deps, action, repoRoot, context, childEnv, attestationActive },
+  { deps, action, repoRoot, context, childEnv, attestationActive, reuseKey },
 ) {
   let timings;
   let boundTreeOid = null;
@@ -80,6 +80,7 @@ async function executeVerificationGates(
         reportProgress: typeof deps.reportProgress === "function" ? deps.reportProgress : null,
         readTreeOid: () => readImplementWorkingTreeOid(repoRoot, deps.execFile),
         readStatus: () => readStatus(repoRoot, deps.runGit, deps.execFile),
+        reuseKey,
       }));
     } else {
       ({ timings } = await runImplementCompletionPolicyGates({
@@ -97,6 +98,32 @@ async function executeVerificationGates(
     return { ok: false, failure: commandFailure(action, `${error.gatePhase ?? "completion"}_gate`, error) };
   }
   return { ok: true, timings, boundTreeOid, boundToolchainDigest };
+}
+
+async function resolveVerifyReuse({ deps, args, context, repoRoot, requirementUid }) {
+  if (!isVerificationAttestationActive(context)) {
+    return { active: false, reused: false, attestation: null, reason: "verification_reuse_disabled" };
+  }
+  try {
+    const identity = parseRepoIdentity(context?.github_repo);
+    if (!identity) return { active: true, reused: false, attestation: null, reason: "repository_identity_unavailable" };
+    const { stdout } = await deps.runGit(repoRoot, ["branch", "--show-current"], deps.execFile);
+    const baseBranch = context?.workflow?.base_branch ?? "dev";
+    const baseSha = await readImplementBaseCommitOid(repoRoot, baseBranch, deps.runGit, deps.execFile);
+    if (!baseSha) return { active: true, reused: false, attestation: null, reason: "base_commit_unavailable" };
+    const reuse = await resolveVerificationReuse({
+      context, repoRoot, owner: identity.owner, name: identity.name,
+      issueNumber: args.issueNumber, branchName: stdout.trim(), baseSha, requirementUid,
+      commandRunner: deps.execFile, attestationReader: deps.readVerificationAttestations,
+    });
+    return {
+      ...reuse,
+      phaseKey: reuse.attestation ? `${identity.owner}/${identity.name}:${reuse.attestation.id}` : null,
+      reason: reuse.reused ? "trusted_attestation_match" : "trusted_attestation_miss",
+    };
+  } catch {
+    return { active: true, reused: false, attestation: null, phaseKey: null, reason: "attestation_lookup_failed" };
+  }
 }
 
 // The feature-OFF porcelain guard: the completion/policy gates must not mutate the
@@ -122,6 +149,30 @@ export async function runVerify(args, deps) {
   const childEnv = gateEnv;
   const policyCommand = resolveWorkflowPolicyCommand(context);
   const attestationActive = isVerificationAttestationActive(context);
+  const reuse = await resolveVerifyReuse({
+    deps, args, context, repoRoot, requirementUid: authorized.requirementUid,
+  });
+  if (reuse.reused) {
+    const timings = [
+      { phase: "completion", duration_ms: 0, outcome: "reused" },
+      { phase: "policy", duration_ms: 0, outcome: "reused" },
+    ];
+    return {
+      ok: true,
+      action,
+      phase: "verification_complete",
+      completion_command: command,
+      policy_command: policyCommand,
+      policy: "passed",
+      timings,
+      dominant_gate: null,
+      attestation_id: reuse.attestation.id,
+      verification_decision: "reused",
+      verification_reason: reuse.reason,
+      broad_gates_executed: 0,
+      next_action: "run_required_agent_reviews_or_publish",
+    };
+  }
   // Feature ON: run through the ONE shared invariant-preserving boundary — the
   // same base synchronization uses (issue #1497) — which binds the working-tree
   // content oid + toolchain digest and re-validates them after the fingerprint
@@ -131,6 +182,7 @@ export async function runVerify(args, deps) {
   const before = attestationActive ? null : await readStatus(repoRoot, deps.runGit, deps.execFile);
   const gateOutcome = await executeVerificationGates({
     deps, action, repoRoot, context, childEnv, attestationActive,
+    reuseKey: reuse.phaseKey ?? null,
   });
   if (!gateOutcome.ok) return gateOutcome.failure;
   const { timings, boundTreeOid, boundToolchainDigest } = gateOutcome;
@@ -157,6 +209,7 @@ export async function runVerify(args, deps) {
   // (direct-to-Sonar) are the real quality signals and run in the monitor band. The
   // verify band's job is the local gates above — completion command, policy, Vale,
   // and the no-tree-change guard — not a backend aggregation that no longer exists.
+  const broadGatesExecuted = timings.filter(({ outcome }) => outcome !== "reused").length;
   return {
     ok: true,
     action,
@@ -167,6 +220,9 @@ export async function runVerify(args, deps) {
     timings,
     dominant_gate: dominantGate(timings),
     ...(attestation ? { attestation_id: attestation.id } : {}),
+    verification_decision: broadGatesExecuted === 0 ? "reused" : "executed",
+    verification_reason: broadGatesExecuted === 0 ? "phase_attestation_reuse" : reuse.reason,
+    broad_gates_executed: broadGatesExecuted,
     next_action: "run_required_agent_reviews_or_publish",
   };
 }

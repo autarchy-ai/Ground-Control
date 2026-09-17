@@ -308,8 +308,14 @@ describe("runImplementMechanical publish", () => {
     assert.equal(result.ok, true);
     assert.equal(result.phase, "publish_complete");
     assert.deepEqual(syncCalls.map(({ action }) => action), ["start", "complete"]);
-    assert.ok(git.calls.some(([file, ...argv]) => file === "bash" && argv.includes("pre-commit run --all-files")));
-    assert.ok(git.calls.some(([file, ...argv]) => file === "git" && argv.includes("commit")));
+    assert.equal(
+      git.calls.filter(([file, ...argv]) => file === "bash" && argv.includes("pre-commit run --all-files")).length,
+      1,
+      "publish owns exactly one explicit hook boundary",
+    );
+    const commit = git.calls.find(([file, ...argv]) => file === "git" && argv.includes("commit"));
+    assert.ok(commit);
+    assert.ok(commit.includes("core.hooksPath=/dev/null"), "the following commit must not dispatch installed hooks again");
     assert.ok(git.calls.some(([file, ...argv]) => file === "git" && argv.includes("push")));
   });
 

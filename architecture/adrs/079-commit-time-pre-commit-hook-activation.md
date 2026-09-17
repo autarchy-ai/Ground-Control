@@ -134,3 +134,14 @@ codes, not as silent success followed by commits that run no hooks.
   repo context boundary.
 - ADR-029 - Issue-thread gate model and durable workflow record.
 - ADR-036 - Per-step routing, deterministic tool surfaces, and telemetry.
+
+## 2026-09-17 amendment: single publish hook execution (issue #1626)
+
+Commit-time activation remains the contract for ordinary human and direct Git
+commits. The Ground Control mechanical publish path is a distinct, deterministic
+boundary: it runs the configured pre-commit command explicitly because clone
+activation cannot be assumed, then performs its Git commit with hook dispatch
+disabled. This prevents the installed hook from repeating the same all-files
+checks immediately after the explicit boundary. The standalone staging skill no
+longer runs pre-commit in advance of an ordinary commit; the commit-time hook owns
+that path. CI remains the independent hosted replay.

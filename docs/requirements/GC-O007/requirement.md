@@ -6,7 +6,7 @@ type: FUNCTIONAL
 priority: MUST
 wave: 2
 created_at: 2026-04-05T18:56:23.312401Z
-updated_at: 2026-09-14T00:00:00Z
+updated_at: 2026-09-17T00:00:00Z
 ---
 
 # GC-O007 — Gated Agentic Development Loop
@@ -57,6 +57,14 @@ Ground Control's value proposition depends on agents maintaining traceability an
 - DOCUMENTS → DOCUMENTATION `architecture/notes/implement-cost-routing-tool-surfaces-preflight.md` (Preflight design note for issue #868 (codex architecture preflight))
 - TESTS → TEST `tools/render_pr_body_fixture.mjs` (Renderer-vs-check_pr_body subprocess fixture (binds JS renderer to Python policy))
 - IMPLEMENTS → CONFIG `.ground-control.yaml` (repository workflow, routing, policy, and review configuration)
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/implement/verify.js` (Exact-input verification reuse decision at the mechanical verify boundary (#1626))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/verification-gates.js` (Content-bound full and per-phase gate reuse with fail-closed invalidation (#1626))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/codex-workflow-4.js` (Base-sync and committed-merge recovery verification reuse (#1626))
+- IMPLEMENTS → CODE_FILE `tools/verification-fingerprint.mjs` (Repository toolchain and gate-input fingerprint (#1626))
+- TESTS → TEST `mcp/ground-control/gc-implement-mechanical.verification-reuse-1626.test.js` (Repeated verify invocation-count regression test)
+- TESTS → TEST `mcp/ground-control/lib.verification-gates.test.js` (Verification binding, mutation, and attestation tests)
+- TESTS → TEST `mcp/ground-control/lib.verification-phase-reuse.test.js` (Per-phase retry reuse and content-address invalidation tests)
+- IMPLEMENTS → GITHUB_ISSUE `1626` (Eliminate redundant full-suite and pre-commit runs during implementation)
 - IMPLEMENTS → CODE_FILE `tools/policy/checks.py` (run_step13_decision_record_contract — make policy structural gate (#884))
 - DOCUMENTS → DOCUMENTATION `architecture/notes/test-quality-clean-continuation-preflight.md` (Issue #884 architecture preflight note (test-quality clean continuation))
 - DOCUMENTS → DOCUMENTATION `architecture/notes/test-quality-review-engine.md` (Test-quality review engine — mechanism / auth / failure modes (#884 v2))

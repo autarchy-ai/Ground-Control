@@ -5,11 +5,11 @@
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
 import { realpathSync } from "node:fs";
-import { assertImplementSyncCheckout, fetchImplementBase, isImplementAncestor, readImplementGitOid, readImplementTreeOid, runImplementFinalTreeGates, runImplementGit } from "./codex-workflow-2.js";
+import { assertImplementSyncCheckout, fetchImplementBase, isImplementAncestor, readImplementGitOid, readImplementIndexTreeOid, readImplementTreeOid, runImplementFinalTreeGates, runImplementGit } from "./codex-workflow-2.js";
 import { assertImplementMergeAttemptUnchanged } from "./implement-publish-recovery.js";
 import { runImplementCommit } from "./implement-commit.js";
 import { authorizeRequestedRequirementUid } from "./codex-workflow-3.js";
-import { GIT_OBJECT_ID_RE, IMPLEMENT_BASE_SYNC_ACTIONS, newImplementSyncRecordId, validateImplementBranchName } from "./codex-workflow.js";
+import { IMPLEMENT_BASE_SYNC_ACTIONS, newImplementSyncRecordId, validateImplementBranchName } from "./codex-workflow.js";
 import { assertSafeImplementCheckoutConfiguration, authorizeImplementRepoRoot, ensureGitRepo, resolveMcpLaunchWorkspaceAuthorization } from "./grc-legacy-compat-4.js";
 import { runGetIssueThread } from "./issue-thread.js";
 import { postImplementBaseSyncRecord, postImplementVerificationAttestation, readTrustedImplementSyncRecord, readTrustedImplementVerificationAttestations, verifyPublishedImplementHead } from "./knowledge-capture.js";
@@ -17,6 +17,7 @@ import { isSafeGitRefName, resolveWorkflowPolicyCommand } from "./repo-context.j
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { execFile } from "./runtime-primitives.js";
 import { postFreshVerificationAttestation, resolveVerificationReuse } from "./verification-gates.js";
+import { prepareCommittedRetryCompletion, runCommittedRetryGates, validateBaseSyncCompletionInput } from "../implement/sync-verification.js";
 
 // Validate the shared boundary input, then the branch name. Returns the
 // input-invalid envelope, or the branch-name validation result (terminal to the
@@ -180,12 +181,19 @@ async function runBaseSyncAlreadyCurrent(args) {
     issueNumber: input.issueNumber, branchName: input.branchName, baseSha: fetchedBaseSha,
     requirementUid: authorizedRequirement.requirementUid, commandRunner, attestationReader,
   });
+  let verificationDecision = reuse.active ? "reused" : "not_configured";
+  let verificationReason = reuse.active ? "trusted_attestation_match" : "verification_reuse_disabled";
+  let broadGatesExecuted = 0;
   if (reuse.active && !reuse.reused) {
     let verifiedTree;
     let verifiedToolchain;
+    let timings;
     try {
-      ({ treeOid: verifiedTree, toolchainDigest: verifiedToolchain } =
-        await runImplementFinalTreeGates(repoRoot, context, commandRunner, authorizedRequirement.requirementUid));
+      ({ treeOid: verifiedTree, toolchainDigest: verifiedToolchain, timings } =
+        await runImplementFinalTreeGates(
+          repoRoot, context, commandRunner, authorizedRequirement.requirementUid,
+          reuse.attestation ? `${repoAuthorization.owner}/${repoAuthorization.name}:${reuse.attestation.id}` : null,
+        ));
     } catch (error) {
       return {
         ok: false,
@@ -203,6 +211,9 @@ async function runBaseSyncAlreadyCurrent(args) {
       requirementUid: authorizedRequirement.requirementUid,
       commandRunner, attestationReader, attestationWriter,
     });
+    verificationDecision = "executed";
+    verificationReason = "trusted_attestation_miss";
+    broadGatesExecuted = timings.filter(({ outcome }) => outcome !== "reused").length;
   }
   const record = {
     recordId, issueNumber: input.issueNumber, branchName: input.branchName,
@@ -213,7 +224,12 @@ async function runBaseSyncAlreadyCurrent(args) {
   const posted = await postImplementBaseSyncRecord(
     repoRoot, repoAuthorization.owner, repoAuthorization.name, record, commandRunner,
   );
-  return { ok: true, status: "complete", ...record, ...posted };
+  return {
+    ok: true, status: "complete", ...record, ...posted,
+    verification_decision: verificationDecision,
+    verification_reason: verificationReason,
+    broad_gates_executed: broadGatesExecuted,
+  };
 }
 
 // The base is not yet in the feature head: stage a `--no-ff --no-commit` merge.
@@ -268,37 +284,32 @@ async function runBaseSyncMerge(args) {
   }
 }
 
-// Validate the completion input echoed back from `start`. Returns a terminal
-// envelope on any malformed field, or null when the completion may proceed.
-function validateBaseSyncCompletionInput(input) {
-  if (
-    typeof input.recordId !== "string"
-    || !/^[0-9a-f]{32}$/.test(input.recordId)
-    || !GIT_OBJECT_ID_RE.test(input.preSyncSha ?? "")
-    || !GIT_OBJECT_ID_RE.test(input.fetchedBaseSha ?? "")
-    || !["merged_clean", "merged_conflicts_resolved"].includes(input.outcome)
-  ) {
-    return {
-      ok: false,
-      error: "implement_base_sync_completion_input_invalid",
-      message: "complete requires the record ID, pre-sync SHA, fetched base SHA, and merge outcome returned by start",
-    };
-  }
-  return null;
-}
-
 // A staged merge (MERGE_HEAD present) is committed here. The compare-and-swap
 // runs before the gates AND again immediately before the commit; the final-tree
 // gates run between. Returns the head plus verified tree/toolchain, or a terminal envelope.
 async function prepareMergeHeadCompletion(args) {
-  const { repoRoot, input, context, baseBranch, commandRunner, authorizedRequirement } = args;
+  const {
+    repoRoot, input, context, baseBranch, commandRunner, authorizedRequirement,
+    repoAuthorization, attestationReader,
+  } = args;
   const preGate = await assertImplementMergeAttemptUnchanged(repoRoot, input, commandRunner);
   if (preGate) return preGate;
   let verifiedTreeSha;
   let verifiedToolchainDigest;
+  let timings;
   try {
-    ({ treeOid: verifiedTreeSha, toolchainDigest: verifiedToolchainDigest } =
-      await runImplementFinalTreeGates(repoRoot, context, commandRunner, authorizedRequirement.requirementUid));
+    const candidateTree = await readImplementIndexTreeOid(repoRoot, commandRunner);
+    const reuse = await resolveVerificationReuse({
+      context, repoRoot, owner: repoAuthorization.owner, name: repoAuthorization.name,
+      issueNumber: input.issueNumber, branchName: input.branchName, baseSha: input.fetchedBaseSha,
+      requirementUid: authorizedRequirement.requirementUid, commandRunner, attestationReader,
+      treeOid: candidateTree,
+    });
+    ({ treeOid: verifiedTreeSha, toolchainDigest: verifiedToolchainDigest, timings } =
+      await runImplementFinalTreeGates(
+        repoRoot, context, commandRunner, authorizedRequirement.requirementUid,
+        reuse.attestation ? `${repoAuthorization.owner}/${repoAuthorization.name}:${reuse.attestation.id}` : null,
+      ));
   } catch (error) {
     return {
       ok: false,
@@ -316,51 +327,23 @@ async function prepareMergeHeadCompletion(args) {
   const committed = await runImplementCommit(repoRoot, ["-m", `Merge origin/${baseBranch} into ${input.branchName}`], commandRunner);
   if (!committed.ok) return { ...committed, next_action: "repair_the_host_commit_signing_key_or_agent_and_retry_completion" };
   const resultingFeatureSha = await readImplementGitOid(repoRoot, "HEAD", commandRunner);
-  return { resultingFeatureSha, verifiedTreeSha, verifiedToolchainDigest };
-}
-
-// No MERGE_HEAD: the completion is resuming a merge already committed by an
-// earlier attempt. The checkout must be clean. Returns the resulting head, or a
-// terminal envelope; the final-tree gates run later, after the parents validate.
-async function prepareCommittedRetryCompletion({ repoRoot, commandRunner }) {
-  const resultingFeatureSha = await readImplementGitOid(repoRoot, "HEAD", commandRunner);
-  const { stdout: status } = await runImplementGit(
-    repoRoot,
-    ["status", "--porcelain=v1", "--untracked-files=normal"],
-    commandRunner,
-  );
-  if (status.trim() !== "") {
-    return {
-      ok: false,
-      error: "implement_base_sync_retry_tree_dirty",
-      message: "A committed synchronization retry requires a clean checkout",
-      next_action: "inspect_the_preserved_checkout_and_retry",
-    };
-  }
-  return { resultingFeatureSha };
-}
-
-// Run the final-tree gates for the committed-retry path. Returns the verified
-// tree/toolchain, or a terminal envelope (`ok === false`).
-async function runCommittedRetryGates({ repoRoot, context, commandRunner, authorizedRequirement }) {
-  try {
-    const { treeOid, toolchainDigest } =
-      await runImplementFinalTreeGates(repoRoot, context, commandRunner, authorizedRequirement.requirementUid);
-    return { treeOid, toolchainDigest };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error.code ?? "implement_base_sync_gate_failed",
-      message: `The committed merge retry did not pass its completion boundary: ${error.message}`,
-      next_action: "fix_the_preserved_checkout_and_retry_completion",
-    };
-  }
+  return {
+    resultingFeatureSha, verifiedTreeSha, verifiedToolchainDigest,
+    verificationDecision: timings.every(({ outcome }) => outcome === "reused") ? "reused" : "executed",
+    verificationReason: timings.some(({ outcome }) => outcome === "reused")
+      ? "phase_attestation_reuse"
+      : "merged_tree_requires_verification",
+    broadGatesExecuted: timings.filter(({ outcome }) => outcome !== "reused").length,
+  };
 }
 
 // Read or post the durable synchronization record, then build the terminal
 // completion envelope. An existing record must match field for field.
 async function finalizeBaseSyncRecord(args) {
-  const { repoRoot, input, context, commandRunner, repoAuthorization, record, syncRecordReader } = args;
+  const {
+    repoRoot, input, context, commandRunner, repoAuthorization, record, syncRecordReader,
+    verificationDecision, verificationReason, broadGatesExecuted,
+  } = args;
   const existing = await syncRecordReader(
     repoRoot,
     repoAuthorization.owner,
@@ -412,6 +395,9 @@ async function finalizeBaseSyncRecord(args) {
     // out of `record` deliberately: the durable issue-thread marker carries
     // Git identity, not command text.
     policyCommand: resolveWorkflowPolicyCommand(context),
+    verification_decision: verificationDecision,
+    verification_reason: verificationReason,
+    broad_gates_executed: broadGatesExecuted,
   };
 }
 
@@ -452,9 +438,15 @@ async function runBaseSyncComplete(args) {
   }
   const committedTreeSha = await readImplementTreeOid(repoRoot, resultingFeatureSha, commandRunner);
   if (mergeHead == null) {
-    const gates = await runCommittedRetryGates(args);
+    const gates = await runCommittedRetryGates({ ...args, committedTreeSha });
     if (gates.ok === false) return gates;
-    ({ treeOid: verifiedTreeSha, toolchainDigest: verifiedToolchainDigest } = gates);
+    ({
+      treeOid: verifiedTreeSha,
+      toolchainDigest: verifiedToolchainDigest,
+      verificationDecision: prepared.verificationDecision,
+      verificationReason: prepared.verificationReason,
+      broadGatesExecuted: prepared.broadGatesExecuted,
+    } = gates);
   }
   if (committedTreeSha !== verifiedTreeSha) {
     return {
@@ -492,7 +484,13 @@ async function runBaseSyncComplete(args) {
     baseBranch, remoteRef, preSyncSha: input.preSyncSha, fetchedBaseSha: input.fetchedBaseSha,
     outcome: input.outcome, resultingFeatureSha, verifiedTreeSha,
   };
-  return finalizeBaseSyncRecord({ ...args, record });
+  return finalizeBaseSyncRecord({
+    ...args,
+    record,
+    verificationDecision: prepared.verificationDecision,
+    verificationReason: prepared.verificationReason,
+    broadGatesExecuted: prepared.broadGatesExecuted,
+  });
 }
 export const CONTROL_TEST_METHODOLOGIES = ["INQUIRY", "OBSERVATION", "INSPECTION", "RE_PERFORMANCE"];
 export const CONTROL_TEST_CONCLUSIONS = ["EFFECTIVE", "INEFFECTIVE", "NOT_TESTED"];
