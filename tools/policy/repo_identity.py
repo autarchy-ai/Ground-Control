@@ -101,7 +101,6 @@ REPO_IDENTITY_INVENTORY: tuple[Path, ...] = (
     Path(".github/workflows/sonarcloud.yml"),
     Path(".github/workflows/release-please.yml"),
     Path(".github/workflows/sync-main-to-dev.yml"),
-    Path("scripts/check-pr-body.sh"),
     Path("scripts/bootstrap-claude-workflow.sh"),
     Path("scripts/install-hooks.sh"),
     Path("bin/install-skills.sh"),

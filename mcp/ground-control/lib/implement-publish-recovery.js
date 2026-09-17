@@ -4,7 +4,7 @@
 // final-tree gates. This module carries the compare-and-swap that keeps a
 // resumed or restarted attempt from committing, pushing, or attributing a merge
 // whose recorded identity no longer matches the checkout. It is the ref-level
-// complement to the gate boundary's tree re-validation in verification-gates.js:
+// protection for the synchronization boundary:
 // an external recovery can stage a different merge whose tree matches but whose
 // parents do not, and only the refs reveal that.
 

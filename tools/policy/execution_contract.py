@@ -177,8 +177,8 @@ def _check_core_implement_contract(root: Path) -> list[Violation]:
         "narrowest tests",
         "shared or cross-cutting",
         "security-sensitive",
-        "repository-wide completion and policy suites once",
-        "mandatory pre-commit, completion, review, CI, Sonar, or final",
+        "CI owns repository-wide completion and policy suites",
+        "mandatory pre-commit, review, CI, Sonar, and final-report gates",
     )
     violations.extend(
         _missing_token_violations(
@@ -300,7 +300,7 @@ def _check_pre_pr_sync_contract(root: Path) -> list[Violation]:
         "merged_clean",
         "merged_conflicts_resolved",
         "refs/remotes/origin/",
-        "cfg.workflow.policy_command",
+        "It runs no completion or policy suites",
     )
     missing_sync = [token for token in sync_tokens if token not in step8_5]
     pr_tokens = (

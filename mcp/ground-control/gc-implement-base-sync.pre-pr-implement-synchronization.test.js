@@ -381,46 +381,7 @@ describe("pre-PR implement synchronization", () => {
   });
 
 
-  it("does not commit or push when the mechanically enforced final gates fail", async () => {
-    const calls = [];
-    const runner = async (command, args) => {
-      calls.push([command, args]);
-      if (command === "bash") throw new Error("completion failed");
-      if (command === "make") return { stdout: "" };
-      const op = gitOperation(args);
-      if (op[0] === "symbolic-ref") return { stdout: `${BRANCH}\n` };
-      if (op[0] === "status") return { stdout: "M  file.txt\n" };
-      if (op[0] === "rev-parse") {
-        const ref = op[op.length - 1];
-        if (ref.startsWith("MERGE_HEAD")) return { stdout: `${BASE}\n` };
-        return { stdout: `${PRE}\n` };
-      }
-      if (op[0] === "ls-files") return { stdout: "" };
-      if (op[0] === "write-tree") return { stdout: `${TREE}\n` };
-      throw new Error(`unexpected operation: ${command} ${args.join(" ")}`);
-    };
-    const result = await runSynchronizeImplementBranch({
-      repoPath: REPO_ROOT,
-      issueNumber: ISSUE,
-      branchName: BRANCH,
-      action: "complete",
-      recordId: RECORD,
-      preSyncSha: PRE,
-      fetchedBaseSha: BASE,
-      outcome: "merged_clean",
-    }, {
-      workspaceAuthorizationResolver: workspaceAuthorization,
-      commandRunner: runner,
-      contextResolver: async () => context(),
-    });
-    assert.equal(result.ok, false);
-    assert.equal(result.error, "implement_base_sync_gate_failed");
-    assert.equal(calls.some(([, args]) => gitOperation(args)[0] === "commit"), false);
-    assert.equal(calls.some(([, args]) => gitOperation(args)[0] === "push"), false);
-  });
-
-
-  it("runs the repository's configured policy command at the final-tree boundary (#1429)", async () => {
+  it("synchronizes without executing configured completion or policy commands (#1629)", async () => {
     const { calls, runner } = completeRunner();
     const result = await runSynchronizeImplementBranch(completeInput(), {
       workspaceAuthorizationResolver: workspaceAuthorization,
@@ -431,14 +392,8 @@ describe("pre-PR implement synchronization", () => {
       syncRecordReader: async () => ({ ok: false, error: "implement_pr_sync_record_missing" }),
     });
     assert.equal(result.ok, true, JSON.stringify(result));
-    // The envelope names the gate that actually ran, so a substituted policy
-    // command is visible to the caller rather than hidden behind a generic
-    // "policy passed". The durable issue-thread marker is unchanged.
-    assert.equal(result.policyCommand, "python3 scripts/adr_guard/adr_guard.py --all --level ci");
-    assert.deepEqual(shellCommands(calls), [
-      "make check",
-      "python3 scripts/adr_guard/adr_guard.py --all --level ci",
-    ]);
+    assert.equal(result.policyCommand, undefined);
+    assert.deepEqual(shellCommands(calls), []);
     assert.equal(
       calls.some(([command, args]) => command === "make" && args.includes("policy")),
       false,
@@ -447,7 +402,7 @@ describe("pre-PR implement synchronization", () => {
   });
 
 
-  it("defaults the policy gate to `make policy` when the repo configures none", async () => {
+  it("does not insert a default local policy gate", async () => {
     const { calls, runner } = completeRunner();
     const result = await runSynchronizeImplementBranch(completeInput(), {
       workspaceAuthorizationResolver: workspaceAuthorization,
@@ -456,11 +411,11 @@ describe("pre-PR implement synchronization", () => {
       syncRecordReader: async () => ({ ok: false, error: "implement_pr_sync_record_missing" }),
     });
     assert.equal(result.ok, true, JSON.stringify(result));
-    assert.deepEqual(shellCommands(calls), ["make check", "make policy"]);
+    assert.deepEqual(shellCommands(calls), []);
   });
 
 
-  it("carries the requested requirement UID to both final-tree gates (#1434)", async () => {
+  it("validates requirement scope without running local gates", async () => {
     const { calls, runner } = completeRunner();
     const result = await runSynchronizeImplementBranch({
       ...completeInput(),
@@ -476,7 +431,7 @@ describe("pre-PR implement synchronization", () => {
     const gateEnvs = calls
       .filter(([command]) => command === "bash")
       .map(([, , options]) => options?.env?.[REQUIREMENT_UID_GATE_ENV_VAR]);
-    assert.deepEqual(gateEnvs, ["DSL-437", "DSL-437"]);
+    assert.deepEqual(gateEnvs, []);
     assert.equal(
       calls.some(([, args]) => args.some((arg) => String(arg).includes("DSL-437"))),
       false,

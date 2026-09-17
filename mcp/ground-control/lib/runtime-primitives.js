@@ -86,9 +86,9 @@ function suggestedYamlWorkflowSection(project) {
     "#   # Repo-native policy/governance gate. Defaults to `make policy`; set it",
     "#   # when your gate is named differently. It is never skipped.",
     "#   policy_command: make policy",
-    "#   # Pre-publish hook boundary. Defaults to `pre-commit run --all-files`;",
+    "#   # Pre-publish hook boundary. Defaults to `pre-commit run --hook-stage pre-commit`;",
     "#   # set it for lefthook, husky, or a bespoke script.",
-    "#   precommit_command: pre-commit run --all-files",
+    "#   precommit_command: pre-commit run --hook-stage pre-commit",
     "#   # Per-reviewer pre-push caps (issue #906). Omit to use MCP-tool defaults.",
     "#   codex_review:",
     "#     pre_push_cap: 1",
@@ -120,13 +120,6 @@ function suggestedYamlWorkflowSection(project) {
     "#     judge:",
     "#       enabled: false",
     "#       model: null",
-    "#   # Optional tiered publish verification (issue #1497). When a toolchain",
-    "#   # fingerprint command is set, verify posts a content-addressed",
-    "#   # attestation that the publish band reuses instead of re-verifying an",
-    "#   # unchanged tree; any tree/base/config/toolchain change re-runs the full",
-    "#   # gate. Absent (default) = no reuse, every gate runs in full (fail-closed).",
-    "#   verification:",
-    "#     toolchain_fingerprint_command: <command emitting one lowercase sha256>",
   ];
 }
 function suggestedYamlPackagingSection() {

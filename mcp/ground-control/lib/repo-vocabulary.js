@@ -363,7 +363,6 @@ export const DEFAULT_IMPLEMENT_ROUTING_STAGES = Object.freeze({
   implementation: { tier: "medium" },
   clause_mapping: { tier: "medium" },
   precommit: { tier: "low" },
-  completion_gate: { tier: "low" },
   review_cycle_1_consume: { tier: "high" },
   review_fix_application: { tier: "medium" },
   git_publish: { tier: "low" },

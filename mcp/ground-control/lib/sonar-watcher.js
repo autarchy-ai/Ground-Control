@@ -1,9 +1,3 @@
-// Extracted from lib.js (issue #1355).
-//
-// lib.js had reached 20,634 lines against the repo's 500-LOC limit
-// (docs/CODING_STANDARDS.md, Sonar S104). It contained no mutual recursion, so it was
-// split along its own dependency layering. lib.js remains the barrel every caller imports.
-
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { _sleepMs } from "./doc-coverage.js";
@@ -17,7 +11,6 @@ import { SONAR_BASE_URL, SONAR_EXPORT_RETENTION, SONAR_RETRY_DELAYS_MS, _pruneSo
 
 /**
  * The one deadline for a watch.
- *
  * `total_timeout_seconds` used to bound only the quality-gate polling loop, so
  * the propagation wait, the retry backoffs, and the issue/hotspot pagination all
  * ran outside it and the documented cap was never the real ceiling. Every sleep
@@ -397,11 +390,28 @@ async function readSonarGate({ repoRoot, projectKey, prNumber, token, pollInterv
     full_issue_export_path: exportPath,
   };
 }
+async function waitForExpectedSonarProducer({
+  repoRoot, repoSlug, prNumber, execFile, expectedHeadSha, selector,
+  fetchProducerEvidence, budget, pollIntervalSeconds,
+}) {
+  while (true) {
+    const observed = await fetchProducerEvidence({ repoRoot, repoSlug, prNumber, execFile });
+    if (observed?.headSha !== expectedHeadSha) {
+      return { ok: false, error: "sonar_watch_head_changed", pr_number: prNumber, head_sha: expectedHeadSha };
+    }
+    const checks = selectSonarProducerChecks(observed.entries, selector);
+    if (checks.length && checks.every((check) =>
+      check.status === "completed")) return null;
+    if (budget.expired()) return { ok: false, error: "sonar_watch_producer_pending", pr_number: prNumber, head_sha: expectedHeadSha };
+    await budget.sleep(pollIntervalSeconds * 1000);
+  }
+}
 
 export async function runWatchSonarAnalysis({
   repoPath,
   prNumber,
   initialWaitSeconds = 60,
+  expectedHeadSha = null,
   totalTimeoutSeconds = 1800,
   pollIntervalSeconds = 30,
   fetchProducerEvidence = fetchSonarProducerEvidence,
@@ -444,6 +454,16 @@ export async function runWatchSonarAnalysis({
   // SHA or check metadata can leave in `scope_evidence`, because the request is
   // never made.
   const authorized = await authorizeRepoRead({ repoRoot, errorPrefix: "sonar_watch" });
+  // A previous PR analysis must not be reused while this head's producer is
+  // still running. Direct callers retain their existing unbound watch behavior.
+  if (expectedHeadSha) {
+    if (!authorized.ok) return authorized;
+    const pending = await waitForExpectedSonarProducer({
+      repoRoot, repoSlug: authorized.repoSlug, prNumber, execFile, expectedHeadSha,
+      selector, fetchProducerEvidence, budget, pollIntervalSeconds,
+    });
+    if (pending) return pending;
+  }
   const notProduced = authorized.ok
     ? await resolveSonarProducerScope({
       repoRoot, repoSlug: authorized.repoSlug, prNumber, projectKey, selector, fetchProducerEvidence, execFile,

@@ -1,5 +1,7 @@
 # Tiered Publish Verification Preflight
 
+> Superseded by #1629: CI owns broad verification; local attestations, fingerprints, and phase caches are retired.
+
 Issue #1497 reduces repeated repository-wide verification without reducing the
 coverage of the final published tree. This note is architecture guidance only.
 It does not implement an attestation, configuration key, command runner,

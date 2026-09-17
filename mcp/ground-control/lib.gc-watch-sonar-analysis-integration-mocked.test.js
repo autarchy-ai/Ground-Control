@@ -215,6 +215,12 @@ describe("Orchestrator ↔ routing-stages ↔ step-files sync (issue #934 fix-li
     for (const name of entries) {
       const filePath = `${STEPS_DIR}/${name}`;
       const stageId = parseStepFileStageId(filePath);
+      if (/^status: retired$/m.test(readFileSync(filePath, "utf8"))) {
+        assert.equal(stageId, null, "Retired steps must not declare an executable stage");
+        assert.ok(!readFileSync(SKILL_PATH, "utf8").includes(`steps/${name}`),
+          "Retired steps must not be dispatched by the orchestrator");
+        continue;
+      }
       assert.ok(
         stageId !== null,
         `Step file ${name} has no parseable stage_id in frontmatter`,

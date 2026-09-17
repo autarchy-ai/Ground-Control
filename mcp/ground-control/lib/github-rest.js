@@ -141,6 +141,10 @@ export async function fetchCommitCheckRollup(repoRoot, repoSlug, sha, { withWork
     ...checkRuns.map((run) => ({
       __typename: "CheckRun",
       name: run.name,
+      appId: run.app?.id ?? null,
+      run_id: run.id,
+      head_sha: run.head_sha,
+      url: run.html_url ?? run.details_url ?? null,
       workflowName: workflowNames.get(actionsRunId(run)) ?? null,
       status: upper(run.status),
       conclusion: upper(run.conclusion),

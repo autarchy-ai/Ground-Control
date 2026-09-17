@@ -6,9 +6,6 @@
 import { detectSensitiveBodyContent, extractInScopeRequirementUids, requestedRequirementUidAuthorization } from "../lib.js";
 import { z } from "zod";
 
-// Re-exported (not a fresh promisify) so the production default runner has ONE
-// identity: the shared verification runner swaps in the size-safe gate runner
-// only for that identity, so verify and base synchronization both get it (#1497).
 export { execFile as execFileAsync } from "../lib/runtime-primitives.js";
 export const requirementShape = z.object({
   uid: z.string().min(1),
@@ -133,14 +130,7 @@ export function commandFailure(action, stage, error) {
     { failed_stage: stage },
   );
 }
-export async function readStatus(repoRoot, runGit, commandRunner) {
-  const { stdout } = await runGit(
-    repoRoot,
-    ["status", "--porcelain=v1", "--untracked-files=normal"],
-    commandRunner,
-  );
-  return stdout;
-}
+
 // Load the in-scope requirement records and the issue's traceability links for
 // bootstrap. Returns a bounded failure envelope when either read throws, so the
 // caller can surface it unchanged instead of unwinding through a thrown error.

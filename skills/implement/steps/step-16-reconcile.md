@@ -6,7 +6,7 @@ tier: medium
 
 # Step 16: Reconcile Traceability in the Requirement Files
 
-**This step runs BEFORE publish, as part of the delivery diff (issue #1541, superseding the #963 post-merge ordering).** Traceability lives in repo-local requirement files, so — like the Step 15 status transition — reconciling after merge would not land on the target branch without a second PR. Reconcile now, after Step 15 and before the completion gate and publish, so the `## Traceability` edits are reviewed in and merged by the delivery pull request. Post-merge Phase E does not edit these files; it verifies them at the immutable merge revision (Step 17 `phase="post_merge"`).
+**This step runs BEFORE publish, as part of the delivery diff (issue #1541, superseding the #963 post-merge ordering).** Traceability lives in repo-local requirement files, so — like the Step 15 status transition — reconciling after merge would not land on the target branch without a second PR. Reconcile now, after Step 15 and before publish, so the `## Traceability` edits are reviewed in and merged by the delivery pull request. Post-merge Phase E does not edit these files; it verifies them at the immutable merge revision (Step 17 `phase="post_merge"`).
 
 Requirements are repo-local files (ADR-093, issue #1500): traceability lives in the `## Traceability` section of `docs/requirements/<UID>/requirement.md` as bullets of the form ``- <LINK_TYPE> → <ARTIFACT_TYPE> `<identifier>` (optional title)`` — for example ``- IMPLEMENTS → CODE `src/foo.js``` or ``- TESTS → TEST `src/test/foo.test.js```. There is no backend — reconciliation is **editing those sections** and committing the edits on this run's branch, reviewed in the diff like any change.
 
@@ -66,7 +66,7 @@ Requirements are repo-local files (ADR-093, issue #1500): traceability lives in 
    - A bullet that already exists is simply left in place — re-recording is a no-op.
    - Note: `gc_create_github_issue` seeds an `IMPLEMENTS` issue→requirement bullet during UID-first runs. For a forward-looking in-scope requirement this PR does not deliver, change that bullet to `DOCUMENTS` before this step exits.
 
-Reconciliation is idempotent: running it on an already-correct branch is a no-op. When it produces edits, commit those requirement-file edits on this run's branch as part of the delivery diff — they are frontmatter / `## Traceability` documentation edits, gated by pre-commit plus the doc guardrails in `cfg.workflow.policy_command`, not by the implementation completion / test suite. When it produces **no** edits — traceability is already complete and consistent — there is nothing to commit; never fabricate a placeholder edit to create a diff (issue #1543). Proceed to the completion gate, then publish; the merged files are verified in Phase E (Step 17 `phase="post_merge"`).
+Reconciliation is idempotent: running it on an already-correct branch is a no-op. When it produces edits, commit those requirement-file edits on this run's branch as part of the delivery diff — they are frontmatter / `## Traceability` documentation edits, gated by pre-commit plus the doc guardrails in `cfg.workflow.policy_command`, not by the implementation completion / test suite. When it produces **no** edits — traceability is already complete and consistent — there is nothing to commit; never fabricate a placeholder edit to create a diff (issue #1543). Proceed to the required reviews, then publish; the merged files are verified in Phase E (Step 17 `phase="post_merge"`).
 
 ## Return contract
 

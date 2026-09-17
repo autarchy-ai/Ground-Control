@@ -100,7 +100,7 @@ describe("fetchCommitCheckRollup", () => {
     const { paths, execFile } = recorder();
     const rollup = await fetchCommitCheckRollup("/repo", "o/r", "abc", { execFile });
     assert.deepEqual(rollup, [
-      { __typename: "CheckRun", name: "build", workflowName: null, status: "COMPLETED", conclusion: "SUCCESS", completedAt: "t" },
+      { __typename: "CheckRun", name: "build", appId: null, run_id: undefined, head_sha: undefined, url: "https://github.com/o/r/actions/runs/5/job/1", workflowName: null, status: "COMPLETED", conclusion: "SUCCESS", completedAt: "t" },
       { __typename: "StatusContext", context: "legacy", state: "PENDING" },
     ]);
     assert.ok(!paths.some((path) => path.includes("/actions/runs/")), "workflow names are read only on request");

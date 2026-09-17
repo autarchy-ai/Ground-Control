@@ -34,8 +34,6 @@ delegated step.
    during implementation or review-fix loops, run the narrowest tests that
    exercise the changed behavior. Expand breadth for shared or cross-cutting
    boundaries, security-sensitive changes, or evidence of wider risk. Run
-   repository-wide completion and policy suites once at each required
-   meaningful boundary on the relevant final tree, not after every small edit
-   or fix when that tree state has not changed. Efficiency never permits
-   skipping mandatory pre-commit, completion, review, CI, Sonar, or final
-   policy gates.
+   targeted checks as needed. CI owns repository-wide completion and policy suites.
+   Do not require local broad suites before publish or after base synchronization.
+   Preserve mandatory pre-commit, review, CI, Sonar, and final-report gates.

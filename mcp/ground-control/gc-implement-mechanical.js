@@ -21,8 +21,6 @@ import {
   runImplementPreCommit,
   startAsyncJob,
   asyncJobInputFingerprint,
-  postImplementVerificationAttestation,
-  readTrustedImplementVerificationAttestations,
   acquireImplementPublishLock,
   resolvePublishGitDir,
   reconcileInterruptedPublish,
@@ -32,13 +30,11 @@ import {
 import { runFinalize, runReadiness } from "./implement/completion.js";
 import { completionShape, execFileAsync, requirementShape, runBootstrap } from "./implement/gate-helpers.js";
 import { runMonitor, runPublish } from "./implement/publish.js";
-import { runVerify } from "./implement/verify.js";
 
 export { extractInScopeRequirementUids } from "./lib.js";
 
 export const IMPLEMENT_MECHANICAL_ACTIONS = Object.freeze([
   "bootstrap",
-  "verify",
   "publish",
   "monitor",
   "readiness",
@@ -46,7 +42,6 @@ export const IMPLEMENT_MECHANICAL_ACTIONS = Object.freeze([
 ]);
 
 export const IMPLEMENT_MECHANICAL_ASYNC_ACTIONS = Object.freeze([
-  "verify",
   "publish",
   "monitor",
 ]);
@@ -70,7 +65,7 @@ export const gcImplementMechanicalZodShape = {
   pr_number: z.number().int().positive().optional(),
   completion: completionShape.optional(),
   async: z.boolean().optional().describe(
-    "When true for verify, publish, or monitor, start a background job and return a compact handle. " +
+    "When true for publish or monitor, start a background job and return a compact handle. " +
     "Poll gc_codex_job until status='done', then consume its result as the original mechanical envelope.",
   ),
   idempotency_key: z
@@ -85,19 +80,18 @@ export const gcImplementMechanicalZodShape = {
 };
 export const GC_IMPLEMENT_MECHANICAL_DESCRIPTION =
   "Run coarse-grained deterministic /implement phases without a model turn per mechanical step. " +
-  "Actions: bootstrap (issue/branch/context/pickup), verify (configured completion command + configured " +
-  "workflow.policy_command + quality gates), " +
+  "Actions: bootstrap (issue/branch/context/pickup), " +
   "publish (stage + pre-commit + commit + push + remote-base synchronization), monitor (CI + Sonar), " +
   "readiness (pre-merge completion assertion), finalize (post-merge assertion + idempotent issue close). " +
   "Always pass action, repo_path, and issue_number. Depending on action, also pass invocation_root, branch_name, " +
   "base_branch, driver, requested_requirement_uid, requirements, commit_message, synchronization, pr_number, or completion. " +
   "bootstrap requires branch_name; for publish and monitor branch_name is OPTIONAL and defaults to the checkout's current " +
   "branch when it is this issue's branch (`<issue>-<slug>`), refusing a base/unrelated branch rather than acting on it. " +
-  "Long actions verify, publish, and monitor accept async=true plus a required bounded idempotency_key; " +
+  "Long actions publish and monitor accept async=true plus a required bounded idempotency_key; " +
   "poll the returned job_id through gc_codex_job and consume the terminal result as this tool's unchanged envelope. " +
   "Bootstrap, readiness, and finalize remain synchronous. " +
   "requested_requirement_uid names the requirement under test. Every action that can reach a repository gate resolves it " +
-  "server-side against the target issue's Requirements section and refuses an unlisted UID; verify and publish then export " +
+  "server-side against the target issue's Requirements section and refuses an unlisted UID; publish then exports " +
   "the bound value to every repo-authored gate as ACES_REQUIREMENT_UID, so a governance gate still receives requirement " +
   "identity on an issue branch that carries no UID. " +
   "A phase either completes or returns agent_required=true with a bounded repair reason; it never invokes an agent.";
@@ -128,8 +122,6 @@ const defaultDeps = {
   assertCompletion: runAssertCompletion,
   authorizeRequirementUid: authorizeRequestedRequirementUid,
   closeIssue: runCloseIssueAfterMerge,
-  postVerificationAttestation: postImplementVerificationAttestation,
-  readVerificationAttestations: readTrustedImplementVerificationAttestations,
   // Mechanical-publish recovery seams (issue #1495). Injected so tests can stub
   // the filesystem lease/journal while production holds the real per-worktree lease.
   resolvePublishGitDir,
@@ -142,8 +134,6 @@ function dispatch(args, deps) {
   switch (args.action) {
     case "bootstrap":
       return runBootstrap(args, deps);
-    case "verify":
-      return runVerify(args, deps);
     case "publish":
       return runPublish(args, deps);
     case "monitor":
@@ -231,11 +221,10 @@ export async function gcImplementMechanicalToolHandler(args, overrides = {}) {
     );
   }
   const normalizedArgs = { ...mechanicalArgs, repoPath: canonicalRepoPath };
-  const checkoutBound = args.action === "verify" || args.action === "publish";
+  const checkoutBound = args.action === "publish";
   return startJob(
     `implement_mechanical_${args.action}`,
-    // The registry hands the run a progress reporter; verify threads it to the
-    // shared gate runner so a long sweep emits a bounded liveness snapshot (#1497).
+    // The registry carries progress from long-running mechanical actions.
     (_signal, reportProgress) => runImplementMechanical(normalizedArgs, { ...mechanicalOverrides, reportProgress }),
     {
       idempotencyKey: args.idempotency_key,

@@ -15,10 +15,6 @@ workflow:
   # default, so policy_command is intentionally omitted).
   test_command: make mcp-test
   completion_command: make mcp-test
-  verification:
-    # Content-addressed reuse binds the JavaScript/Python toolchains and the
-    # dependency/configuration files consumed by the completion and policy gates.
-    toolchain_fingerprint_command: node tools/verification-fingerprint.mjs
   codex_review:
     pre_push_cap: 1
   test_quality_review:
@@ -96,9 +92,6 @@ routing:
       tier: medium
       model: claude-sonnet-5
     precommit:
-      tier: low
-      model: claude-haiku-4-5
-    completion_gate:
       tier: low
       model: claude-haiku-4-5
     review_cycle_1_consume:

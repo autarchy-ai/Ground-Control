@@ -79,7 +79,7 @@ class AdrGuardChecksTest(PolicyChecksFixture):
             step6 = root / "skills/implement/steps/step-06-completion-gate.md"
             step6.write_text(
                 step6.read_text(encoding="utf-8").replace(
-                    "`cfg.workflow.policy_command`", "`make policy`"
+                    "CI owns repository-wide\ncompletion and policy suites", "Run a local full suite"
                 ),
                 encoding="utf-8",
             )

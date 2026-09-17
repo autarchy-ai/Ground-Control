@@ -81,6 +81,7 @@ function slurpComments(comments) {
 // for every POST call.
 function makeCompletionShimRepo({
   comments = [],
+  hostedChecks = [{ name: "tests", status: "completed", conclusion: "success" }],
   commentIdSeq = [9500, 9501, 9502],
   prNumber = 42,
   prMerged = true,
@@ -158,6 +159,15 @@ if (/\\/issues\\/\\d+\\/timeline/.test(restPath)) {
 if (/\\/pulls\\/\\d+$/.test(restPath)) {
   process.stdout.write(JSON.stringify(cfg.restPull));
   process.exit(0);
+}
+if (restPath.includes("/protection/required_status_checks")) {
+  process.stdout.write(JSON.stringify({ contexts: ["tests"] })); process.exit(0);
+}
+if (restPath.includes("/check-runs")) {
+  process.stdout.write(JSON.stringify([{ check_runs: ${JSON.stringify(hostedChecks)} }])); process.exit(0);
+}
+if (restPath.endsWith("/status")) {
+  process.stdout.write(JSON.stringify({ statuses: [] })); process.exit(0);
 }
 const permissionEndpoint = argv.find((arg) => arg.includes("/collaborators/") && arg.endsWith("/permission"));
 if (permissionEndpoint) {
@@ -367,4 +377,30 @@ describe("runAssertCompletion — open execution obligations block readiness", (
       shim.cleanup();
     }
   });
+});
+
+
+describe("current-head hosted readiness", () => {
+  for (const [name, hostedChecks] of [
+    ["missing", []],
+    ["pending", [{ name: "tests", status: "in_progress", conclusion: null }]],
+    ["failed", [{ name: "tests", status: "completed", conclusion: "failure" }]],
+  ]) {
+    it(`refuses ${name} required checks despite a caller claiming green`, async () => {
+      const shim = makeCompletionShimRepo({ prMerged: false, hostedChecks });
+      try {
+        const result = await withShimPath(shim.binDir, () => runAssertCompletion({
+          repoPath: shim.repoDir, issueNumber: 963, prNumber: 42,
+          requirements: [], reviews: [{ reviewer: "codex", summary: "clean" }],
+          ciStatus: "green", sonarStatus: "skipped", phase: "pre_merge",
+          plainEnglishOutcome: "Ready for review.",
+        }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) }));
+        assert.equal(result.ok, false);
+        assert.equal(result.error, "completion_hosted_checks_not_green");
+        assert.equal(result.final_report, null);
+      } finally {
+        shim.cleanup();
+      }
+    });
+  }
 });

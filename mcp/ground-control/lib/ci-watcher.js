@@ -182,12 +182,14 @@ export async function runWatchCiRun({
   repoPath,
   branch,
   runId = null,
+  expectedHeadSha = null,
   queuedTimeoutSeconds = 300,
   totalTimeoutSeconds = 2700,
   pollIntervalSeconds = 15,
   authorizeRepoRead = authorizeWatcherRepoRead,
   resolveRuns = _resolveCiRunsForBranch,
   fetchRunSnapshot = _fetchCiRunSnapshot,
+  fetchFailedLog = _fetchCiRunFailedLog,
   now = Date.now,
   sleep = _sleepMs,
 }) {
@@ -266,7 +268,14 @@ export async function runWatchCiRun({
   } else {
     let selected;
     try {
-      selected = await resolveRuns(repoRoot, repoSlug, branch);
+      const deadline = now() + totalTimeoutSeconds * 1000;
+      do {
+        selected = await resolveRuns(repoRoot, repoSlug, branch);
+        if (!expectedHeadSha) break;
+        selected = selected.filter((run) => run.headSha === expectedHeadSha);
+        if (selected.length || now() >= deadline) break;
+        await sleep(pollIntervalSeconds * 1000);
+      } while (true);
     } catch (e) {
       return {
         ok: false,
@@ -283,6 +292,7 @@ export async function runWatchCiRun({
         branch,
       };
     }
+    if (expectedHeadSha) selected = selected.filter((run) => run.headSha === expectedHeadSha);
     watchedRunIds = selected
       .map((run) => (typeof run.databaseId === "number" ? run.databaseId : null))
       .filter((id) => id !== null);
@@ -314,6 +324,19 @@ export async function runWatchCiRun({
     }
     const nowMs = now();
     const elapsedSeconds = Math.floor((nowMs - startMs) / 1000);
+    // A failed job is actionable even while other jobs in its workflow run.
+    const failed = observed.find(({ snapshot }) =>
+      ["failure", "cancelled", "timed_out", "action_required", "startup_failure"].includes(snapshot?.conclusion)
+      || (snapshot?.jobs ?? []).some((job) => ["failure", "timed_out", "cancelled"].includes(job.conclusion)));
+    if (failed) {
+      return { ...ciWatchEnvelope(failed, "failure", elapsedSeconds, observed),
+        head_sha: failed.snapshot?.headSha ?? expectedHeadSha,
+        failed_steps: extractFailedStepsFromJobsJson(failed.snapshot),
+        pending_run_ids: observed.filter((run) => run.snapshot?.status !== "completed").map((run) => run.id),
+        log_summary: failed.snapshot?.status === "completed"
+          ? summarizeCiLogFailedOutput(await fetchFailedLog(repoRoot, repoSlug, failed.id), 4096) : null,
+        time_to_actionable_ms: nowMs - startMs, wait_after_actionable_ms: 0 };
+    }
     // The set is only settled when every run is settled. Each unsettled run is
     // judged on its own queue wait, so one run's hand-off between jobs cannot
     // read as another run's stuck queue (issue #1581).
@@ -383,7 +406,7 @@ export async function runWatchCiRun({
   const envelope = ciWatchEnvelope(failingRun, ghConclusion, elapsedSeconds, observed);
   if (isFailure) {
     envelope.failed_steps = extractFailedStepsFromJobsJson(failingRun.snapshot);
-    const rawLog = await _fetchCiRunFailedLog(repoRoot, repoSlug, failingRun.id);
+    const rawLog = await fetchFailedLog(repoRoot, repoSlug, failingRun.id);
     envelope.log_summary = summarizeCiLogFailedOutput(rawLog, 4096);
   }
   return envelope;
@@ -394,6 +417,7 @@ function ciRunSummary({ id, snapshot }) {
   return {
     run_id: id,
     workflow: text(snapshot?.workflowName),
+    head_sha: text(snapshot?.headSha),
     status: text(snapshot?.status),
     conclusion: text(snapshot?.conclusion),
     url: text(snapshot?.url),

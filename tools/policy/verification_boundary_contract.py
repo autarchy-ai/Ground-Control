@@ -1,7 +1,7 @@
 """Verification-boundary checks for the /implement and /quickfix workflow prose.
 
 The lanes run each verification layer at one owned boundary: targeted tests at Step 5,
-the completion and policy suites at Step 6, and the single pre-commit invocation inside
+broad completion and policy suites in CI, and the single pre-commit invocation inside
 Step 7's publish action. Prose that asks the agent to run a layer again elsewhere pays
 for the same check twice, and the hand-run pre-commit-then-commit habit also lands a
 commit outside publish's sensitive-path screening (issue #899).
@@ -53,15 +53,10 @@ def check_verification_surface_contract(root: Path) -> list[Violation]:
     step7 = _read(root, PRECOMMIT_BOUNDARY_OWNER)
     quickfix_flat = _read_flat(root, QUICKFIX_SKILL_PATH)
     verification_surface_tokens = (
-        (
-            review_rules_flat,
-            "Do not run `cfg.workflow.completion_command` or "
-            "`cfg.workflow.policy_command` after every small fix",
-        ),
-        (review_rules_flat, "once before leaving the review band on the final post-fix tree"),
+        (review_rules_flat, "CI owns repository-wide completion and policy suites"),
         (step4_4_flat, "Do not run `pre-commit` by hand"),
         (step5, "Do not run `pre-commit` here"),
-        (step6_flat, "Run `cfg.workflow.policy_command`"),
+        (step6_flat, "CI owns repository-wide completion and policy suites"),
         (step7, "single mandatory pre-publish"),
         (step7, "cfg.workflow.precommit_command"),
         (quickfix_flat, "Do not run `pre-commit` here"),

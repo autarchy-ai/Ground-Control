@@ -8,7 +8,7 @@ tier: low
 
 1. **Render the PR body via `gc_render_pr_body`** (per ADR-036). Pass:
    - `repo_path`, `issue_number`
-   - `change_class`: `doc-only` if the diff is entirely documentation per Step 6's two-check sweep; `source+migration` if the diff includes a database migration; otherwise `source`.
+   - `change_class`: `doc-only` if the diff is entirely documentation per Step 4.5's acceptance mapping and the pre-publish path/content sweep; `source+migration` if the diff includes a database migration; otherwise `source`.
    - `requirement_uids`: the in-scope UIDs from Step 1.
    - `adr_refs`: the ADR identifiers this PR touches (for example, `ADR-036`, `ADR-021 (amended)`); pass an empty array to render "No ADR required."
    - `summary`: one paragraph. Update length follows the canonical succinctness rule in `skills/implement/steps/_review-loop-rules.md`.
