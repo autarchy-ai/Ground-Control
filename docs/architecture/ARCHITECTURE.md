@@ -173,3 +173,4 @@ CLI at `mcp/ground-control/knowledge_ingest_cli.js`
 | [ADR-092](../../architecture/adrs/092-file-size-limit-gate.md) | Enforce the 500-LOC file-size limit in repo policy |
 | [ADR-093](../../architecture/adrs/093-requirements-specs-as-code.md) | Requirements are repo-local files, not a backend/graph record |
 | [ADR-094](../../architecture/adrs/094-graphify-comprehension-index.md) | Graphify is an optional, not-required comprehension index |
+| [ADR-098](../../architecture/adrs/098-native-agent-dashboard-connection.md) | Optional dashboard through pinned native agent harnesses; never a workflow authority |
