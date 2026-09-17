@@ -734,3 +734,20 @@ commit, and refuses to post when that identity cannot be read. GitHub has no
 conditional comment create, so the projection is at-least-once. No gate reads
 these records, and the marker sits in the reserved `gc:` family that caller text
 cannot carry.
+
+**2026-09-18 (issue #1639, starting-worktree boundary and immediate Phase E).**
+The canonical checkout where a run begins is the mutation boundary for the run
+and every delegated step. Agents and delegated agents may inspect another
+repository or worktree read-only, but MUST NOT create, edit, or delete files,
+change Git state, or invoke write-capable repository tools there without
+explicit user authorization naming that repository or worktree. A separately
+invoked lane such as `/integrate` authorizes only its documented isolated
+worktrees, targets, and operations; it does not create general authority to
+mutate other checkouts.
+
+The linked PR becoming merged is also the complete transition condition from
+pre-merge readiness into Phase E. Once merge is observed, the run enters Phase
+E immediately. It does not wait for target-branch GitHub Actions, release jobs,
+security scans, sibling-agent work, or any other post-merge action to finish.
+The merge-revision requirement verification, final-report gate, and canonical
+issue close remain unchanged and still fail closed on their own prerequisites.
