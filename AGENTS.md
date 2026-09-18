@@ -30,3 +30,16 @@ check blocks progress, state that the user owns every GitGuardian investigation
 and resolution, then stop and wait. After the user reports that the finding is
 resolved, the agent may read the GitHub check status again; it must not perform
 the remediation itself.
+
+## Starting Worktree Boundary
+
+The canonical repository top-level where a task begins is that task's starting
+worktree. Agents and delegated agents MUST NOT make repository changes outside
+the starting worktree without explicit user authorization naming the other
+repository or worktree. This includes creating, editing, or deleting files;
+changing Git state; and invoking write-capable repository tools from another
+checkout. Read-only inspection outside the starting worktree is allowed.
+
+Invoking a workflow whose documented purpose creates an isolated worktree is
+explicit authorization only for that workflow's documented target and
+operations. It does not authorize unrelated changes elsewhere.

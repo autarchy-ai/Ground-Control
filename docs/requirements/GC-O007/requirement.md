@@ -6,7 +6,7 @@ type: FUNCTIONAL
 priority: MUST
 wave: 2
 created_at: 2026-04-05T18:56:23.312401Z
-updated_at: 2026-09-17T00:00:00Z
+updated_at: 2026-09-18T00:00:00Z
 ---
 
 # GC-O007 — Gated Agentic Development Loop
@@ -23,7 +23,15 @@ The system's agentic development workflow shall enforce a gated loop with the fo
 
 (D) Ship Pipeline: The agent shall create a synchronized PR, monitor CI, validate the SonarCloud quality gate, and present the PR for human review and merge with a pre-merge readiness record (the Phase D terminal signal). The agent shall not merge PRs.
 
-(E) Post-Merge Validation: After the user merges the PR, the agent — re-invoked on the issue — shall perform no requirement-file mutation. It shall resolve the linked pull request's immutable target-branch merge revision and verify every in-scope requirement at that revision (exact UID path, frontmatter id, expected lifecycle status, and required traceability), failing closed before the final report on any missing file, malformed record, UID mismatch, status mismatch, or missing required traceability. Only on success shall it post the reconciled final report and close the issue. Each step is gated on the linked PR being merged (merged_at non-null AND state MERGED); the merged tree, not caller-supplied status, is the authority, so a reviewed-but-abandoned PR leaves the requirement DRAFT and the issue open (issue #1541, superseding the #963 post-merge mutation ordering).
+(E) Post-Merge Validation: After the user merges the PR, the agent — re-invoked on the issue — shall perform no requirement-file mutation. Once the linked PR is observed as merged, the agent shall enter Phase E immediately without waiting for target-branch workflows, release jobs, security scans, sibling-agent work, or other post-merge actions to complete. It shall resolve the linked pull request's immutable target-branch merge revision and verify every in-scope requirement at that revision (exact UID path, frontmatter id, expected lifecycle status, and required traceability), failing closed before the final report on any missing file, malformed record, UID mismatch, status mismatch, or missing required traceability. Only on success shall it post the reconciled final report and close the issue. Each step is gated on the linked PR being merged (merged_at non-null AND state MERGED); the merged tree, not caller-supplied status, is the authority, so a reviewed-but-abandoned PR leaves the requirement DRAFT and the issue open (issue #1541, superseding the #963 post-merge mutation ordering).
+
+Across every phase, the canonical checkout where the task begins is the
+starting worktree and the mutation boundary for the run and every delegated
+step. Agents and delegated agents shall not make repository changes outside
+that worktree without explicit user authorization naming the other repository
+or worktree. Read-only inspection remains allowed. A separately invoked lane
+that documents isolated worktrees authorizes only its named targets and
+operations.
 
 Within Phase A, the agent shall select one TDD path for every requirement clause or acceptance criterion: new requirement/feature, shipped-code bug fix, reviewer-finding fix, or prose-only/static contract narrowing. Issue-level feature/bug-fix/mixed intent is informational; the plan's clause-level path is authoritative. A shipped-code bug fix shall reproduce the reported defect with a failing test against the unmodified buggy tree before repair and shall not use the documentation-only carve-out for runtime-consumed configuration, schemas, grammars, fixtures, or policy data. A reviewer finding fixed in executable code or a runtime-consumed data contract shall carry proportionate regression evidence that fails when the defect is reintroduced. Because cycle decision records are written before fixes, the post-fix test evidence belongs to the agent's self-verification record rather than the earlier decision rationale.
 
@@ -57,6 +65,9 @@ second workflow implementation.
 
 ## Traceability
 
+- IMPLEMENTS → GITHUB_ISSUE `1639` (Starting-worktree mutation boundary and immediate Phase E)
+- IMPLEMENTS → POLICY `tools/policy/implement_scope_contract.py` (Cross-surface worktree and Phase E policy contract)
+- TESTS → TEST `tools/tests/test_policy_implement_execution.py` (Mutation-boundary and immediate-Phase-E drift tests)
 - IMPLEMENTS → GITHUB_ISSUE `1637` (Thin quickfix lane over shared mechanical modules)
 - DOCUMENTS → ADR `architecture/adrs/100-thin-quickfix-shared-mechanical-lane.md` (Quickfix shared-lane decision)
 - IMPLEMENTS → CODE_FILE `skills/quickfix/SKILL.md` (Bounded seven-step quickfix policy layer)

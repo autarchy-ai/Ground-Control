@@ -275,6 +275,64 @@ class ImplementExecutionChecksTest(PolicyChecksFixture):
                     {item.code for item in violations},
                 )
 
+    def test_implement_execution_contract_requires_starting_worktree_boundary(self):
+        anchor = (
+            "MUST NOT make repository changes outside the starting worktree without "
+            "explicit user authorization"
+        )
+        surfaces = (
+            "AGENTS.md",
+            "skills/implement/_development-principles.md",
+            "skills/implement/steps/step-01-issue-branch-resolution.md",
+            "docs/DEVELOPMENT_WORKFLOW.md",
+        )
+        for rel in surfaces:
+            with self.subTest(surface=rel), tempfile.TemporaryDirectory() as tmp_dir:
+                root = self._implement_contract_root(tmp_dir)
+                path = root / rel
+                text = path.read_text(encoding="utf-8")
+                pattern = r"\s+".join(re.escape(part) for part in anchor.split())
+                mutated, replacements = re.subn(
+                    pattern, "MUTATION BOUNDARY REMOVED", text, count=1
+                )
+                self.assertEqual(replacements, 1)
+                path.write_text(mutated, encoding="utf-8")
+                violations = run_implement_execution_contract(root=root)
+                self.assertIn(
+                    "agent-starting-worktree-boundary",
+                    {item.code for item in violations},
+                )
+
+    def test_implement_execution_contract_requires_immediate_phase_e_after_merge(self):
+        anchors = (
+            "Once the linked PR is observed as merged, enter Phase E immediately.",
+            "Do not wait for post-merge GitHub Actions or other additional actions to complete",
+        )
+        surfaces = (
+            "skills/implement/SKILL.md",
+            "skills/implement/steps/step-17-completion.md",
+            "docs/DEVELOPMENT_WORKFLOW.md",
+        )
+        for rel in surfaces:
+            for anchor in anchors:
+                with (
+                    self.subTest(surface=rel, anchor=anchor),
+                    tempfile.TemporaryDirectory() as tmp_dir,
+                ):
+                    root = self._implement_contract_root(tmp_dir)
+                    path = root / rel
+                    text = path.read_text(encoding="utf-8")
+                    self.assertIn(anchor, text)
+                    path.write_text(
+                        text.replace(anchor, "PHASE E DELAYED"),
+                        encoding="utf-8",
+                    )
+                    violations = run_implement_execution_contract(root=root)
+                    self.assertIn(
+                        "implement-phase-e-immediate-after-merge",
+                        {item.code for item in violations},
+                    )
+
     def test_implement_verification_contract_is_proportionate_and_mandatory(self):
         principles = (
             REPO_ROOT / "skills/implement/_development-principles.md"

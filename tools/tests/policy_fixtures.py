@@ -30,11 +30,13 @@ class PolicyChecksFixture(unittest.TestCase):
         """Copy the surfaces run_implement_execution_contract reads into a temp root."""
         root = Path(tmp_dir)
         for rel in (
+            "AGENTS.md",
             "skills/implement/SKILL.md",
             "skills/implement/_development-principles.md",
             "skills/implement/steps",
             "skills/quickfix/SKILL.md",
             ".cursor/skills/implement/SKILL.md",
+            "docs/DEVELOPMENT_WORKFLOW.md",
             "mcp/ground-control/lib.js",
             "mcp/ground-control/index.js",
         ):

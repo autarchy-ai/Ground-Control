@@ -111,6 +111,12 @@ describe("MCP tool description parity (issue #1169)", { timeout: 30000 }, () => 
     assert.doesNotMatch(descriptionMap.gc_codex_job, /re-run the originating tool/i);
   });
 
+  it("directs merged PRs immediately into finalize without waiting on hosted actions", () => {
+    assert.match(descriptionMap.gc_implement_mechanical, /linked PR is merged/i);
+    assert.match(descriptionMap.gc_implement_mechanical, /run finalize immediately/i);
+    assert.match(descriptionMap.gc_implement_mechanical, /do not wait for post-merge hosted actions/i);
+  });
+
   it("publishes a release-identity schema with no caller-selected destination or identity (issue #1579)", () => {
     const schema = toolMap.gc_release_identity?.inputSchema;
     assert.deepEqual(Object.keys(schema?.properties ?? {}).sort(),
