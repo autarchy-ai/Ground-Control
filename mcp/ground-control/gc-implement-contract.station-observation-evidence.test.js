@@ -10,8 +10,6 @@ import {
   buildCodexReviewPrePushCycleMarker,
   buildExecutionObligationV2Marker,
   buildStationObservationObligationId,
-  buildTestQualityReviewCycleMarker,
-  buildTestQualityReviewFindingsComment,
   findStationObservationEvidence,
   hasTrustedReobservation,
   postStationReobservation,
@@ -84,21 +82,6 @@ describe("findStationObservationEvidence: what proves a re-observation", () => {
     assert.equal(evidence.record.id, 5648773109);
   });
 
-  it("binds the test-quality station through its own record and marker family", () => {
-    const record = buildTestQualityReviewFindingsComment({
-      cycleNumber: 1, cap: 1, issueNumber: ISSUE, branch: BRANCH, findings: [],
-    });
-    const marker = buildTestQualityReviewCycleMarker({ issueNumber: ISSUE, branchName: BRANCH, cycleNumber: 1 });
-    const comments = [
-      comment(1, openedBody("test_quality_review")),
-      comment(2, record),
-      comment(3, marker),
-    ];
-    assert.equal(bind(comments, { station: "test_quality_review", recordId: 2 }).ok, true);
-    // The codex station must not be satisfied by the other reviewer's verdict.
-    const crossed = [comment(1, openedBody("codex_review")), comment(2, record), comment(3, marker)];
-    assert.equal(bind(crossed, { recordId: 2 }).ok, false);
-  });
 });
 
 describe("findStationObservationEvidence: what does not", () => {
@@ -230,7 +213,7 @@ describe("hasTrustedReobservation", () => {
 
   it("does not report a resolution bound to a different record, station, or cycle as this one", () => {
     assert.equal(check([comment(9, resolved)], { recordId: 1 }), false);
-    assert.equal(check([comment(9, resolved)], { station: "test_quality_review" }), false);
+    assert.equal(check([comment(9, resolved)], { station: "another_station" }), false);
     assert.equal(check([comment(9, resolved)], { cycle: 2 }), false);
   });
 });

@@ -35,14 +35,14 @@ The codex review is THE review pass for the PR - there is no second post-push co
    compact status, cycle count, summary, and decision-record URLs.
 
 When the cycle finishes:
-- `status: "clean"` → advance to Step 6.6.
+- `status: "clean"` → advance to Phase C (Step 7).
 - `status: "post_failed"` with `error: "review_coverage_incomplete"` → the
   review did not cover the whole diff (issue #1414). No findings record,
   decision record, or cycle marker was written and no cycle was consumed, so
   re-invoke this step. Do not treat it as clean and do not escalate a cap that
   was never spent.
-- `status: "escalated"` → if `workflow.review_disposition.enabled` is true, run the automated cap disposition (`gc_review_cap_disposition`) per [_review-loop-rules.md](_review-loop-rules.md) § "Automated cap disposition" before escalating: `proceed` advances to Step 6.6, `one_more_cycle` re-invokes this step with `override_cap=true` + `auto_grant=true`, `escalate_to_human` (or `shadow` mode) summarizes to the user and waits. With the knob off, summarize to the user and wait. Do NOT push commits while waiting.
-- `status: "capped"` → summarize to the user. They may authorize an over-cap cycle (rerun this step with `override_cap=true` + `override_reason`); otherwise treat as terminal.
+- `status: "accepted_at_cap"` → the last in-cap findings were fixed and verified, and the user declined another review cycle; advance to Phase C. A clean terminal verdict is not required.
+- `status: "capped"` → ask whether to spend one additional cycle. If the user declines or says to proceed, return `accepted_at_cap` and advance. If they authorize another cycle, rerun this step with `override_cap=true` + `override_reason`.
 
 ## Return contract
 
@@ -52,6 +52,7 @@ decision_record_urls, escalation_reason}` envelope to the next workflow step.
 ## Notes
 
 - **Cap source**: the cycle tool reads `workflow.codex_review.pre_push_cap` from `.ground-control.yaml`; default 1 per issue #906. The cap is enforced at the MCP layer (issue #794 / #796), not in agent prose.
+- **Cap meaning**: the cap limits review iterations. It does not turn a clean Codex verdict into a prerequisite for publication. Known findings must be fixed or explicitly dispositioned; the user may decline an additional discovery pass and continue.
 - **Findings record**: every successful cycle posts a verbatim findings comment to the resolved issue thread (per ADR-029). The comment carries the cycle/cap/mode header, the `Diff mode` line describing how the diff reached the reviewers, and both reviewers' verbatim text. The primary session needs only the compact cycle envelope.
 - **Oversized diffs**: a diff larger than one prompt is split server-side into bounded inline slices that both reviewers read within this single cycle (issue #1414). Expect a longer wall-clock for a large diff and a `diff_mode: "manifest"` envelope; that is not a degraded review and needs no caller action.
 - **Skip predicate**: skip this step only if the diff is so trivial (one-liner typo fix) that codex would have nothing to find. When in doubt, run it.

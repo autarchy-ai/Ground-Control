@@ -40,7 +40,7 @@ function renderedPrBody() {
     "## Test Plan", "", "- tests", "",
     "## Ground Control Checks", "",
     "- [x] Repository policy checks required in CI before merge",
-    "- [x] Pre-push code review and test-quality review completed; all findings fixed or dispositioned",
+    "- [x] Pre-push Codex review completed; all findings fixed or dispositioned",
     "", "## Traceability", "", "- IMPLEMENTS: GC-O007", "- TESTS: test", "",
     "## Checklist", "", "- [x] done",
   ].join("\n");

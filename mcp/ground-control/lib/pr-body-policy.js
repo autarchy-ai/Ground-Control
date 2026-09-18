@@ -18,24 +18,24 @@ export const PR_BODY_POLICY_CHECK_LINE = "- [x] Repository policy checks require
 // `gc_run_sweep`, tools removed with the #1500 backend teardown.
 //
 // The review attestation has two accurate forms (issue #1551). /implement runs
-// both pre-push reviewers (Steps 6.5/6.6) before gc_render_pr_body, so
-// "completed" is accurate there. /quickfix leaves both reviewers off unless the
+// the pre-push Codex review (Step 6.5) before gc_render_pr_body, so
+// "completed" is accurate there. /quickfix leaves the reviewer off unless the
 // user passes --review, so the same line on a default quickfix run would claim a
 // verification the run never performed. A body must always carry one of these —
 // the attestation is never optional, only accurate. Keep both byte-identical to
 // tools/policy/authz_matrix.py::check_pr_body's accepted set — the
 // renderer-vs-policy compose fixture is the parity contract.
 export const PR_BODY_REVIEW_CHECK_LINE_COMPLETED =
-  "- [x] Pre-push code review and test-quality review completed; all findings fixed or dispositioned";
+  "- [x] Pre-push Codex review completed; all findings fixed or dispositioned";
 export const PR_BODY_REVIEW_CHECK_LINE_NOT_RUN =
-  "- [x] Pre-push code review and test-quality review not run for this lane; CI and repository policy gates enforced";
+  "- [x] Pre-push Codex review not run for this lane; CI and repository policy gates enforced";
 export const PR_BODY_REVIEW_CHECK_LINES = Object.freeze([
   PR_BODY_REVIEW_CHECK_LINE_COMPLETED,
   PR_BODY_REVIEW_CHECK_LINE_NOT_RUN,
 ]);
 export const PR_BODY_PRE_PUSH_REVIEW_STATES = Object.freeze(["completed", "not_run"]);
 // Only the lane whose contract makes the pre-push reviewers optional may render
-// the "not run" attestation; /implement mandates both, so it can never claim it.
+// the "not run" attestation; /implement mandates the Codex review, so it can never claim it.
 export const PR_BODY_REVIEWS_OPTIONAL_LANE = "quickfix";
 export const PR_BODY_LANES = Object.freeze(["implement", PR_BODY_REVIEWS_OPTIONAL_LANE]);
 export function prBodyGcCheckLines(prePushReviews) {

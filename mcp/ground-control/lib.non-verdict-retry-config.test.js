@@ -23,7 +23,7 @@ function reviewerBlock(reviewer, keys) {
 }
 
 describe("workflow.<reviewer>.non_verdict_retry_limit", () => {
-  for (const reviewer of ["codex_review", "test_quality_review"]) {
+  for (const reviewer of ["codex_review"]) {
     it(`accepts an in-bounds ${reviewer}.non_verdict_retry_limit`, () => {
       const result = reviewerBlock(reviewer, ["    non_verdict_retry_limit: 2"]);
       assert.equal(result.ok, true, JSON.stringify(result.errors));
@@ -88,27 +88,4 @@ describe("workflow.<reviewer>.non_verdict_retry_limit", () => {
     assert.ok(result.errors.some((e) => e.includes("unknown key")));
   });
 
-  it("carries both reviewer knobs independently", () => {
-    const result = parseYamlLines([
-      "schema_version: 1",
-      "project: x",
-      "workflow:",
-      "  codex_review:",
-      "    pre_push_cap: 1",
-      "    non_verdict_retry_limit: 0",
-      "  test_quality_review:",
-      "    pre_push_cap: 1",
-      "    non_verdict_retry_limit: 2",
-      "",
-    ]);
-    assert.equal(result.ok, true, JSON.stringify(result.errors));
-    assert.deepEqual(result.value.workflow.codex_review, {
-      pre_push_cap: 1,
-      non_verdict_retry_limit: 0,
-    });
-    assert.deepEqual(result.value.workflow.test_quality_review, {
-      pre_push_cap: 1,
-      non_verdict_retry_limit: 2,
-    });
-  });
 });

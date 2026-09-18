@@ -379,7 +379,7 @@ describe("buildDecisionRecord", () => {
 
   it("propagates wontfix and not-applicable decisions distinctly", () => {
     const body = buildDecisionRecord({
-      issueNumber: 868, cycle: 1, reviewer: "test-quality",
+      issueNumber: 868, cycle: 1, reviewer: "codex",
       findings: [
         { id: "F1", title: "x", classification: "one-off", sweep_evidence: "tested-sweep",
           decision: "wontfix", rationale: "User-authorized — see #999.",
@@ -484,7 +484,7 @@ describe("validateFinalReportInput", () => {
     const r = validateFinalReportInput(baseInput({
       reviews: [
         { reviewer: "codex", summary: short },
-        { reviewer: "test-quality", summary: oversized },
+        { reviewer: "codex", summary: oversized },
       ],
     }));
     assert.equal(r.ok, false);

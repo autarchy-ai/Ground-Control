@@ -170,7 +170,6 @@ function applyWorkflowScalarKeys(raw, value, allowed, allowedNested, errors) {
 function applyWorkflowNestedKeys(raw, value, errors) {
   const nested = [
     ["codex_review", () => normalizeReviewerConfig(raw.codex_review, "workflow.codex_review")],
-    ["test_quality_review", () => normalizeReviewerConfig(raw.test_quality_review, "workflow.test_quality_review")],
     ["pr_title", () => normalizePrTitleConfig(raw.pr_title)],
     ["integration_manager", () => normalizeIntegrationManagerConfig(raw.integration_manager)],
     ["dev_start_gate", () => normalizeDevStartGateConfig(raw.dev_start_gate)],
@@ -192,7 +191,7 @@ export function normalizeWorkflowConfig(raw) {
   // Scalar string-typed keys handled inline; nested-mapping keys delegated to
   // their own normalizers below.
   const allowedScalar = ["test_command", "completion_command", "lint_command", "format_command", "policy_command", "precommit_command", "base_branch"];
-  const allowedNested = new Set(["codex_review", "test_quality_review", "pr_title", "integration_manager", "dev_start_gate", "review_disposition"]);
+  const allowedNested = new Set(["codex_review", "pr_title", "integration_manager", "dev_start_gate", "review_disposition"]);
   const allowed = new Set([...allowedScalar, ...allowedNested]);
   const value = emptyWorkflowConfig();
   const errors = [];
@@ -327,7 +326,7 @@ export function evaluateCodexReviewCycleCap({
       cap: hardCap,
       override: true,
       override_reason: overrideReason.trim(),
-      next_action: "fix_findings_then_summarize_and_escalate",
+      next_action: "fix_findings_then_ask_over_cap_or_proceed",
     };
   }
 
@@ -337,20 +336,18 @@ export function evaluateCodexReviewCycleCap({
       error: "codex_review_cap_reached",
       message:
         `gc_codex_review hard cap reached (${hardCap} cycles) for PR #${prNumber}. ` +
-        `Per GC-O007 / ADR-029, after cycle ${hardCap} you must (a) post a summary of findings + fixes ` +
-        `to the issue thread, then (b) escalate to the user and ask whether to run cycle ${hardCap + 1} ` +
-        `or ship as-is. Do not address findings by silently re-invoking codex. If the user authorizes ` +
-        `another cycle, retry with override_cap=true and override_reason="<their authorization>".`,
+        `Per GC-O007 / ADR-099, summarize the completed-cycle findings, fixes, and verification, then ` +
+        `ask whether to run cycle ${hardCap + 1} or proceed. A clean verdict is not required to ` +
+        `proceed. Do not silently re-invoke codex. If the user authorizes another cycle, retry with ` +
+        `override_cap=true and override_reason="<their authorization>"; otherwise continue the workflow.`,
       pr_number: prNumber,
       prior_cycles: priorCount,
       cap: hardCap,
-      next_action: "post_summary_and_escalate_to_user",
+      next_action: "ask_over_cap_or_proceed",
     };
   }
 
-  // Cycle 1 returns next_action that nudges toward "fix findings"; cycle 2
-  // returns the stronger nudge that includes the summarize-and-escalate
-  // discipline (the gap that #794 was specifically filed to close).
+  // The last in-cap cycle fixes findings and presents the bounded review choice.
   const nextCycle = priorCount + 1;
   return {
     ok: true,
@@ -358,7 +355,7 @@ export function evaluateCodexReviewCycleCap({
     cap: hardCap,
     next_action:
       nextCycle === hardCap
-        ? "fix_all_findings_then_summarize_and_escalate"
+        ? "fix_findings_then_ask_over_cap_or_proceed"
         : "fix_all_findings_and_push",
   };
 }

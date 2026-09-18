@@ -9,7 +9,6 @@ import { runCodexReview } from "./codex-review-runner.js";
 import { runPostDecisionRecord } from "./decision-records.js";
 import { _statusForReviewerAction, buildAutoFixDecisionFindings, normalizeReviewCycleNextAction, reviewCycleFindings, summarizeReviewFindings } from "./knowledge-capture.js";
 import { verifyAutoDispositionGrant } from "./review-cap-disposition-2.js";
-import { runTestQualityReview } from "./test-quality-runner-2.js";
 import { _decorateUnobservedStation, _runStationWithObservationLedger } from "./station-observation-seam.js";
 
 async function _runReviewCycleShared({
@@ -187,7 +186,7 @@ async function _prepareReviewCycle({
         message: grant?.reason
           ? `auto_grant requested but not authorized: ${grant.reason}`
           : "auto_grant requested but no valid auto-disposition grant exists",
-        next_action: "post_summary_and_escalate_to_user",
+        next_action: "ask_over_cap_or_proceed",
       },
     };
   }
@@ -259,49 +258,4 @@ export async function runCodexReviewCycle({
   });
 
   return _finishReviewCycle({ reviewer: "codex", run, authorizedRepoPath, issueNumber, workspaceAuthorizationResolver });
-}
-export async function runTestQualityReviewCycle({
-  repoPath,
-  issueNumber,
-  baseBranch = null,
-  overrideCap = false,
-  overrideReason = null,
-  autoGrant = false,
-  model = undefined,
-  signal = undefined,
-}, { workspaceAuthorizationResolver = undefined } = {}) {
-  const prepared = await _prepareReviewCycle({
-    reviewer: "test-quality",
-    errorPrefix: "test_quality_review_cycle",
-    repoPath,
-    issueNumber,
-    overrideCap,
-    overrideReason,
-    autoGrant,
-    workspaceAuthorizationResolver,
-  });
-  if (prepared.earlyReturn) return prepared.earlyReturn;
-  const { authorizedRepoPath } = prepared;
-
-  const run = await _runStationWithObservationLedger({
-    reviewer: "test-quality",
-    repoPath: authorizedRepoPath,
-    issueNumber,
-    signal,
-    invokeReview: ({ stationObservation }) => {
-      const reviewParams = {
-        repoPath: authorizedRepoPath,
-        baseBranch,
-        issueNumber,
-        overrideCap: prepared.overrideCap,
-        overrideReason: prepared.overrideReason,
-        stationObservation,
-        signal,
-      };
-      if (model !== undefined) reviewParams.model = model;
-      return runTestQualityReview(reviewParams, { workspaceAuthorizationResolver });
-    },
-  });
-
-  return _finishReviewCycle({ reviewer: "test-quality", run, authorizedRepoPath, issueNumber, workspaceAuthorizationResolver });
 }

@@ -8,9 +8,8 @@ import { buildFinalReportMarker, renderCiStatus, renderDocumentationSection, ren
 import { extractGhErrorMessage } from "./grc-legacy-compat-2.js";
 import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { refuseFinalReportBody, refuseFinalReportInput, rejectFinalReportReservedMarkers } from "./final-report-input-gates.js";
-import { buildQuickfixCloseComment, validateFinalReportInput } from "./plan-posting.js";
+import { FINAL_REPORT_FILE_KINDS, buildQuickfixCloseComment, validateFinalReportInput } from "./plan-posting.js";
 import { execFile } from "./runtime-primitives.js";
-import { FINAL_REPORT_FILE_KINDS } from "./test-quality-prompt.js";
 
 // Each section returns a `string[]` so buildFinalReport assembles the body by
 // spreading them into one array (kept under the S138 length cap and the S7778

@@ -7,28 +7,9 @@
 import { _fetchCiRunFailedLog, _fetchCiRunSnapshot, _sleepMs, ciRunQueuedSeconds, evaluateCiPollState, extractFailedStepsFromJobsJson, summarizeCiLogFailedOutput } from "./doc-coverage.js";
 import { ensureGitRepo } from "./grc-legacy-compat-4.js";
 import { authorizeWatcherRepoRead } from "./watcher-repo-authorization.js";
-import { FINDING_CLASSIFICATIONS, FINDING_SWEEP_EVIDENCE_MAX, truncateReviewProse } from "./grc-legacy-compat.js";
 import { buildCiWatchGhArgs } from "./doc-coverage.js";
 import { execFile } from "./runtime-primitives.js";
 
-export const TEST_QUALITY_REVIEW_DEFAULT_MODEL = "claude-sonnet-5";
-// Hard timeout for a single review call. Repository-scale test cutovers can
-// legitimately require more than ten minutes of read-only inspection. The
-// async job owns cancellation and result polling; this 30-minute ceiling is a
-// final stuck-child bound, not an MCP request-lifetime surrogate.
-export const TEST_QUALITY_REVIEW_TIMEOUT_MS = 1_800_000;
-export const TEST_QUALITY_FINDING_FIELDS_DESCRIPTION = [
-  '    `severity`        — exactly "critical" or "warning".',
-  "    `location`        — `<file>::<TestClass>::<test_method>` OR `<file>:<line>`.",
-  "    `problem`         — what's wrong (non-empty).",
-  "    `why_it_matters`  — what regression this test would miss (optional but recommended).",
-  "    `fix`             — specific fix, not vague advice (non-empty).",
-  '    `classification`  — exactly "one-off" or "class". Same rules as the codex reviewer.',
-  '    `sweep_evidence`  — REQUIRED when classification is "one-off". One-line statement of what you swept and what you did NOT find. Forbidden when classification is "class".',
-  '    `category`        — REQUIRED when classification is "class"; forbidden when "one-off". Object: `shape` and `instances` (non-empty array).',
-  "    `structural_blocker` — optional boolean. Set on a one-off that warrants verdict=don't-ship.",
-].join("\n");
-export const TEST_QUALITY_FINDING_EXAMPLE = '{"severity":"critical","location":"backend/src/test/java/com/keplerops/groundcontrol/unit/domain/FooServiceTest.java::FooServiceTest::createFoo_returns_the_new_foo","problem":"Test calls fooService.create(...) but only verifies that the mock fooRepository.save was called. No assertion on the returned Foo.","why_it_matters":"Refactoring FooService.create to return null would still pass this test.","fix":"Assert on the returned Foo (id, name, status) after calling create().","classification":"class","category":{"shape":"@Test method that only verifies a mock interaction without asserting on the SUT\'s return value or state change","instances":["backend/src/test/java/com/keplerops/groundcontrol/unit/domain/FooServiceTest.java:42","backend/src/test/java/com/keplerops/groundcontrol/unit/domain/BarServiceTest.java:55"]}}';
 export async function _resolveCiRunsForBranch(repoRoot, repoSlug, branch) {
   const { stdout } = await execFile(
     "gh",
@@ -79,105 +60,6 @@ export function selectCiRunsForHeadSha(runs) {
   return runs.filter((run) => run?.headSha === headSha);
 }
 
-export function validateTestQualityFinding(raw, i) {
-  if (raw == null || typeof raw !== "object") {
-    throw new Error(`test-quality review blocking[${i}] is not an object`);
-  }
-  const { severity, location, problem, why_it_matters, fix, classification } = raw;
-  if (severity !== "critical" && severity !== "warning") {
-    throw new Error(
-      `test-quality review blocking[${i}].severity must be 'critical' or 'warning', got ${JSON.stringify(severity)}`,
-    );
-  }
-  if (typeof location !== "string" || location.trim() === "") {
-    throw new Error(`test-quality review blocking[${i}].location must be a non-empty string`);
-  }
-  if (typeof problem !== "string" || problem.trim() === "") {
-    throw new Error(`test-quality review blocking[${i}].problem must be a non-empty string`);
-  }
-  if (typeof fix !== "string" || fix.trim() === "") {
-    throw new Error(`test-quality review blocking[${i}].fix must be a non-empty string`);
-  }
-  if (why_it_matters != null && typeof why_it_matters !== "string") {
-    throw new Error(
-      `test-quality review blocking[${i}].why_it_matters must be a string when set`,
-    );
-  }
-  if (!FINDING_CLASSIFICATIONS.has(classification)) {
-    throw new Error(
-      `test-quality review blocking[${i}].classification must be 'one-off' or 'class', got ${JSON.stringify(classification)}`,
-    );
-  }
-
-  // Class: require category{shape, instances>=1}; reject sweep_evidence.
-  let category = null;
-  if (classification === "class") {
-    if (raw.category == null || typeof raw.category !== "object" || Array.isArray(raw.category)) {
-      throw new Error(
-        `test-quality review blocking[${i}] has classification 'class' but is missing required object field 'category' ({shape, instances})`,
-      );
-    }
-    if (typeof raw.category.shape !== "string" || raw.category.shape.trim() === "") {
-      throw new Error(`test-quality review blocking[${i}].category.shape must be a non-empty string`);
-    }
-    if (!Array.isArray(raw.category.instances) || raw.category.instances.length === 0) {
-      throw new Error(
-        `test-quality review blocking[${i}].category.instances must be a non-empty array`,
-      );
-    }
-    raw.category.instances.forEach((inst, j) => {
-      if (typeof inst !== "string" || inst.trim() === "") {
-        throw new Error(`test-quality review blocking[${i}].category.instances[${j}] must be a non-empty string`);
-      }
-    });
-    if (raw.sweep_evidence !== undefined && raw.sweep_evidence !== null) {
-      throw new Error(
-        `test-quality review blocking[${i}] has classification 'class' but also carries 'sweep_evidence' — class findings use category.instances instead`,
-      );
-    }
-    category = { shape: raw.category.shape.trim(), instances: raw.category.instances.map((s) => s.trim()) };
-  } else {
-    // one-off: require sweep_evidence; reject category.
-    if (raw.category !== undefined && raw.category !== null) {
-      throw new Error(
-        `test-quality review blocking[${i}] has classification 'one-off' but also carries 'category' — omit it for one-off findings`,
-      );
-    }
-    if (typeof raw.sweep_evidence !== "string" || raw.sweep_evidence.trim() === "") {
-      throw new Error(
-        `test-quality review blocking[${i}] has classification 'one-off' but is missing required 'sweep_evidence' (one-line statement of what you swept)`,
-      );
-    }
-  }
-
-  let structuralBlocker = false;
-  if (raw.structural_blocker !== undefined && raw.structural_blocker !== null) {
-    if (typeof raw.structural_blocker !== "boolean") {
-      throw new Error(`test-quality review blocking[${i}].structural_blocker must be a boolean when set`);
-    }
-    if (raw.structural_blocker === true && classification === "class") {
-      throw new Error(
-        `test-quality review blocking[${i}] has classification 'class' so structural_blocker is implicit — set it only on one-off`,
-      );
-    }
-    structuralBlocker = raw.structural_blocker === true;
-  }
-
-  const finding = {
-    severity,
-    location: location.trim(),
-    problem: problem.trim(),
-    why_it_matters: typeof why_it_matters === "string" ? why_it_matters.trim() : "",
-    fix: fix.trim(),
-    classification,
-  };
-  if (category !== null) finding.category = category;
-  if (raw.sweep_evidence != null && classification === "one-off") {
-    finding.sweep_evidence = truncateReviewProse(raw.sweep_evidence.trim(), FINDING_SWEEP_EVIDENCE_MAX);
-  }
-  if (structuralBlocker) finding.structural_blocker = true;
-  return finding;
-}
 export async function runWatchCiRun({
   repoPath,
   branch,

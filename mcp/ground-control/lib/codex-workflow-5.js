@@ -5,7 +5,6 @@
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
 import { realpathSync } from "node:fs";
-import { TEST_QUALITY_REVIEW_DEFAULT_MODEL, TEST_QUALITY_REVIEW_TIMEOUT_MS } from "./ci-watcher.js";
 import { assertImplementSyncCheckout, fetchImplementBase, isImplementAncestor, readImplementGitOid, readImplementTreeOid, readRemoteImplementBranchSha } from "./codex-workflow-2.js";
 import { extractInScopeRequirementUids } from "./issue-requirements-scope.js";
 import { validateExistingSynchronizedImplementPr, validateImplementBranchName, validateImplementPrTitle } from "./codex-workflow.js";
@@ -16,9 +15,20 @@ import { ghRestJson, listPullRequestsForHead } from "./github-rest.js";
 import { readTrustedImplementSyncRecord } from "./knowledge-capture.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { rejectReservedMarkerSequence } from "./repo-vocabulary.js";
-import { checkPrBodyShape, execFile, execFileWithInput, reviewEngineEnv } from "./runtime-primitives.js";
-import { TEST_QUALITY_REVIEW_FINDINGS_SCHEMA } from "./test-quality-prompt.js";
-import { ReviewerCapConfigError } from "./test-quality-runner.js";
+import { checkPrBodyShape, execFile } from "./runtime-primitives.js";
+
+export class ReviewerCapConfigError extends Error {
+  constructor(blockName, configErrors) {
+    super(
+      `resolveReviewerPrePushCap: .ground-control.yaml failed validation while reading ` +
+        `workflow.${blockName}.pre_push_cap — refusing to silently fall back to the module ` +
+        `default. Validation errors: ${(configErrors || []).join("; ")}`,
+    );
+    this.name = "ReviewerCapConfigError";
+    this.blockName = blockName;
+    this.configErrors = configErrors;
+  }
+}
 
 function validateSynchronizedImplementPrInput(input) {
   if (
@@ -362,38 +372,4 @@ export async function resolveReviewerPrePushCap(repoPath, blockName, moduleDefau
     return block.pre_push_cap;
   }
   return moduleDefault;
-}
-export async function runSingleClaudeTestQualityReview({
-  repoRoot,
-  prompt,
-  model = TEST_QUALITY_REVIEW_DEFAULT_MODEL,
-  schema = TEST_QUALITY_REVIEW_FINDINGS_SCHEMA,
-  timeoutMs = TEST_QUALITY_REVIEW_TIMEOUT_MS,
-  signal = undefined,
-}) {
-  const args = [
-    "--print",
-    "--model",
-    model,
-    "--output-format",
-    "json",
-    "--json-schema",
-    JSON.stringify(schema),
-    "--add-dir",
-    repoRoot,
-    "--permission-mode",
-    "bypassPermissions",
-    "--allowedTools",
-    "Read Glob Grep",
-  ];
-  const childEnv = reviewEngineEnv();
-  const { stdout } = await execFileWithInput("claude", args, {
-    input: prompt,
-    cwd: repoRoot,
-    env: childEnv,
-    maxBuffer: 10 * 1024 * 1024,
-    timeoutMs,
-    signal,
-  });
-  return stdout;
 }

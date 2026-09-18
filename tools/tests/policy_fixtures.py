@@ -163,6 +163,6 @@ class PolicyChecksFixture(unittest.TestCase):
             "## ADR Impact\n\nNo ADR required.\n"
             "## Ground Control Checks\n\n"
             "- [x] Repository policy checks required in CI before merge\n"
-            "- [x] Pre-push code review and test-quality review completed; all findings fixed or dispositioned\n"
+            "- [x] Pre-push Codex review completed; all findings fixed or dispositioned\n"
             "## Traceability\n\n- IMPLEMENTS: foo\n- TESTS: bar\n"
         )

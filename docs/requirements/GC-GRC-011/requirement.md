@@ -30,8 +30,6 @@ A control row in a database protects nothing. Secure-by-design means the mitigat
 ## Traceability
 
 - DOCUMENTS → GITHUB_ISSUE `1124` (Issue #1124: GC-GRC-011 in-loop control implementation with efficacy tests)
-- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib.js` (gc_test_quality_review rubric: control-efficacy-test recognition (clause 5))
-- TESTS → TEST `mcp/ground-control/lib.runresolveworkflowroute.test.js` (buildTestQualityReviewPrompt contract test: control-efficacy rubric item present)
 
 ## Historical traceability
 
