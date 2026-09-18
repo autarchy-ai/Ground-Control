@@ -15,7 +15,6 @@ import {
   parseCodexReviewPrePushCycleMarkers,
   parseGroundControlYaml,
   runCodexReviewCycle,
-  runTestQualityReviewCycle,
   verifyAutoDispositionGrant,
 } from "./lib.js";
 import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
@@ -129,13 +128,11 @@ describe("normalizeReviewDispositionConfig", () => {
 describe("effectiveReviewerCap", () => {
   it("falls back to the module default (1) when no cap is configured", () => {
     assert.equal(effectiveReviewerCap({ codex_review: { pre_push_cap: null } }, "codex"), 1);
-    assert.equal(effectiveReviewerCap({ test_quality_review: { pre_push_cap: null } }, "test-quality"), 1);
     assert.equal(effectiveReviewerCap(null, "codex"), 1);
   });
 
   it("uses the configured per-reviewer cap when set", () => {
     assert.equal(effectiveReviewerCap({ codex_review: { pre_push_cap: 3 } }, "codex"), 3);
-    assert.equal(effectiveReviewerCap({ test_quality_review: { pre_push_cap: 2 } }, "test-quality"), 2);
   });
 });
 
@@ -449,12 +446,4 @@ describe("review cycle wrappers — auto_grant knob off (input validation unchan
     assert.equal(r2.error, "codex_review_cycle_input_invalid");
   });
 
-  it("runTestQualityReviewCycle with autoGrant absent still rejects invalid input without I/O", async () => {
-    const r = await runTestQualityReviewCycle({ repoPath: "", issueNumber: 1 });
-    assert.equal(r.ok, false);
-    assert.equal(r.error, "test_quality_review_cycle_input_invalid");
-    const r2 = await runTestQualityReviewCycle({ repoPath: "/tmp", issueNumber: -3 });
-    assert.equal(r2.ok, false);
-    assert.equal(r2.error, "test_quality_review_cycle_input_invalid");
-  });
 });

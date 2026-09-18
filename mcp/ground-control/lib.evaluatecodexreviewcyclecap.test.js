@@ -31,20 +31,20 @@ describe("evaluateCodexReviewCycleCap", () => {
   it("allows cycle 2 after one prior with the standard fix-and-push next_action", () => {
     // Cap-3 (issue #804) — cycle 2 is no longer the last cycle, so it
     // returns the normal fix_all_findings_and_push next_action. The
-    // summarize-and-escalate discipline shifts to cycle 3 (the new last).
+    // fix-and-ask discipline shifts to cycle 3 (the new last).
     const result = evaluateCodexReviewCycleCap({ priorCount: 1, prNumber: 792 });
     assert.equal(result.ok, true);
     assert.equal(result.nextCycle, 2);
     assert.equal(result.next_action, "fix_all_findings_and_push");
   });
 
-  it("allows cycle 3 (the last cycle under cap-3) with the summarize-and-escalate discipline", () => {
+  it("allows cycle 3 (the last cycle under cap-3) with the fix-and-ask discipline", () => {
     // Cap-3 (issue #804) — cycle 3 is the new "must fix all + summarize +
     // escalate before the user authorizes a hypothetical cycle 4" cycle.
     const result = evaluateCodexReviewCycleCap({ priorCount: 2, prNumber: 792 });
     assert.equal(result.ok, true);
     assert.equal(result.nextCycle, 3);
-    assert.equal(result.next_action, "fix_all_findings_then_summarize_and_escalate");
+    assert.equal(result.next_action, "fix_findings_then_ask_over_cap_or_proceed");
   });
 
   it("refuses cycle 4 (cap reached) and tells the agent what to do instead", () => {
@@ -55,9 +55,10 @@ describe("evaluateCodexReviewCycleCap", () => {
     assert.equal(result.prior_cycles, 3);
     assert.equal(result.cap, 3);
     assert.equal(result.pr_number, 792);
-    assert.equal(result.next_action, "post_summary_and_escalate_to_user");
+    assert.equal(result.next_action, "ask_over_cap_or_proceed");
     assert.match(result.message, /hard cap reached/);
-    assert.match(result.message, /escalate to the user/);
+    assert.match(result.message, /or proceed/);
+    assert.match(result.message, /clean verdict is not required/);
     assert.match(result.message, /override_cap=true/);
   });
 
@@ -89,7 +90,7 @@ describe("evaluateCodexReviewCycleCap", () => {
     assert.equal(result.override, true);
     assert.equal(result.nextCycle, 4);
     assert.match(result.override_reason, /yes run cycle 4 to verify/);
-    assert.equal(result.next_action, "fix_findings_then_summarize_and_escalate");
+    assert.equal(result.next_action, "fix_findings_then_ask_over_cap_or_proceed");
   });
 
   it("rejects overrideCap=true without an overrideReason (audit requirement)", () => {

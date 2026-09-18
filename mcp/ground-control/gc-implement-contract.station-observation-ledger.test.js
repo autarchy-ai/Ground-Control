@@ -21,7 +21,7 @@ import {
 
 const ISSUE = 1476;
 
-function opened({ station = "test_quality_review", cycle = 1 } = {}) {
+function opened({ station = "review_station_b", cycle = 1 } = {}) {
   return buildExecutionObligationV2Marker({
     issueNumber: ISSUE,
     obligationId: buildStationObservationObligationId({ stationId: station, logicalCycle: cycle }),
@@ -32,7 +32,7 @@ function opened({ station = "test_quality_review", cycle = 1 } = {}) {
   });
 }
 
-function reobserved({ station = "test_quality_review", cycle = 1, recordId = 9001, id } = {}) {
+function reobserved({ station = "review_station_b", cycle = 1, recordId = 9001, id } = {}) {
   return buildExecutionObligationV2Marker({
     issueNumber: ISSUE,
     obligationId:
@@ -60,7 +60,7 @@ describe("station-observation obligation identity", () => {
 
   it("separates stations and logical cycles", () => {
     const codex = buildStationObservationObligationId({ stationId: "codex_review", logicalCycle: 1 });
-    const tq = buildStationObservationObligationId({ stationId: "test_quality_review", logicalCycle: 1 });
+    const tq = buildStationObservationObligationId({ stationId: "review_station_b", logicalCycle: 1 });
     const cycle2 = buildStationObservationObligationId({ stationId: "codex_review", logicalCycle: 2 });
     assert.notEqual(codex, tq);
     assert.notEqual(codex, cycle2);
@@ -71,7 +71,7 @@ describe("station-observation obligation identity", () => {
     // the run blocked on obligations nobody can resolve.
     const state = stateOf([opened(), opened()]);
     assert.deepEqual(state.open_obligation_ids, [
-      buildStationObservationObligationId({ stationId: "test_quality_review", logicalCycle: 1 }),
+      buildStationObservationObligationId({ stationId: "review_station_b", logicalCycle: 1 }),
     ]);
   });
 });
@@ -87,7 +87,7 @@ describe("v1 and v2 marker coexistence", () => {
     const v2 = events.find((e) => e.obligation_id !== "OB-1");
     assert.equal(v2.schema_version, 2);
     assert.equal(v2.kind, "station_observation");
-    assert.equal(v2.station, "test_quality_review");
+    assert.equal(v2.station, "review_station_b");
     assert.equal(v2.cycle, 1);
   });
 
@@ -123,11 +123,11 @@ describe("reobserved resolution", () => {
     const escalation = buildExecutionObligationV2Marker({
       issueNumber: ISSUE,
       obligationId: buildStationObservationObligationId({
-        stationId: "test_quality_review", logicalCycle: 1,
+        stationId: "review_station_b", logicalCycle: 1,
       }),
       event: "escalated",
       kind: "station_observation",
-      stationId: "test_quality_review",
+      stationId: "review_station_b",
       logicalCycle: 1,
     });
     assert.deepEqual(stateOf([opened(), escalation]).open_obligation_ids.length, 1);
@@ -149,7 +149,7 @@ describe("reobserved cannot clear anything it did not observe", () => {
     const mismatched = buildExecutionObligationV2Marker({
       issueNumber: ISSUE,
       obligationId: buildStationObservationObligationId({
-        stationId: "test_quality_review", logicalCycle: 1,
+        stationId: "review_station_b", logicalCycle: 1,
       }),
       event: "resolved",
       kind: "station_observation",
@@ -165,11 +165,11 @@ describe("reobserved cannot clear anything it did not observe", () => {
     const mismatched = buildExecutionObligationV2Marker({
       issueNumber: ISSUE,
       obligationId: buildStationObservationObligationId({
-        stationId: "test_quality_review", logicalCycle: 1,
+        stationId: "review_station_b", logicalCycle: 1,
       }),
       event: "resolved",
       kind: "station_observation",
-      stationId: "test_quality_review",
+      stationId: "review_station_b",
       logicalCycle: 4,
       disposition: "reobserved",
       observationRecordId: 9001,
@@ -182,11 +182,11 @@ describe("reobserved cannot clear anything it did not observe", () => {
     const unbound = buildExecutionObligationV2Marker({
       issueNumber: ISSUE,
       obligationId: buildStationObservationObligationId({
-        stationId: "test_quality_review", logicalCycle: 1,
+        stationId: "review_station_b", logicalCycle: 1,
       }),
       event: "resolved",
       kind: "station_observation",
-      stationId: "test_quality_review",
+      stationId: "review_station_b",
       logicalCycle: 1,
       disposition: "reobserved",
     });
@@ -296,11 +296,11 @@ describe("only a tool-attested re-observation closes a station observation", () 
       const legacy = buildExecutionObligationV2Marker({
         issueNumber: ISSUE,
         obligationId: buildStationObservationObligationId({
-          stationId: "test_quality_review", logicalCycle: 1,
+          stationId: "review_station_b", logicalCycle: 1,
         }),
         event: "resolved",
         kind: "station_observation",
-        stationId: "test_quality_review",
+        stationId: "review_station_b",
         logicalCycle: 1,
         disposition,
       });
@@ -311,7 +311,7 @@ describe("only a tool-attested re-observation closes a station observation", () 
       const smuggled = buildExecutionObligationMarker({
         issueNumber: ISSUE,
         obligationId: buildStationObservationObligationId({
-          stationId: "test_quality_review", logicalCycle: 1,
+          stationId: "review_station_b", logicalCycle: 1,
         }),
         event: "resolved",
         disposition,

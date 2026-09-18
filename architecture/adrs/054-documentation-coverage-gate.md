@@ -8,6 +8,12 @@ accepted
 
 2026-05-23
 
+> **Sync note for ADR-099 (2026-09-17):** The dedicated test-quality reviewer,
+> its Step 6.6 documentation, and its prompt-specific DOC_STYLE sync notes are
+> removed rather than retained as a compatibility surface. Test design remains
+> covered by the implementation/TDD rules and ordinary documentation coverage;
+> this ADR's classifier, outcome mapping, and Vale rules are unchanged.
+
 > **Sync note for issue #1303 (2026-09-11, surviving gate inventory):** The Python
 > documentation-outcome check moved from the mixed version-mirror module to
 > `tools/policy/documentation_coverage.py`; `tools/policy/checks.py` remains the compatibility

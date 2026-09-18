@@ -6,14 +6,6 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { TEST_QUALITY_REVIEW_TIMEOUT_MS } from "./lib.js";
-
-describe("test-quality reviewer process lifetime", () => {
-  it("allows repository-scale reviews to outlive the former ten-minute ceiling", () => {
-    assert.equal(TEST_QUALITY_REVIEW_TIMEOUT_MS, 30 * 60 * 1000);
-    assert.ok(TEST_QUALITY_REVIEW_TIMEOUT_MS > 600_000);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Async job registry (gc_codex_job, issues #937 and #1473)
@@ -104,7 +96,7 @@ describe("async job registry (gc_codex_job, issues #937 and #1473)", () => {
     const { startAsyncJob, pollAsyncJob, _resetAsyncJobsForTest } = await import("./lib.js");
     _resetAsyncJobsForTest();
     const start = startAsyncJob(
-      "test_quality_review",
+      "architecture_preflight",
       () => Promise.reject(new Error("codex exec blew up")),
     );
     await flush();
@@ -132,7 +124,7 @@ describe("async job registry (gc_codex_job, issues #937 and #1473)", () => {
       () => Promise.reject(sensitiveError),
     );
     const oversized = startAsyncJob(
-      "test_quality_review",
+      "architecture_preflight",
       () => Promise.reject(oversizedError),
     );
     await flush();
@@ -285,7 +277,7 @@ describe("async job registry (gc_codex_job, issues #937 and #1473)", () => {
     _resetAsyncJobsForTest();
     _setAsyncJobCapacityForTest(1);
     const running = startAsyncJob("codex_review", () => new Promise(() => {}));
-    const refused = startAsyncJob("test_quality_review", () => Promise.resolve({ ok: true }));
+    const refused = startAsyncJob("architecture_preflight", () => Promise.resolve({ ok: true }));
     assert.equal(refused.ok, false);
     assert.equal(refused.error, "job_capacity_exhausted");
     assert.equal(pollAsyncJob(running.job_id).status, "running");

@@ -145,7 +145,7 @@ process.exit(2);
         assert.equal(result.cap, CODEX_REVIEW_PREPUSH_HARD_CAP);
         assert.equal(result.issue_number, 796);
         assert.equal(result.branch, "796-x");
-        assert.equal(result.next_action, "post_summary_and_escalate_to_user");
+        assert.equal(result.next_action, "ask_over_cap_or_proceed");
         assert.equal(result.finding_count, 0);
         assert.deepEqual(result.comments, []);
       });

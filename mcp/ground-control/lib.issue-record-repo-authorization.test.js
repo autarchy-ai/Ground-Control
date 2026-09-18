@@ -3,7 +3,7 @@
 // Each tool here posts a durable issue-thread or pull-request record, creates or closes an issue,
 // or reads a thread with the MCP host's GitHub credentials. A caller naming any other checkout on
 // the host must be refused with a structured `<tool>_repo_not_authorized` envelope before a single
-// `gh`, `codex`, or `claude` process starts — the recording shims prove nothing was spawned.
+// `gh` or `codex` process starts — the recording shims prove nothing was spawned.
 
 import { after, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -25,8 +25,6 @@ import {
   runPostImplementationPlan,
   runReconcileStationObservation,
   runReviewCapDisposition,
-  runTestQualityReview,
-  runTestQualityReviewCycle,
   verifyAutoDispositionGrant,
 } from "./lib.js";
 import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
@@ -43,12 +41,12 @@ function makeRepo(prefix, slug) {
   return dir;
 }
 
-// `gh`, `codex`, and `claude` shims that record their argv and fail, so a refusal that leaked past
+// `gh` and `codex` shims that record their argv and fail, so a refusal that leaked past
 // the boundary shows up as a recorded invocation rather than a network call.
 function makeRecordingBin() {
   const dir = mkdtempSync(join(tmpdir(), "gc-pinned-bin-"));
   const log = join(dir, "invocations.log");
-  for (const tool of ["gh", "codex", "claude"]) {
+  for (const tool of ["gh", "codex"]) {
     writeFileSync(
       join(dir, tool),
       `#!/bin/sh\nprintf '%s %s\\n' ${tool} "$*" >> ${JSON.stringify(log)}\nexit 1\n`,
@@ -105,16 +103,6 @@ const PINNED_SURFACES = [
     tool: "gc_codex_review_cycle",
     prefix: "codex_review_cycle",
     call: (repoPath, opts) => runCodexReviewCycle({ repoPath, issueNumber: 1583, uncommitted: true }, opts),
-  },
-  {
-    tool: "gc_test_quality_review",
-    prefix: "test_quality_review",
-    call: (repoPath, opts) => runTestQualityReview({ repoPath, issueNumber: 1583 }, opts),
-  },
-  {
-    tool: "gc_test_quality_review_cycle",
-    prefix: "test_quality_review_cycle",
-    call: (repoPath, opts) => runTestQualityReviewCycle({ repoPath, issueNumber: 1583 }, opts),
   },
   {
     tool: "gc_codex_architecture_preflight",

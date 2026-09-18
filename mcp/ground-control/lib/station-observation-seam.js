@@ -9,7 +9,6 @@ import { getOwnerRepo } from "./grc-legacy-compat-3.js";
 import { ensureGitRepo, readTrustedExecutionObligationState } from "./grc-legacy-compat-4.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { readPriorCodexReviewPrePushCycleCount } from "./codex-verify-cap.js";
-import { readPriorTestQualityReviewCycleCount } from "./test-quality-runner.js";
 import { resolveNonVerdictRetryLimit, runStationWithNonVerdictRetry } from "./review-reattempt.js";
 import {
   postStationObservationEscalation,
@@ -19,11 +18,9 @@ import {
 /** `.ground-control.yaml` block name for each reviewer. */
 const REVIEWER_CONFIG_BLOCK = Object.freeze({
   codex: "codex_review",
-  "test-quality": "test_quality_review",
 });
 export const REVIEW_STATION_BY_REVIEWER = Object.freeze({
   codex: "codex_review",
-  "test-quality": "test_quality_review",
 });
 
 const DEFAULT_LEDGER_DEPS = Object.freeze({
@@ -175,9 +172,7 @@ async function _resolveLedgerTarget(repoPath, cached) {
 
 async function _resolveLogicalCycle({ repoRoot, owner, name }, issueNumber, reviewer) {
   try {
-    const prior = reviewer === "codex"
-      ? await readPriorCodexReviewPrePushCycleCount(repoRoot, owner, name, issueNumber)
-      : await readPriorTestQualityReviewCycleCount(repoRoot, owner, name, issueNumber);
+    const prior = await readPriorCodexReviewPrePushCycleCount(repoRoot, owner, name, issueNumber);
     return (Number.isInteger(prior) ? prior : 0) + 1;
   } catch {
     // An unreadable thread falls back to the first cycle rather than inventing an ordinal. The

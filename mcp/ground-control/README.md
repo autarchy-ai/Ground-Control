@@ -95,8 +95,8 @@ both the template and the code.
 | `GH_VERIFY_FINDING_AUTHORS` | Extra comma-separated GitHub logins `gc_codex_verify_finding` accepts as finding authors, for a service-identity deployment. |
 | `GC_KNOWLEDGE_INGEST_ANTHROPIC_API_KEY` | Anthropic key used only by the knowledge-ingest child, so ingestion can bill separately from the review engine. |
 | `SONAR_TOKEN` | Lets `gc_watch_sonar_analysis` read the SonarCloud quality gate. Without it the tool returns `sonar_watch_token_missing`, which `/implement` Step 11 treats as an infrastructure blocker for the operator rather than as SonarCloud findings for the agent. |
-| `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CONFIG_DIR`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` | Selects the review engine's auth mode. Declare exactly one; with none declared the Step 6.6 review refuses with `test_quality_review_auth_missing` before spawning `claude`. See "Test-quality review engine" in `docs/DEVELOPMENT_WORKFLOW.md`. |
-| `CLOUD_ML_REGION`, `GOOGLE_CLOUD_PROJECT`, `ANTHROPIC_VERTEX_PROJECT_ID`, `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_REGION`, `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `ANTHROPIC_BASE_URL` | Companion values the selected review-engine auth mode needs. |
+| `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CONFIG_DIR`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` | Optional authentication for the `gc_review_cap_disposition` gray-zone judge when that judge is enabled. |
+| `CLOUD_ML_REGION`, `GOOGLE_CLOUD_PROJECT`, `ANTHROPIC_VERTEX_PROJECT_ID`, `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_REGION`, `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `ANTHROPIC_BASE_URL` | Companion values for the selected optional disposition-judge auth mode. |
 | `OPENAI_API_KEY`, `CODEX_HOME` | Forwarded to the `codex` child. Neither is required: `codex` authenticates from its own profile directory when no key is declared. |
 
 The Citation MCP server (`mcp/citation`) has its own variables. They reach that
@@ -194,8 +194,6 @@ enforcement layer every driver shares.
 | `gc_codex_review` | Codex production-quality review with cycle caps |
 | `gc_codex_review_cycle` | Async-only, idempotent pre-push review cycle |
 | `gc_codex_verify_finding` | Verify a specific finding is resolved |
-| `gc_test_quality_review` | Test-quality review of the changed tests |
-| `gc_test_quality_review_cycle` | Async-only, idempotent pre-push test-quality cycle |
 
 **Maintainer PR review lane (`tools/pr-review.js`)**
 

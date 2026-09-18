@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { parseGroundControlYaml } from "./ground-control-config.js";
 import { detectGithubRepo } from "./grndctl-detect.js";
 import { MCP_SERVER_ENTRY } from "./grndctl-init.js";
-import { REVIEW_ENGINE_AUTH_VARS, execFile } from "./runtime-primitives.js";
+import { execFile } from "./runtime-primitives.js";
 import { parseEnvFileLine } from "./server-env.js";
 
 async function commandWorks(command, args) {
@@ -64,12 +64,6 @@ async function envChecks(cwd, sonarConfigured) {
   );
   return [
     check(".env ignored by git", await commandWorks("git", ["-C", cwd, "check-ignore", "-q", ".env"]), "add .env to .gitignore; it holds credentials"),
-    check(
-      "review-engine auth declared in .env",
-      REVIEW_ENGINE_AUTH_VARS.some((name) => names.has(name)),
-      `set one of ${REVIEW_ENGINE_AUTH_VARS.join(", ")}; the test-quality review refuses without one`,
-      { warn: true },
-    ),
     ...(sonarConfigured
       ? [check("SONAR_TOKEN in .env", names.has("SONAR_TOKEN"), "the SonarCloud gate cannot read findings without it", { warn: true })]
       : []),
@@ -84,7 +78,6 @@ export async function runDoctorChecks({ cwd = process.cwd(), version, works = co
     check("node 22 or newer", major >= 22, `node ${process.versions.node} is too old; install node 22+`),
     check("gh authenticated", await works("gh", ["api", "user", "--jq", ".login"]), "run gh auth login"),
     check("codex on PATH", await works("codex", ["--version"]), "install the Codex CLI; code review needs it", { warn: true }),
-    check("claude on PATH", await works("claude", ["--version"]), "install Claude Code; test-quality review needs it", { warn: true }),
     check("inside a git repository", await works("git", ["-C", cwd, "rev-parse", "--show-toplevel"]), "run grndctl doctor from a repository"),
     ...(await yamlChecks(cwd, config)),
     mcpCheck(cwd),

@@ -188,9 +188,9 @@ describe("buildSuggestedGroundControlYaml covers all parser-accepted keys", () =
     assert.ok(yaml.includes("pr_title"), "template must mention pr_title");
   });
 
-  it("covers workflow.test_quality_review in the suggested template", () => {
+  it("does not emit the removed workflow.test_quality_review key", () => {
     const yaml = buildSuggestedGroundControlYaml();
-    assert.ok(yaml.includes("test_quality_review"), "template must mention test_quality_review");
+    assert.ok(!yaml.includes("test_quality_review"), "template must omit test_quality_review");
   });
 
   it("covers architecture.vocabulary sub-schema keys in the suggested template", () => {

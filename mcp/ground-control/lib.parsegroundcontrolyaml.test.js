@@ -42,7 +42,6 @@ describe("parseGroundControlYaml", () => {
       precommit_command: "pre-commit run --hook-stage pre-commit",
       base_branch: null,
       codex_review: { pre_push_cap: null, non_verdict_retry_limit: null },
-      test_quality_review: { pre_push_cap: null, non_verdict_retry_limit: null },
       pr_title: null,
       integration_manager: { approval_label: null, ordering: null, max_queue_size: null, merge_strategy: null },
       dev_start_gate: {
@@ -346,25 +345,7 @@ describe("parseGroundControlYaml", () => {
   });
 
 
-  // ---------------------------------------------------------------------
-  // workflow.test_quality_review.pre_push_cap (issue #906)
-  // ---------------------------------------------------------------------
-
-  it("accepts a workflow.test_quality_review.pre_push_cap integer", () => {
-    const result = parseYamlLines([
-      "schema_version: 1",
-      "project: x",
-      "workflow:",
-      "  test_quality_review:",
-      "    pre_push_cap: 2",
-      "",
-    ]);
-    assert.equal(result.ok, true, JSON.stringify(result.errors));
-    assert.deepEqual(result.value.workflow.test_quality_review, { pre_push_cap: 2, non_verdict_retry_limit: null });
-  });
-
-
-  it("rejects workflow.test_quality_review with unknown keys", () => {
+  it("rejects the removed workflow.test_quality_review key", () => {
     const result = parseYamlLines([
       "schema_version: 1",
       "project: x",
@@ -376,7 +357,7 @@ describe("parseGroundControlYaml", () => {
     ]);
     assert.equal(result.ok, false);
     assert.ok(
-      result.errors.some((e) => e.includes("workflow.test_quality_review") && e.includes("unknown key")),
+      result.errors.some((e) => e.includes("workflow has unknown key 'test_quality_review'")),
     );
   });
 

@@ -8,6 +8,7 @@ a contract is stated once and read in one place.
 |----------|-----------|
 | How do I install Ground Control and set up a repository? | [`docs/public/`](public/index.md) (published on Read the Docs): `npm install -g grndctl`, `grndctl init`, `grndctl doctor` |
 | How do I run the gated `/implement` loop, and what does each phase gate? | [`docs/DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) |
+| Does the Codex review need a clean terminal verdict, and where did the test-quality stage go? | [ADR-099](../architecture/adrs/099-bounded-codex-review-and-test-quality-retirement.md) and [`skills/implement/steps/_review-loop-rules.md`](../skills/implement/steps/_review-loop-rules.md) - the cap bounds review iterations; declining another cycle advances after known findings are resolved, and the separate test-quality stage and tools are removed |
 | What runs, and where is the trust boundary? | [`docs/architecture/ARCHITECTURE.md`](architecture/ARCHITECTURE.md) |
 | Which gates survived the MCP-only re-platform, where are they enforced, and which shadow checks were retired? | [`docs/architecture/SURVIVING_GATES.md`](architecture/SURVIVING_GATES.md) |
 | Which MCP tools exist, and how is the server set up? | [`mcp/ground-control/README.md`](../mcp/ground-control/README.md) |
@@ -37,7 +38,8 @@ database, or graph.
 The GitHub issue thread is the durable workflow record ([ADR-029](../architecture/adrs/029-issue-thread-gate-model.md)).
 The plan, review findings, decisions on those findings, execution obligations, and the
 final report are posted there, so the record survives the pull request being merged or
-closed. The user's only synchronous touchpoint is merging the pull request.
+closed. The user's only delivery-approval touchpoint is merging the pull request; a
+bounded review may still ask whether to spend an optional over-cap cycle.
 
 Skill lanes are agent-neutral and run from Claude Code, Codex, or Cursor CLI
 ([ADR-027](../architecture/adrs/027-agent-neutral-implement-workflow-packaging.md)):
