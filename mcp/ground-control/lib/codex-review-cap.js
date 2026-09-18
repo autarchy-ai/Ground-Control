@@ -11,11 +11,10 @@
 import { CODEX_REVIEW_PREPUSH_HARD_CAP, deriveIssueNumberFromBranch, evaluateCodexReviewPrePushCycleCap } from "./api-requirements.js";
 import { readPriorCodexReviewCycleCount } from "./close-issue.js";
 import { readPriorCodexReviewPrePushCycleCount } from "./codex-verify-cap.js";
-import { resolveReviewerPrePushCap } from "./codex-workflow-5.js";
+import { ReviewerCapConfigError, resolveReviewerPrePushCap } from "./codex-workflow-5.js";
 import { getOwnerRepo, getPullRequestClosingIssues } from "./grc-legacy-compat-3.js";
 import { getCurrentBranchName, readCompletedPhases } from "./grc-legacy-compat-4.js";
 import { evaluateCodexReviewCycleCap } from "./repo-context-2.js";
-import { ReviewerCapConfigError } from "./test-quality-runner.js";
 
 /**
  * Pre-push cycle cap (#796 / ADR-029), keyed on the issue alone.
@@ -90,7 +89,7 @@ export async function enforcePrePushReviewCap({
     // Resolve the per-reviewer cap from `.ground-control.yaml` (issue #906).
     // Translate ReviewerCapConfigError into the stable JSON envelope shape
     // the parent /implement agent reads as a directive, mirroring the
-    // test-quality runner's handling (codex cycle-2 F4).
+    // Keep config failures distinct from reviewer execution failures.
     let effectivePrePushCap;
     try {
       effectivePrePushCap = await resolveReviewerPrePushCap(

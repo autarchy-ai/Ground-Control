@@ -17,9 +17,8 @@ the config parser, the review-loop wiring, ADR amendments, or workflow prose.
   `gc:review-auto-disposition` marker family should be the record of the
   disposition, not local files, telemetry JSONL, git notes, Temporal state, or a
   database row.
-- Treat Codex and test-quality as two reviewers on the same seam. The logic
-  should be parameterized by `reviewer` and effective cap source, not copied
-  into separate reviewer-specific policies.
+- Treat Codex as the sole review-cap disposition target. ADR-099 removed the
+  former second reviewer and its compatibility surface.
 - Sequence the disposition after last-in-cap findings have been fixed,
   self-verified, and re-staged. The current cycle wrapper returns before those
   fixes exist, so it cannot truthfully judge "fix churn" at that moment. If the
@@ -36,8 +35,8 @@ the config parser, the review-loop wiring, ADR amendments, or workflow prose.
   the only path beyond the single server-approved auto over-cap cycle.
 - With `workflow.review_disposition.enabled` absent or false, existing review
   loop behavior should remain unchanged: last-in-cap findings still return
-  `fix_findings_then_summarize_and_escalate`, and cap-refused calls still return
-  `post_summary_and_escalate_to_user`.
+  `fix_findings_then_ask_over_cap_or_proceed`, and cap-refused calls still return
+  `ask_over_cap_or_proceed`.
 
 ## Cross-Cutting Concerns to Reuse
 
@@ -171,7 +170,7 @@ the config parser, the review-loop wiring, ADR amendments, or workflow prose.
   local state store, or git-note counter.
 - No change to the configured reviewer cap defaults, the one-human-touchpoint
   model, zero-deferral policy, or Phase E post-merge ordering.
-- No new review provider or replacement for Codex/test-quality reviewers.
+- No new review provider or replacement for Codex.
 
 ## Design Vocabulary That Applies
 

@@ -32,7 +32,6 @@ from tools.policy.checks import (
     run_repo_identity_drift,
     run_no_deferral_disposition_check,
     run_pr_body_check,
-    run_test_quality_decision_record_contract,
     run_version_mirror_consistency_check,
     run_workflow_routing_contract,
     run_implement_execution_contract,
@@ -91,7 +90,7 @@ class AdrGuard2ChecksTest(PolicyChecksFixture):
             "prePushReviews": "not_run",
         })
         self.assertIn(
-            "- [x] Pre-push code review and test-quality review not run for this lane; "
+            "- [x] Pre-push Codex review not run for this lane; "
             "CI and repository policy gates enforced",
             body,
             "renderer did not emit the quickfix review attestation",
@@ -107,7 +106,7 @@ class AdrGuard2ChecksTest(PolicyChecksFixture):
         # The attestation is never optional. A body carrying the policy-command
         # line but neither review attestation must still fail the gate.
         body = self._body_with_uid_section("- `GC-O007`").replace(
-            "- [x] Pre-push code review and test-quality review completed; "
+            "- [x] Pre-push Codex review completed; "
             "all findings fixed or dispositioned\n",
             "",
         )

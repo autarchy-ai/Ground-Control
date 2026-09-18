@@ -23,7 +23,7 @@ describe("evaluateCodexReviewPrePushCycleCap", () => {
   // is the "this is the last cycle" disposition. Repos that want the
   // historical cap-3 behavior set `.ground-control.yaml::workflow.codex_review.pre_push_cap: 3`;
   // those tests are below in the explicit-cap section.
-  it("allows cycle 1 under the cap-1 default with the summarize-and-escalate disposition", () => {
+  it("allows cycle 1 under the cap-1 default with the fix-and-ask disposition", () => {
     const r = evaluateCodexReviewPrePushCycleCap({
       priorCount: 0,
       issueNumber: 796,
@@ -34,8 +34,8 @@ describe("evaluateCodexReviewPrePushCycleCap", () => {
     assert.equal(r.cap, CODEX_REVIEW_PREPUSH_HARD_CAP);
     assert.equal(r.cap, 1);
     // Cycle 1 IS the last cycle under cap 1, so the agent must fix every
-    // finding then summarize + escalate, not run cycle 2.
-    assert.equal(r.next_action, "fix_all_findings_then_summarize_and_escalate");
+    // finding then fix + ask, not run cycle 2.
+    assert.equal(r.next_action, "fix_findings_then_ask_over_cap_or_proceed");
     assert.notEqual(r.override, true);
   });
 
@@ -49,7 +49,7 @@ describe("evaluateCodexReviewPrePushCycleCap", () => {
     assert.equal(r.error, "codex_review_prepush_cap_reached");
     assert.equal(r.prior_cycles, 1);
     assert.equal(r.cap, 1);
-    assert.equal(r.next_action, "post_summary_and_escalate_to_user");
+    assert.equal(r.next_action, "ask_over_cap_or_proceed");
   });
 
   // Explicit cap-3 — historical default (issue #804) and the contract repos
@@ -80,7 +80,7 @@ describe("evaluateCodexReviewPrePushCycleCap", () => {
     assert.equal(r.next_action, "fix_all_findings_and_restage");
   });
 
-  it("allows cycle 3 under explicit cap-3 with the summarize-and-escalate discipline", () => {
+  it("allows cycle 3 under explicit cap-3 with the fix-and-ask discipline", () => {
     const r = evaluateCodexReviewPrePushCycleCap({
       priorCount: 2,
       issueNumber: 796,
@@ -89,7 +89,7 @@ describe("evaluateCodexReviewPrePushCycleCap", () => {
     });
     assert.equal(r.ok, true);
     assert.equal(r.nextCycle, 3);
-    assert.equal(r.next_action, "fix_all_findings_then_summarize_and_escalate");
+    assert.equal(r.next_action, "fix_findings_then_ask_over_cap_or_proceed");
   });
 
   it("refuses cycle 4 under explicit cap-3 with codex_review_prepush_cap_reached", () => {
@@ -105,9 +105,10 @@ describe("evaluateCodexReviewPrePushCycleCap", () => {
     assert.equal(r.cap, 3);
     assert.equal(r.issue_number, 796);
     assert.equal(r.branch, "796-foo");
-    assert.equal(r.next_action, "post_summary_and_escalate_to_user");
+    assert.equal(r.next_action, "ask_over_cap_or_proceed");
     assert.match(r.message, /hard cap reached/);
-    assert.match(r.message, /escalate to the user/);
+    assert.match(r.message, /or proceed to Phase C/);
+    assert.match(r.message, /clean verdict is not required/);
     assert.match(r.message, /override_cap=true/);
   });
 
@@ -153,7 +154,7 @@ describe("evaluateCodexReviewPrePushCycleCap", () => {
     assert.equal(r.override, true);
     assert.equal(r.nextCycle, 4);
     assert.match(r.override_reason, /yes run cycle 4 to verify/);
-    assert.equal(r.next_action, "fix_findings_then_summarize_and_escalate");
+    assert.equal(r.next_action, "fix_findings_then_ask_over_cap_or_proceed");
   });
 
   it("rejects overrideCap=true without an overrideReason (audit requirement)", () => {

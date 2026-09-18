@@ -91,7 +91,7 @@ export function evaluateCodexReviewPrePushCycleCap({
       cap: hardCap,
       override: true,
       override_reason: overrideReason.trim(),
-      next_action: "fix_findings_then_summarize_and_escalate",
+      next_action: "fix_findings_then_ask_over_cap_or_proceed",
     };
   }
 
@@ -101,16 +101,16 @@ export function evaluateCodexReviewPrePushCycleCap({
       error: "codex_review_prepush_cap_reached",
       message:
         `gc_codex_review pre-push hard cap reached (${hardCap} cycles) for issue #${issueNumber} ` +
-        `on branch '${branchName}'. Per GC-O007 / ADR-029, after cycle ${hardCap} you must (a) post a ` +
-        `summary of findings + fixes to the issue thread, then (b) escalate to the user and ask whether ` +
-        `to run cycle ${hardCap + 1} or push as-is. Do not address findings by silently re-invoking ` +
-        `codex. If the user authorizes another cycle, retry with override_cap=true and ` +
-        `override_reason="<their authorization>".`,
+        `on branch '${branchName}'. Per GC-O007 / ADR-099, summarize the completed-cycle findings, ` +
+        `fixes, and verification, then ask whether to run cycle ${hardCap + 1} or proceed to Phase C. ` +
+        `A clean verdict is not required to proceed. Do not silently re-invoke codex. If the user ` +
+        `authorizes another cycle, retry with override_cap=true and ` +
+        `override_reason="<their authorization>"; otherwise continue the workflow.`,
       issue_number: issueNumber,
       branch: branchName,
       prior_cycles: priorCount,
       cap: hardCap,
-      next_action: "post_summary_and_escalate_to_user",
+      next_action: "ask_over_cap_or_proceed",
     };
   }
 
@@ -121,7 +121,7 @@ export function evaluateCodexReviewPrePushCycleCap({
     cap: hardCap,
     next_action:
       nextCycle === hardCap
-        ? "fix_all_findings_then_summarize_and_escalate"
+        ? "fix_findings_then_ask_over_cap_or_proceed"
         : "fix_all_findings_and_restage",
   };
 }

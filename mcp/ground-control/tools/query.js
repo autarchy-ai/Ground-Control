@@ -9,7 +9,6 @@ import {
   GITHUB_REPO_RE,
   KNOWLEDGE_SOURCE_TYPES,
   REQUIREMENT_SCOPE_OPERATIONS,
-  TEST_QUALITY_REVIEW_HARD_CAP,
   buildCodexReviewOverrideCapDescription,
   buildCodexReviewOverrideReasonDescription,
   buildCodexReviewToolDescription,
@@ -20,7 +19,6 @@ import {
   runCodexReview,
   runPostImplementationPlan,
   runUpdateIssueRequirements,
-  runTestQualityReview,
   startAsyncJob,
   writeKnowledgeInbox,
 } from "../lib.js";
@@ -252,63 +250,4 @@ export function registerQuery(server, ctx) {
     },
   );
 
-  server.tool(
-    "gc_test_quality_review",
-    `Run the canonical /implement Step 6.6 pre-push test-quality review against the staged + unstaged + ` +
-      `untracked diff vs the base branch. (Issue #906 moved this from the former post-PR Step 13 to ` +
-      `pre-push Step 6.6 so the PR opens with both AI-assisted reviewers clean.) Shells out to the ` +
-      `\`claude\` CLI (Sonnet 5 by default) with the review-tests rubric and the ` +
-      `changed test-file paths, parses the structured JSON output (validated by --json-schema), posts ` +
-      `the durable findings record + cycle marker to the issue thread, and returns a structured ` +
-      `envelope: \`{ ok, finding_count, findings, cycle, cap, next_action, findings_comment_url, ... }\`. ` +
-      `The \`next_action\` field is "fix_findings_and_reinvoke" / "post_clean_decision_record_and_advance_to_phase_c" / ` +
-      `"fix_findings_then_summarize_and_escalate" / "post_summary_and_escalate_to_user" — the parent ` +
-      `/implement workflow reads it as a directive. "fix_findings_then_summarize_and_escalate" is the ` +
-      `last-in-cap action: fix the findings, post the decision record, then summarize and escalate to the ` +
-      `user; it is NOT a normal re-invoke path. Replaces the prior Skill("review-tests") boundary, ` +
-      `which produced prose findings that the autoregressive parent agent kept echoing back to the user ` +
-      `instead of fixing in-turn (issue #884 v1 regression). Default cycle cap: ${TEST_QUALITY_REVIEW_HARD_CAP} per ` +
-      `issue (issue #906; configurable per repo via \`workflow.test_quality_review.pre_push_cap\` in ` +
-      `.ground-control.yaml; bounds [1, 10]); cycle cap+1 requires override_cap=true + override_reason. ` +
-      `Authentication: the review engine's auth is declared in the launch directory's .env — one of ` +
-      `CLAUDE_CODE_USE_VERTEX, CLAUDE_CODE_USE_BEDROCK, CLAUDE_CONFIG_DIR, ANTHROPIC_API_KEY, or ` +
-      `ANTHROPIC_AUTH_TOKEN — and is never inherited from the launcher or read from a user-level file ` +
-      `(issue #1562). With none declared this returns test_quality_review_auth_missing before spawning ` +
-      `claude, which is an operator provisioning fault rather than a station failure. ANTHROPIC_API_KEY ` +
-      `is stripped from the subprocess env only when another auth path is declared, so it can still be ` +
-      `the sole auth. See docs/DEVELOPMENT_WORKFLOW.md "Test-quality review engine".`,
-    {
-      repo_path: z.string(),
-      base_branch: z.string().optional(),
-      issue_number: z.number().int().positive().optional(),
-      pr_number: z.number().int().positive().optional(),
-      override_cap: z.boolean().optional(),
-      override_reason: z.string().optional(),
-      model: z.string().optional(),
-      async: z.boolean().optional().describe(ASYNC_REVIEW_PARAM_DESC),
-    },
-    async ({ repo_path, base_branch, issue_number, pr_number, override_cap, override_reason, model, async: asyncMode }) => {
-      try {
-        const params = {
-          repoPath: repo_path,
-          // Pass null when not supplied so the runner resolves from
-          // .ground-control.yaml; the runner falls back to "dev" only if
-          // YAML doesn't declare workflow.base_branch.
-          baseBranch: base_branch ?? null,
-          issueNumber: issue_number != null ? issue_number : null,
-          prNumber: pr_number != null ? pr_number : null,
-          overrideCap: Boolean(override_cap),
-          overrideReason: override_reason ?? null,
-          ...(model ? { model } : {}),
-        };
-        if (asyncMode) {
-          return ok(JSON.stringify(startAsyncJob(
-            "test_quality_review",
-            (signal) => runTestQualityReview({ ...params, signal }),
-          ), null, 2));
-        }
-        return ok(JSON.stringify(await runTestQualityReview(params), null, 2));
-      } catch (e) { return err(e); }
-    },
-  );
 }

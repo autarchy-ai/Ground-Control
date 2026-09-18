@@ -8,6 +8,13 @@ Accepted
 
 2026-05-03
 
+> **Amended by ADR-099 (2026-09-17):** The dedicated test-quality reviewer,
+> Step 6.6, its MCP tools, configuration, markers, and policy contract are
+> removed. The Codex cap bounds additional review iterations; after all known
+> findings are resolved, declining an extra cycle advances the workflow without
+> requiring a clean terminal verdict. Historical amendments below describe the
+> former mechanism and are not current operating guidance.
+
 > **Amended by issue #1462 (2026-07-28):** `gc_assert_traceability_reconciled` and the Step 17 composite `gc_assert_completion` now infer `project` from `repo_path`'s `.ground-control.yaml` when the parameter is omitted (explicit override still wins), and propagate backend `project_required` with its structured `detail` through the completion envelope instead of flattening it into a lookup-failure message. The issue-thread gate model is unchanged: reconciliation still posts the `traceability_reconciled` marker only after successful lookups, failures remain side-effect free, and Phase E still merge-gates the reconciled final report. See `skills/implement/steps/step-17-completion.md` for the Step 17 contract.
 
 > **Style sync for issue #751 (2026-06-14):** Repository-wide Vale cleanup normalized punctuation in workflow prose. This ADR's issue-thread gate model stays the same.

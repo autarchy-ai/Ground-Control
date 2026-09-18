@@ -39,9 +39,6 @@ from .execution_contract import (
 from .repo_identity import (
     run_repo_identity_drift,
 )
-from .decision_records import (
-    run_test_quality_decision_record_contract,
-)
 from .workflow_routing import (
     parse_args,
     render_and_exit,
@@ -85,7 +82,6 @@ def main(argv: list[str] | None = None) -> int:
     violations.extend(run_repo_identity_drift())
     violations.extend(run_workflow_routing_contract())
     violations.extend(run_implement_execution_contract())
-    violations.extend(run_test_quality_decision_record_contract())
     violations.extend(run_scan_floor_contract())
     violations.extend(run_doc_coverage_anchor_contract())
     violations.extend(run_sonar_strictness_contract())

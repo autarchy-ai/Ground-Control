@@ -92,8 +92,6 @@ function suggestedYamlWorkflowSection(project) {
     "#   # Per-reviewer pre-push caps (issue #906). Omit to use MCP-tool defaults.",
     "#   codex_review:",
     "#     pre_push_cap: 1",
-    "#   test_quality_review:",
-    "#     pre_push_cap: 1",
     "#   # PR title validation (issue #896). Omit to use /implement skill defaults.",
     "#   pr_title:",
     "#     types: [security, added, changed, deprecated, removed, fixed,",
@@ -209,7 +207,7 @@ export function buildSuggestedGroundControlYaml(project = "your-project-id") {
     ...suggestedYamlArchitectureSection(),
   ].join("\n");
 }
-// The auth modes the review engine (`claude`) accepts. Every one is inventoried
+// The auth modes the optional cap-disposition judge (`claude`) accepts. Every one is inventoried
 // in lib/server-env.js, so each arrives from the launch directory's `.env` and
 // nowhere else (issue #1562).
 export const REVIEW_ENGINE_AUTH_VARS = Object.freeze([
@@ -223,7 +221,7 @@ export const REVIEW_ENGINE_AUTH_VARS = Object.freeze([
 export const REVIEW_ENGINE_AUTH_MISSING = "review_engine_auth_missing";
 
 /**
- * Refuse before spawning `claude` when no auth mode is declared.
+ * Refuse before spawning the optional disposition judge when no auth mode is declared.
  *
  * The engine used to load a user-level `review-env` file in this case, and
  * without one it fell through to whatever default profile the host happened to
@@ -235,7 +233,7 @@ export const REVIEW_ENGINE_AUTH_MISSING = "review_engine_auth_missing";
 export function assertReviewEngineAuth(env = process.env) {
   if (REVIEW_ENGINE_AUTH_VARS.some((name) => env[name])) return;
   const error = new Error(
-    "No review-engine auth is declared. Set one of "
+    "No disposition-judge auth is declared. Set one of "
       + `${REVIEW_ENGINE_AUTH_VARS.join(", ")} in the launch directory's .env, `
       + "then restart the MCP server; the file is read at startup.",
   );
@@ -244,7 +242,7 @@ export function assertReviewEngineAuth(env = process.env) {
 }
 
 /**
- * Build the environment for the review engine (`claude`), which runs as a
+ * Build the environment for the optional cap-disposition judge, which runs as a
  * separate process from the agent.
  *
  * OS execution state passes through — the child still needs PATH and HOME — but

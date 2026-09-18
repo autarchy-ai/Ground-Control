@@ -127,7 +127,7 @@ describe("MCP tool description parity (issue #1169)", { timeout: 30000 }, () => 
   });
 
   it("publishes async-only idempotent review-cycle schemas", () => {
-    for (const name of ["gc_codex_review_cycle", "gc_test_quality_review_cycle"]) {
+    for (const name of ["gc_codex_review_cycle"]) {
       const properties = toolMap[name]?.inputSchema?.properties;
       const required = toolMap[name]?.inputSchema?.required ?? [];
       assert.equal(properties?.async?.type, "boolean");
@@ -139,5 +139,7 @@ describe("MCP tool description parity (issue #1169)", { timeout: 30000 }, () => 
       assert.match(descriptionMap[name], /idempotency_key/);
       assert.match(descriptionMap[name], /gc_codex_job/);
     }
+    assert.equal(toolMap.gc_test_quality_review, undefined);
+    assert.equal(toolMap.gc_test_quality_review_cycle, undefined);
   });
 });
