@@ -113,12 +113,13 @@ If Sonar still fails after that round, report the remaining blocker and stop;
 do not enter another repair loop. Unrelated findings are reported without
 expanding this run.
 
-`GitGuardian Security Checks` is user-owned. Report only its GitHub check name,
-status, and check URL, then stop and wait. Never investigate, remediate, dismiss,
-suppress, bypass, or work around a GitGuardian finding; access its dashboard;
-handle suspected secret values; rotate credentials; rewrite history; or change
-code, configuration, and allowlists in response. After the user reports
-resolution, re-read only the GitHub check status.
+`GitGuardian Security Checks` is user-owned. Agents must never investigate,
+remediate, dismiss, suppress, bypass, or work around a GitGuardian finding. In
+all cases, the user owns every GitGuardian investigation and resolution. Report only its
+GitHub check name, status, and check URL, then stop and wait. Never access its
+dashboard; handle suspected secret values; rotate credentials; rewrite history;
+or change code, configuration, and allowlists in response. After the user
+reports resolution, re-read only the GitHub check status.
 
 ### Q7. Finalize after merge
 

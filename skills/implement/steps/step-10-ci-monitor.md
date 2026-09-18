@@ -38,6 +38,21 @@ Sonar polling remains server-side and raw logs remain there. (Issues #934 and
    new commit lands, call `monitor` with a new idempotency key to watch the new
    run.
 
+### GitGuardian findings are user-owned
+
+`GitGuardian Security Checks` is a hosted-app check and is an explicit exception
+to the diagnose-and-fix rule above. Agents must never investigate, remediate,
+dismiss, suppress, bypass, or work around a GitGuardian finding. Do not open the
+GitGuardian dashboard, request or handle suspected secret values, rotate
+credentials, rewrite history, or change code, configuration, and allowlists in
+response to the finding.
+
+Report only the GitHub check name, status, and check URL. State that the user
+owns every GitGuardian investigation and resolution, then stop and wait. Once
+the user reports that the finding is resolved, re-read only the GitHub check
+status and continue when it passes. Never route a GitGuardian result into the
+progressive-remediation loop.
+
 ## Return contract
 
 ```json
