@@ -190,6 +190,122 @@ export async function runGetReviewResult(input, overrides = {}) {
   };
 }
 
+async function prepareVerdictPublication(current, input, repository, overrides) {
+  const checked = validateSanitizedReviewPublication(current, input.sanitized);
+  if (!checked.ok) return { result: checked };
+  if (current.publication_status === "published") {
+    if (current.publication_receipt?.sanitized_digest !== checked.sanitized_digest) {
+      return { result: fail("review_publication_retry_conflict", "This review handle was already published with different sanitized content.") };
+    }
+    return { result: publishedEnvelope(current, true) };
+  }
+  if (current.publication_status !== "unpublished") {
+    return { result: fail("review_result_not_publishable", `Review result status is ${current.publication_status}.`) };
+  }
+  const captureRevision = overrides.captureRevision ?? captureReviewRevision;
+  let observed;
+  try {
+    observed = await captureRevision({
+      repoRoot: repository.repoRoot,
+      baseBranch: current.base_branch,
+      uncommitted: true,
+    });
+  } catch (error) {
+    if (error?.code !== "review_revision_changed_during_capture") throw error;
+    return { result: fail(error.code, "The review input moved while its publication revision was being captured.", "retry_after_the_tree_is_stable") };
+  }
+  if (observed.revision.digest !== current.revision.digest) {
+    return { result: fail("review_revision_stale", "The current review input no longer matches the retained reviewed revision.", "rerun_review_on_current_revision") };
+  }
+  const proof = provenance(current, checked.sanitized_digest);
+  const body = buildSanitizedReviewFindingsRecord(current, checked.value, proof);
+  const sensitive = detectSensitiveBodyContent(body);
+  if (sensitive) return { result: fail("review_publication_body_rejected", sensitive, "redact_and_retry_review_publication") };
+  if (Buffer.byteLength(body, "utf8") > GITHUB_ISSUE_COMMENT_BODY_MAX) {
+    return { result: fail("review_publication_body_too_large", "The sanitized publication exceeds GitHub's issue-comment body cap.") };
+  }
+  const decisionPreflight = prepareDecisionRecordBody({
+    issueNumber: current.issue_number,
+    cycle: current.expected_cycle,
+    reviewer: "codex",
+    verdict: checked.value.verdict,
+    notes: checked.value.notes,
+    architectural_read: checked.value.architectural_read,
+    findings: checked.value.findings,
+    provenance: proof,
+  });
+  if (!decisionPreflight.ok) return { result: decisionPreflight };
+  return { checked, proof, body };
+}
+
+async function readPublicationProgress(current, repository, proof, overrides) {
+  const readProgress = overrides.readProgress ?? readTrustedReviewPublicationProgress;
+  const progress = await readProgress({
+    repoRoot: repository.repoRoot,
+    owner: repository.owner,
+    name: repository.name,
+    issueNumber: current.issue_number,
+    cycle: current.expected_cycle,
+    proof,
+    stationObservation: current.terminal?.station_observation ?? null,
+  });
+  if (progress?.ok === false) return { result: progress };
+  const readPrior = overrides.readPriorCycleCount ?? readPriorCodexReviewPrePushCycleCount;
+  const prior = await readPrior(repository.repoRoot, repository.owner, repository.name, current.issue_number);
+  const hasPublishedCycle = progress.cycle != null && progress.cycle !== false;
+  const requiredPrior = hasPublishedCycle ? current.expected_cycle : current.expected_cycle - 1;
+  if (prior !== requiredPrior) {
+    return { result: fail("review_publication_cycle_stale", "Another published cycle changed the expected cycle slot.", "rerun_review_for_the_next_cycle") };
+  }
+  return { progress };
+}
+
+async function publishVerdictStages({ current, repository, identity, checked, proof, body, overrides }) {
+  const progressRead = await readPublicationProgress(current, repository, proof, overrides);
+  if (progressRead.result) return progressRead.result;
+  const { progress } = progressRead;
+  const publishFindings = overrides.publishFindings ?? defaultPublishFindings;
+  const publishReobservation = overrides.publishReobservation ?? defaultPublishReobservation;
+  const publishCycle = overrides.publishCycle ?? defaultPublishCycle;
+  const publishDecision = overrides.publishDecision ?? defaultPublishDecision;
+  const findingsRecord = progress.findings ||
+    await publishFindings({ repository, record: current, body, proof });
+  const reobservationRecord = current.terminal?.station_observation == null
+    ? null
+    : progress.reobservation || await publishReobservation({
+      repository, record: current, findingsRecord, proof,
+    });
+  if (reobservationRecord?.ok === false) return reobservationRecord;
+  const cycleRecord = progress.cycle ||
+    await publishCycle({ repository, record: current, proof });
+  const decisionRecord = progress.decision ||
+    await publishDecision({
+      repository, record: current, sanitized: checked.value, findings: checked.value.findings,
+      proof, workspaceAuthorizationResolver: overrides.workspaceAuthorizationResolver,
+    });
+  if (decisionRecord?.ok === false) return decisionRecord;
+  const receipt = {
+    ...proof,
+    cycle: current.expected_cycle,
+    findings_record_url: findingsRecord?.url ?? null,
+    findings_record_id: findingsRecord?.id ?? null,
+    reobservation_record_url: reobservationRecord?.url ?? null,
+    reobservation_record_id: reobservationRecord?.id ?? null,
+    cycle_record_url: cycleRecord?.url ?? null,
+    cycle_record_id: cycleRecord?.id ?? null,
+    decision_record_url: decisionRecord?.comment_url ?? decisionRecord?.url ?? null,
+    decision_record_id: decisionRecord?.comment_id ?? decisionRecord?.id ?? null,
+  };
+  const published = {
+    ...current,
+    publication_status: "published",
+    publication_receipt: receipt,
+    updated_at: new Date().toISOString(),
+  };
+  (overrides.writeResult ?? writeReviewResult)(identity.gitDir, published);
+  return publishedEnvelope(published);
+}
+
 export async function runPublishReviewResult(input, overrides = {}) {
   const resolveRepository = overrides.resolveRepository
     ?? ((repoPath) => resolveAuthorizedIssueRepository(repoPath, overrides.workspaceAuthorizationResolver));
@@ -226,108 +342,9 @@ export async function runPublishReviewResult(input, overrides = {}) {
     if (input.publicationKind === "non_verdict") {
       return fail("review_publication_wrong_kind", "A completed verdict requires sanitized review publication.");
     }
-    const checked = validateSanitizedReviewPublication(current, input.sanitized);
-    if (!checked.ok) return checked;
-    if (current.publication_status === "published") {
-      if (current.publication_receipt?.sanitized_digest !== checked.sanitized_digest) {
-        return fail("review_publication_retry_conflict", "This review handle was already published with different sanitized content.");
-      }
-      return publishedEnvelope(current, true);
-    }
-    if (current.publication_status !== "unpublished") {
-      return fail("review_result_not_publishable", `Review result status is ${current.publication_status}.`);
-    }
-    const captureRevision = overrides.captureRevision ?? captureReviewRevision;
-    let observed;
-    try {
-      observed = await captureRevision({
-        repoRoot: repository.repoRoot,
-        baseBranch: current.base_branch,
-        uncommitted: true,
-      });
-    } catch (error) {
-      if (error?.code !== "review_revision_changed_during_capture") throw error;
-      return fail(error.code, "The review input moved while its publication revision was being captured.", "retry_after_the_tree_is_stable");
-    }
-    if (observed.revision.digest !== current.revision.digest) {
-      return fail("review_revision_stale", "The current review input no longer matches the retained reviewed revision.", "rerun_review_on_current_revision");
-    }
-    const proof = provenance(current, checked.sanitized_digest);
-    const body = buildSanitizedReviewFindingsRecord(current, checked.value, proof);
-    const sensitive = detectSensitiveBodyContent(body);
-    if (sensitive) return fail("review_publication_body_rejected", sensitive, "redact_and_retry_review_publication");
-    if (Buffer.byteLength(body, "utf8") > GITHUB_ISSUE_COMMENT_BODY_MAX) {
-      return fail("review_publication_body_too_large", "The sanitized publication exceeds GitHub's issue-comment body cap.");
-    }
-    const decisionPreflight = prepareDecisionRecordBody({
-      issueNumber: current.issue_number,
-      cycle: current.expected_cycle,
-      reviewer: "codex",
-      verdict: checked.value.verdict,
-      notes: checked.value.notes,
-      architectural_read: checked.value.architectural_read,
-      findings: checked.value.findings,
-      provenance: proof,
-    });
-    if (!decisionPreflight.ok) return decisionPreflight;
-    const readProgress = overrides.readProgress ?? readTrustedReviewPublicationProgress;
-    const progress = await readProgress({
-      repoRoot: repository.repoRoot,
-      owner: repository.owner,
-      name: repository.name,
-      issueNumber: current.issue_number,
-      cycle: current.expected_cycle,
-      proof,
-      stationObservation: current.terminal?.station_observation ?? null,
-    });
-    if (progress?.ok === false) return progress;
-    const readPrior = overrides.readPriorCycleCount ?? readPriorCodexReviewPrePushCycleCount;
-    const prior = await readPrior(repository.repoRoot, repository.owner, repository.name, current.issue_number);
-    const hasPublishedCycle = progress.cycle != null && progress.cycle !== false;
-    const requiredPrior = hasPublishedCycle ? current.expected_cycle : current.expected_cycle - 1;
-    if (prior !== requiredPrior) {
-      return fail("review_publication_cycle_stale", "Another published cycle changed the expected cycle slot.", "rerun_review_for_the_next_cycle");
-    }
-    const publishFindings = overrides.publishFindings ?? defaultPublishFindings;
-    const publishReobservation = overrides.publishReobservation ?? defaultPublishReobservation;
-    const publishCycle = overrides.publishCycle ?? defaultPublishCycle;
-    const publishDecision = overrides.publishDecision ?? defaultPublishDecision;
-    const findingsRecord = progress.findings ||
-      await publishFindings({ repository, record: current, body, proof });
-    const reobservationRecord = current.terminal?.station_observation == null
-      ? null
-      : progress.reobservation || await publishReobservation({
-        repository, record: current, findingsRecord, proof,
-      });
-    if (reobservationRecord?.ok === false) return reobservationRecord;
-    const cycleRecord = progress.cycle ||
-      await publishCycle({ repository, record: current, proof });
-    const decisionRecord = progress.decision ||
-      await publishDecision({
-        repository, record: current, sanitized: checked.value, findings: checked.value.findings,
-        proof, workspaceAuthorizationResolver: overrides.workspaceAuthorizationResolver,
-      });
-    if (decisionRecord?.ok === false) return decisionRecord;
-    const receipt = {
-      ...proof,
-      cycle: current.expected_cycle,
-      findings_record_url: findingsRecord?.url ?? null,
-      findings_record_id: findingsRecord?.id ?? null,
-      reobservation_record_url: reobservationRecord?.url ?? null,
-      reobservation_record_id: reobservationRecord?.id ?? null,
-      cycle_record_url: cycleRecord?.url ?? null,
-      cycle_record_id: cycleRecord?.id ?? null,
-      decision_record_url: decisionRecord?.comment_url ?? decisionRecord?.url ?? null,
-      decision_record_id: decisionRecord?.comment_id ?? decisionRecord?.id ?? null,
-    };
-    const published = {
-      ...current,
-      publication_status: "published",
-      publication_receipt: receipt,
-      updated_at: new Date().toISOString(),
-    };
-    (overrides.writeResult ?? writeReviewResult)(identity.gitDir, published);
-    return publishedEnvelope(published);
+    const prepared = await prepareVerdictPublication(current, input, repository, overrides);
+    if (prepared.result) return prepared.result;
+    return await publishVerdictStages({ current, repository, identity, ...prepared, overrides });
   } finally {
     if (release) await release();
   }

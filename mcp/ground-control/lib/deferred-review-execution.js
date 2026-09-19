@@ -53,9 +53,9 @@ function normalizedLocalFindings(core, security) {
 }
 
 function retainedVerdict(core, security) {
-  const verdicts = [core?.envelope?.verdict, security?.envelope?.verdict];
-  if (verdicts.includes("don't-ship")) return "don't-ship";
-  if (verdicts.includes("ship-with-fixes")) return "ship-with-fixes";
+  const verdicts = new Set([core?.envelope?.verdict, security?.envelope?.verdict]);
+  if (verdicts.has("don't-ship")) return "don't-ship";
+  if (verdicts.has("ship-with-fixes")) return "ship-with-fixes";
   return "ship";
 }
 
@@ -67,6 +67,9 @@ function retainedNotes(core, security) {
 }
 
 function inspection(record, terminal) {
+  let nextAction = terminal?.next_action ?? "repair_and_rerun_review";
+  if (record.publication_status === "unpublished") nextAction = "inspect_sanitize_and_publish_review";
+  if (record.publication_status === "unpublished_failure") nextAction = "publish_non_verdict_failure";
   return {
     ok: record.publication_status === "unpublished",
     ...(record.publication_status === "stale"
@@ -102,11 +105,7 @@ function inspection(record, terminal) {
     cycle: null,
     expected_cycle: record.expected_cycle,
     cap: record.cap,
-    next_action: record.publication_status === "unpublished"
-      ? "inspect_sanitize_and_publish_review"
-      : record.publication_status === "unpublished_failure"
-        ? "publish_non_verdict_failure"
-        : terminal?.next_action ?? "repair_and_rerun_review",
+    next_action: nextAction,
   };
 }
 
@@ -127,7 +126,9 @@ export async function retainDeferredCodexReview({
   const captured = await captureReviewRevision({ repoRoot, baseBranch, uncommitted }, overrides);
   const revisionChanged = captured.revision.digest !== initialRevision.digest;
   const publishable = terminal?.ok === true && reviewCoverage?.complete === true && !revisionChanged;
-  const publicationStatus = revisionChanged ? "stale" : publishable ? "unpublished" : "not_publishable";
+  let publicationStatus = "not_publishable";
+  if (revisionChanged) publicationStatus = "stale";
+  else if (publishable) publicationStatus = "unpublished";
   const findings = normalizedLocalFindings(core, security);
   const record = createReviewResult({
     repositoryId,

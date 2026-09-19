@@ -87,6 +87,8 @@ function originalReviewPayload(record) {
 export function createReviewResult(input, { now = () => new Date().toISOString(), random = randomBytes } = {}) {
   const timestamp = now();
   const findings = (input.findings ?? []).map(normalizedFinding);
+  let verdict = input.verdict ?? (findings.length === 0 ? "ship" : "ship-with-fixes");
+  if (input.kind === "non_verdict") verdict = null;
   const stable = {
     kind: input.kind ?? "verdict",
     repository_id: input.repositoryId,
@@ -99,8 +101,7 @@ export function createReviewResult(input, { now = () => new Date().toISOString()
     revision: input.revision,
     coverage: input.coverage,
     findings,
-    verdict: input.kind === "non_verdict" ? null
-      : input.verdict ?? (findings.length === 0 ? "ship" : "ship-with-fixes"),
+    verdict,
     notes: input.notes ?? [],
     architectural_read: input.architecturalRead ?? null,
     terminal: input.terminal,
@@ -150,15 +151,7 @@ function validateFinding(finding) {
   return true;
 }
 
-export function validateReviewResult(record) {
-  if (record == null || typeof record !== "object" || Array.isArray(record)) {
-    return { ok: false, error: "review_result_shape_invalid" };
-  }
-  if (record.schema !== REVIEW_RESULT_SCHEMA) return { ok: false, error: "review_result_schema_unknown" };
-  if (Object.keys(record).some((key) => !REVIEW_RESULT_KEYS.has(key))) {
-    return { ok: false, error: "review_result_unknown_field" };
-  }
-  if (!REVIEW_HANDLE_RE.test(String(record.review_handle))) return { ok: false, error: "review_result_handle_invalid" };
+function validateReviewResultIdentity(record) {
   const scalarShape = validBoundedString(record.repository_id, 300)
     && Number.isInteger(record.issue_number) && record.issue_number > 0
     && record.reviewer === "codex"
@@ -171,58 +164,88 @@ export function validateReviewResult(record) {
       "unpublished_failure", "published_failure"].includes(record.publication_status)
     && validBoundedString(record.created_at, 100)
     && validBoundedString(record.updated_at, 100);
-  if (!scalarShape || !validateRevision(record.revision)) return { ok: false, error: "review_result_shape_invalid" };
+  if (!scalarShape || !validateRevision(record.revision)) return "review_result_shape_invalid";
   if (digestJson(originalReviewPayload(record)) !== record.original_digest) {
-    return { ok: false, error: "review_result_digest_mismatch" };
+    return "review_result_digest_mismatch";
   }
   if (!Array.isArray(record.findings) || record.findings.length > 500 || !record.findings.every(validateFinding)) {
-    return { ok: false, error: "review_result_findings_invalid" };
+    return "review_result_findings_invalid";
   }
+  if (new Set(record.findings.map((finding) => finding.id)).size !== record.findings.length) {
+    return "review_result_finding_ids_duplicate";
+  }
+  return null;
+}
+
+function validFailureCauses(failureCauses) {
+  if (failureCauses === undefined) return true;
+  return Array.isArray(failureCauses)
+    && failureCauses.length >= 1 && failureCauses.length <= REVIEW_FAILURE_CAUSES.length
+    && new Set(failureCauses).size === failureCauses.length
+    && failureCauses.every((cause) => REVIEW_FAILURE_CAUSES.includes(cause));
+}
+
+function validNonVerdictState(record) {
+  const attempts = record.terminal.attempts;
+  return ["unpublished_failure", "published_failure", "stale"].includes(record.publication_status)
+    && record.terminal.error === "review_coverage_incomplete"
+    && record.coverage.complete === false
+    && record.findings.length === 0 && record.notes.length === 0
+    && Array.isArray(attempts) && attempts.length >= 1 && attempts.length <= 3
+    && attempts.every((attempt, index) => attempt?.station_id === "codex_review"
+      && attempt.station_result === "not_evaluable"
+      && attempt.failure_class === "incomplete_reviewer_coverage"
+      && attempt.attempt_ordinal === index + 1);
+}
+
+function validateReviewResultFailureState(record) {
+  if (record.coverage == null || typeof record.coverage !== "object"
+    || record.terminal == null || typeof record.terminal !== "object") {
+    return "review_result_shape_invalid";
+  }
+  if (!validFailureCauses(record.terminal.failure_causes)) return "review_result_failure_invalid";
+  if (record.kind === "non_verdict" && !validNonVerdictState(record)) {
+    return "review_result_failure_invalid";
+  }
+  if (record.kind !== "non_verdict"
+    && ["unpublished_failure", "published_failure"].includes(record.publication_status)) {
+    return "review_result_failure_invalid";
+  }
+  return null;
+}
+
+function validateReviewResultSemantics(record) {
   if (!["verdict", "non_verdict"].includes(record.kind)
     || (record.kind === "verdict" && !["ship", "ship-with-fixes", "don't-ship"].includes(record.verdict))
     || (record.kind === "non_verdict" && record.verdict !== null)
     || !Array.isArray(record.notes) || record.notes.length > 2
     || record.notes.some((note) => note == null || typeof note !== "object"
       || !validBoundedString(note.text, 4000))) {
-    return { ok: false, error: "review_result_semantics_invalid" };
+    return "review_result_semantics_invalid";
   }
-  if (new Set(record.findings.map((finding) => finding.id)).size !== record.findings.length) {
-    return { ok: false, error: "review_result_finding_ids_duplicate" };
-  }
-  if (record.coverage == null || typeof record.coverage !== "object" || record.terminal == null || typeof record.terminal !== "object") {
-    return { ok: false, error: "review_result_shape_invalid" };
-  }
-  const failureCauses = record.terminal.failure_causes;
-  if (failureCauses !== undefined && (!Array.isArray(failureCauses)
-    || failureCauses.length < 1 || failureCauses.length > REVIEW_FAILURE_CAUSES.length
-    || new Set(failureCauses).size !== failureCauses.length
-    || failureCauses.some((cause) => !REVIEW_FAILURE_CAUSES.includes(cause)))) {
-    return { ok: false, error: "review_result_failure_invalid" };
-  }
-  if (record.kind === "non_verdict") {
-    const attempts = record.terminal.attempts;
-    if (!["unpublished_failure", "published_failure", "stale"].includes(record.publication_status)
-      || record.terminal.error !== "review_coverage_incomplete"
-      || record.coverage.complete !== false
-      || record.findings.length > 0 || record.notes.length > 0
-      || !Array.isArray(attempts) || attempts.length < 1 || attempts.length > 3
-      || attempts.some((attempt, index) => attempt == null
-        || attempt.station_id !== "codex_review"
-        || attempt.station_result !== "not_evaluable"
-        || attempt.failure_class !== "incomplete_reviewer_coverage"
-        || attempt.attempt_ordinal !== index + 1)) {
-      return { ok: false, error: "review_result_failure_invalid" };
-    }
-  } else if (["unpublished_failure", "published_failure"].includes(record.publication_status)) {
-    return { ok: false, error: "review_result_failure_invalid" };
-  }
+  const failureError = validateReviewResultFailureState(record);
+  if (failureError) return failureError;
   if (record.architectural_read !== null && typeof record.architectural_read !== "string") {
-    return { ok: false, error: "review_result_shape_invalid" };
+    return "review_result_shape_invalid";
   }
   if (["published", "published_failure"].includes(record.publication_status)
     && (record.publication_receipt == null || typeof record.publication_receipt !== "object")) {
-    return { ok: false, error: "review_result_receipt_missing" };
+    return "review_result_receipt_missing";
   }
+  return null;
+}
+
+export function validateReviewResult(record) {
+  if (record == null || typeof record !== "object" || Array.isArray(record)) {
+    return { ok: false, error: "review_result_shape_invalid" };
+  }
+  if (record.schema !== REVIEW_RESULT_SCHEMA) return { ok: false, error: "review_result_schema_unknown" };
+  if (Object.keys(record).some((key) => !REVIEW_RESULT_KEYS.has(key))) {
+    return { ok: false, error: "review_result_unknown_field" };
+  }
+  if (!REVIEW_HANDLE_RE.test(String(record.review_handle))) return { ok: false, error: "review_result_handle_invalid" };
+  const error = validateReviewResultIdentity(record) ?? validateReviewResultSemantics(record);
+  if (error) return { ok: false, error };
   return { ok: true, record };
 }
 
@@ -313,12 +336,7 @@ function publicationFailure(error, message) {
   return { ok: false, error, message };
 }
 
-export function validateSanitizedReviewPublication(record, input) {
-  const validRecord = validateReviewResult(record);
-  if (!validRecord.ok) return publicationFailure(validRecord.error, "retained review result is invalid");
-  if (record.kind !== "verdict") {
-    return publicationFailure("review_publication_wrong_kind", "non-verdict attempts require the station-failure publication path");
-  }
+function validateSanitizedHeader(record, input) {
   if (input == null || typeof input !== "object" || !Array.isArray(input.findings)) {
     return publicationFailure("review_publication_input_invalid", "findings must be an array");
   }
@@ -345,6 +363,52 @@ export function validateSanitizedReviewPublication(record, input) {
     const marker = rejectReservedMarkerSequence(note.text, `notes.${index}.text`);
     if (marker) return publicationFailure("review_publication_reserved_marker", marker);
   }
+  return null;
+}
+
+function validateSanitizedFindingMarkers(finding) {
+  for (const [name, value] of Object.entries(finding)) {
+    const entries = Array.isArray(value) ? value : [value];
+    for (const entry of entries) {
+      const marker = rejectReservedMarkerSequence(entry, `findings.${finding.id}.${name}`);
+      if (marker) return publicationFailure("review_publication_reserved_marker", marker);
+    }
+  }
+  return null;
+}
+
+function validateSanitizedFinding(finding, original) {
+  if (finding == null || typeof finding !== "object"
+    || Object.keys(finding).some((key) => !SANITIZED_FINDING_KEYS.has(key))) {
+    return publicationFailure("review_publication_finding_unknown_field", "a sanitized finding contains an unknown field");
+  }
+  if (finding.classification !== original.classification) {
+    return publicationFailure("review_publication_classification_mismatch", `classification changed for ${finding.id}`);
+  }
+  if (!DECISION_RECORD_DECISIONS.includes(finding.decision)) {
+    return publicationFailure("review_publication_decision_invalid", `decision is invalid for ${finding.id}`);
+  }
+  if (Boolean(finding.structural_blocker) !== Boolean(original.structural_blocker)) {
+    return publicationFailure("review_publication_structural_mismatch", `structural blocker changed for ${finding.id}`);
+  }
+  if (!validBoundedString(finding.title, 200) || !validBoundedString(finding.rationale, 4000)) {
+    return publicationFailure("review_publication_prose_invalid", `sanitized prose is invalid for ${finding.id}`);
+  }
+  if (finding.location != null && !validBoundedString(finding.location, 4096)) {
+    return publicationFailure("review_publication_location_invalid", `location is invalid for ${finding.id}`);
+  }
+  if (finding.decision === "wontfix" && !validBoundedString(finding.user_authorization, 2000)) {
+    return publicationFailure("review_publication_wontfix_unauthorized", `wontfix lacks authorization for ${finding.id}`);
+  }
+  if (finding.classification === "class" && (!Array.isArray(finding.instances)
+    || finding.instances.length < 2 || finding.instances.length > 500
+    || finding.instances.some((instance) => !validBoundedString(instance, 4096)))) {
+    return publicationFailure("review_publication_instances_invalid", `class finding lacks instances for ${finding.id}`);
+  }
+  return validateSanitizedFindingMarkers(finding);
+}
+
+function validateSanitizedFindingSet(record, input) {
   const ids = input.findings.map((finding) => finding?.id);
   if (new Set(ids).size !== ids.length) return publicationFailure("review_publication_finding_ids_duplicate", "finding ids must be unique");
   const originals = new Map(record.findings.map((finding) => [finding.id, finding]));
@@ -352,47 +416,22 @@ export function validateSanitizedReviewPublication(record, input) {
     return publicationFailure("review_publication_finding_set_mismatch", "sanitized findings must map every retained finding exactly once");
   }
   for (const finding of input.findings) {
-    if (finding == null || typeof finding !== "object"
-      || Object.keys(finding).some((key) => !SANITIZED_FINDING_KEYS.has(key))) {
-      return publicationFailure("review_publication_finding_unknown_field", "a sanitized finding contains an unknown field");
-    }
-    const original = originals.get(finding.id);
-    if (finding.classification !== original.classification) {
-      return publicationFailure("review_publication_classification_mismatch", `classification changed for ${finding.id}`);
-    }
-    if (!DECISION_RECORD_DECISIONS.includes(finding.decision)) {
-      return publicationFailure("review_publication_decision_invalid", `decision is invalid for ${finding.id}`);
-    }
-    if (Boolean(finding.structural_blocker) !== Boolean(original.structural_blocker)) {
-      return publicationFailure("review_publication_structural_mismatch", `structural blocker changed for ${finding.id}`);
-    }
-    if (!validBoundedString(finding.title, 200) || !validBoundedString(finding.rationale, 4000)) {
-      return publicationFailure("review_publication_prose_invalid", `sanitized prose is invalid for ${finding.id}`);
-    }
-    if (finding.location != null && !validBoundedString(finding.location, 4096)) {
-      return publicationFailure("review_publication_location_invalid", `location is invalid for ${finding.id}`);
-    }
-    if (finding.decision === "wontfix" && !validBoundedString(finding.user_authorization, 2000)) {
-      return publicationFailure("review_publication_wontfix_unauthorized", `wontfix lacks authorization for ${finding.id}`);
-    }
-    if (finding.classification === "class" && (!Array.isArray(finding.instances)
-      || finding.instances.length < 2 || finding.instances.length > 500
-      || finding.instances.some((instance) => !validBoundedString(instance, 4096)))) {
-      return publicationFailure("review_publication_instances_invalid", `class finding lacks instances for ${finding.id}`);
-    }
-    for (const [name, value] of Object.entries(finding)) {
-      if (typeof value === "string") {
-        const marker = rejectReservedMarkerSequence(value, `findings.${finding.id}.${name}`);
-        if (marker) return publicationFailure("review_publication_reserved_marker", marker);
-      }
-      if (Array.isArray(value)) {
-        for (const entry of value) {
-          const marker = rejectReservedMarkerSequence(entry, `findings.${finding.id}.${name}`);
-          if (marker) return publicationFailure("review_publication_reserved_marker", marker);
-        }
-      }
-    }
+    const invalid = validateSanitizedFinding(finding, originals.get(finding.id));
+    if (invalid) return invalid;
   }
+  return null;
+}
+
+export function validateSanitizedReviewPublication(record, input) {
+  const validRecord = validateReviewResult(record);
+  if (!validRecord.ok) return publicationFailure(validRecord.error, "retained review result is invalid");
+  if (record.kind !== "verdict") {
+    return publicationFailure("review_publication_wrong_kind", "non-verdict attempts require the station-failure publication path");
+  }
+  const invalidHeader = validateSanitizedHeader(record, input);
+  if (invalidHeader) return invalidHeader;
+  const invalidFindings = validateSanitizedFindingSet(record, input);
+  if (invalidFindings) return invalidFindings;
   const value = {
     verdict: input.verdict,
     notes: input.notes.map((note) => ({ text: note.text.trim() })),

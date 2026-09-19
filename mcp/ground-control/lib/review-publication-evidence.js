@@ -83,11 +83,11 @@ export async function readTrustedReviewPublicationProgress(
     decision: ordered.decision == null ? null : commentRecord(ordered.decision.comment, owner, name, issueNumber),
   };
   if (stationObservation != null && Number.isInteger(progress.findings?.id)) {
-    const obligation = String(stationObservation.obligationId).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const obligation = String(stationObservation.obligationId).replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
     const recordId = progress.findings.id;
     // eslint-disable-next-line security/detect-non-literal-regexp -- obligation is escaped and came from a validated retained artifact
     const marker = new RegExp(
-      `<!--\\s*gc:execution-obligation\\s+[^>]*id="${obligation}"[^>]*event="resolved"[^>]*disposition="reobserved"[^>]*observation_record_id="${recordId}"[^>]*-->`,
+      String.raw`<!--\s*gc:execution-obligation\s+[^>]*id="${obligation}"[^>]*event="resolved"[^>]*disposition="reobserved"[^>]*observation_record_id="${recordId}"[^>]*-->`,
     );
     const matched = trusted.find((comment) => marker.test(comment.body));
     if (matched) progress.reobservation = { id: matched.id ?? null, url: null };
@@ -95,21 +95,7 @@ export async function readTrustedReviewPublicationProgress(
   return { ok: true, ...progress };
 }
 
-export async function readTrustedReviewPublicationEvidence(
-  { repoRoot, owner, name, issueNumber },
-  { readComments = readIssueCommentsWithAuthors, resolveTrust = resolveExecutionObligationTrust } = {},
-) {
-  let trusted;
-  try {
-    ({ trusted } = await readTrustedComments(
-      { repoRoot, owner, name, issueNumber }, { readComments, resolveTrust },
-    ));
-  } catch {
-    return { ok: false, error: "review_publication_evidence_unverifiable",
-      message: "The issue thread or decision-record author trust could not be verified." };
-  }
-  if (hasMalformedPublicationMarker(trusted)) return { ok: false, published: false,
-    error: "review_publication_evidence_malformed", message: "A trusted review publication marker is malformed." };
+function groupPublicationTuples(trusted, issueNumber) {
   const all = publicationStages(trusted, (marker) => marker.issue_number === issueNumber);
   const tuples = new Map();
   for (const entry of all) {
@@ -117,6 +103,10 @@ export async function readTrustedReviewPublicationEvidence(
     if (!tuples.has(key)) tuples.set(key, []);
     tuples.get(key).push(entry);
   }
+  return tuples;
+}
+
+function orderedPublicationTuples(tuples) {
   const complete = [];
   let latestConsumedCycle = 0;
   const consumedCycles = new Set();
@@ -134,6 +124,13 @@ export async function readTrustedReviewPublicationEvidence(
     }
     if (ordered.findings != null && ordered.cycle != null && ordered.decision != null) complete.push(ordered);
   }
+  return { ok: true, complete, latestConsumedCycle };
+}
+
+function latestPublicationEvidence(tuples) {
+  const ordered = orderedPublicationTuples(tuples);
+  if (!ordered.ok) return ordered;
+  const { complete, latestConsumedCycle } = ordered;
   if (complete.length === 0) return { ok: true, published: false };
   complete.sort((left, right) => right.decision.marker.cycle - left.decision.marker.cycle);
   if (complete.some((entry, index) => index > 0
@@ -149,4 +146,22 @@ export async function readTrustedReviewPublicationEvidence(
   return { ok: true, published: true, cycle: evidence.decision.marker.cycle,
     comment_id: evidence.decision.comment.id ?? null,
     publication_id: evidence.decision.marker.publication_id };
+}
+
+export async function readTrustedReviewPublicationEvidence(
+  { repoRoot, owner, name, issueNumber },
+  { readComments = readIssueCommentsWithAuthors, resolveTrust = resolveExecutionObligationTrust } = {},
+) {
+  let trusted;
+  try {
+    ({ trusted } = await readTrustedComments(
+      { repoRoot, owner, name, issueNumber }, { readComments, resolveTrust },
+    ));
+  } catch {
+    return { ok: false, error: "review_publication_evidence_unverifiable",
+      message: "The issue thread or decision-record author trust could not be verified." };
+  }
+  if (hasMalformedPublicationMarker(trusted)) return { ok: false, published: false,
+    error: "review_publication_evidence_malformed", message: "A trusted review publication marker is malformed." };
+  return latestPublicationEvidence(groupPublicationTuples(trusted, issueNumber));
 }

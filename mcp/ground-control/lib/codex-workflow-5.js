@@ -255,6 +255,41 @@ async function assertPrBodyClosingKeywordBoundToIssueScope(input, issueThreadRea
   }
   return { ok: true };
 }
+async function prepareSynchronizedPrContext(input, { workspaceAuthorizationResolver, contextResolver }) {
+  let repoRoot;
+  let context;
+  try {
+    repoRoot = realpathSync(await ensureGitRepo(input.repoPath));
+    context = await contextResolver(repoRoot);
+  } catch (error) {
+    return { earlyReturn: { ok: false, error: "implement_pr_context_failed", message: error.message } };
+  }
+  if (context?.status !== "ok") {
+    return { earlyReturn: {
+      ok: false,
+      error: "implement_pr_context_invalid",
+      message: "The repository Ground Control context is invalid",
+      next_action: "repair_ground_control_configuration_and_retry",
+    } };
+  }
+  const repoAuthorization = await authorizeImplementRepoRoot(
+    repoRoot,
+    workspaceAuthorizationResolver,
+  );
+  if (!repoAuthorization.ok) return { earlyReturn: repoAuthorization };
+  const baseBranch = context?.workflow?.base_branch ?? "dev";
+  const titleValidation = validateImplementPrTitle(input.title, context?.workflow?.pr_title);
+  if (!titleValidation.ok) {
+    return { earlyReturn: {
+      ok: false,
+      error: "implement_pr_title_invalid",
+      message: titleValidation.message,
+      next_action: "reshape_the_title_and_retry",
+    } };
+  }
+  return { repoRoot, repoAuthorization, baseBranch };
+}
+
 export async function runCreateSynchronizedImplementPr(input, {
   workspaceAuthorizationResolver = resolveMcpLaunchWorkspaceAuthorization,
   commandRunner = execFile,
@@ -265,37 +300,9 @@ export async function runCreateSynchronizedImplementPr(input, {
 } = {}) {
   const inputValidation = validateSynchronizedImplementPrInput(input);
   if (!inputValidation.ok) return inputValidation;
-  let repoRoot;
-  let context;
-  try {
-    repoRoot = realpathSync(await ensureGitRepo(input.repoPath));
-    context = await contextResolver(repoRoot);
-  } catch (error) {
-    return { ok: false, error: "implement_pr_context_failed", message: error.message };
-  }
-  if (context?.status !== "ok") {
-    return {
-      ok: false,
-      error: "implement_pr_context_invalid",
-      message: "The repository Ground Control context is invalid",
-      next_action: "repair_ground_control_configuration_and_retry",
-    };
-  }
-  const repoAuthorization = await authorizeImplementRepoRoot(
-    repoRoot,
-    workspaceAuthorizationResolver,
-  );
-  if (!repoAuthorization.ok) return repoAuthorization;
-  const baseBranch = context?.workflow?.base_branch ?? "dev";
-  const titleValidation = validateImplementPrTitle(input.title, context?.workflow?.pr_title);
-  if (!titleValidation.ok) {
-    return {
-      ok: false,
-      error: "implement_pr_title_invalid",
-      message: titleValidation.message,
-      next_action: "reshape_the_title_and_retry",
-    };
-  }
+  const prepared = await prepareSynchronizedPrContext(input, { workspaceAuthorizationResolver, contextResolver });
+  if (prepared.earlyReturn) return prepared.earlyReturn;
+  const { repoRoot, repoAuthorization, baseBranch } = prepared;
   const closingBinding = await assertPrBodyClosingKeywordBoundToIssueScope(input, issueThreadReader);
   if (!closingBinding.ok) return closingBinding;
   const reviewEvidence = await reviewEvidenceReader({

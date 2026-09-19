@@ -82,6 +82,21 @@ describe("retained review-result artifacts (#1632)", () => {
     assert.notEqual(revision({ trackedSymlinks: [{ path: "link", target: "outside", escapes_repo: true }] }).digest, first.digest);
   });
 
+  it("normalizes non-ASCII review paths and rejects invalid revision types", () => {
+    const first = revision({
+      unreviewedUntrackedPaths: ["z.txt", "ä.txt"],
+      trackedSymlinks: ["z-link", "ä-link"],
+    });
+    const reordered = revision({
+      unreviewedUntrackedPaths: ["ä.txt", "z.txt"],
+      trackedSymlinks: ["ä-link", "z-link"],
+    });
+    assert.deepEqual(first.unreviewed_untracked_paths, ["ä.txt", "z.txt"]);
+    assert.deepEqual(first.tracked_symlinks, ["ä-link", "z-link"]);
+    assert.equal(first.digest, reordered.digest);
+    assert.throws(() => revision({ diffText: null }), TypeError);
+  });
+
   it("round-trips a restart-durable result with restrictive directory and file modes", () => {
     const gitDir = tempGitDir();
     try {

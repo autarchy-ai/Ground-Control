@@ -13,5 +13,5 @@ export function classifyReviewFailureCauses(parseErrors) {
     if (error.startsWith("Codex review did not emit a")) return "missing_tail";
     if (error.startsWith("Codex review REVIEW block was not valid JSON:")) return "invalid_json";
     return "invalid_envelope";
-  }))].sort();
+  }))].sort((left, right) => left.localeCompare(right, "en"));
 }

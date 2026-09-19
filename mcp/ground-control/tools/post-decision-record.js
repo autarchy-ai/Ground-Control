@@ -97,9 +97,8 @@ function _registerGcPublishReviewResult(server) {
           reviewHandle: review_handle,
           publicationKind: publication_kind ?? "verdict",
           sanitized: publication_kind === "non_verdict"
-            ? (verdict == null && notes == null && architectural_read == null && findings == null
-              ? null : { verdict, notes, architectural_read, findings })
-            : { verdict, notes, architectural_read, findings },
+            && verdict == null && notes == null && architectural_read == null && findings == null
+            ? null : { verdict, notes, architectural_read, findings },
         }), null, 2));
       } catch (e) { return err(e); }
     },

@@ -19,16 +19,16 @@ export function buildReviewRevision({
   trackedSymlinks = [],
 }) {
   if (!GIT_OBJECT_ID_RE.test(String(headOid)) || !GIT_OBJECT_ID_RE.test(String(baseOid))) {
-    throw new Error("review revision requires canonical HEAD and base object ids");
+    throw new TypeError("review revision requires canonical HEAD and base object ids");
   }
   if (typeof diffText !== "string" || typeof manifest !== "string") {
-    throw new Error("review revision requires diffText and manifest strings");
+    throw new TypeError("review revision requires diffText and manifest strings");
   }
   const paths = [...unreviewedUntrackedPaths];
   if (paths.some((path) => typeof path !== "string" || path.length === 0)) {
-    throw new Error("unreviewed paths must be non-empty strings");
+    throw new TypeError("unreviewed paths must be non-empty strings");
   }
-  paths.sort();
+  paths.sort((left, right) => left.localeCompare(right, "en"));
   const symlinks = trackedSymlinks.map((entry) => {
     if (typeof entry === "string") return entry;
     if (entry == null || typeof entry.path !== "string" || typeof entry.target !== "string"
@@ -36,7 +36,7 @@ export function buildReviewRevision({
     return JSON.stringify({ path: entry.path, target: entry.target, escapes_repo: entry.escapes_repo });
   });
   if (symlinks.some((entry) => typeof entry !== "string" || entry.length === 0)) throw new Error("tracked symlinks are invalid");
-  symlinks.sort();
+  symlinks.sort((left, right) => left.localeCompare(right, "en"));
   const digest = createHash("sha256").update(lengthDelimited([
     headOid, baseOid, diffText, manifest, paths, symlinks,
   ])).digest("hex");
