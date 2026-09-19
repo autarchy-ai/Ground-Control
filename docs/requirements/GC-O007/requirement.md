@@ -231,6 +231,7 @@ second workflow implementation.
 - TESTS → TEST `mcp/ground-control/lib.review-publication-evidence.test.js` (Trusted published-decision evidence tests (#1632))
 - TESTS → TEST `mcp/ground-control/lib.runcodexreview-uncommitted-true-marker-post-path.test.js` (Automatic review publication compatibility integration tests (#1632))
 - TESTS → TEST `mcp/ground-control/lib.deferred-review-cycle-publication.test.js` (Deferred execution, aggregate verdict retention, and separate station failure publication (#1632))
+- TESTS → TEST `mcp/ground-control/server-env.inventory-parity.test.js` (Exclude review test shims from server environment inventory (#1632))
 - TESTS → TEST `mcp/ground-control/gc-assert-completion.runassertcompletion-post-merge-refuses-when-pr.test.js` (Unpublished review readiness refusal regression (#1632))
 - DOCUMENTS → ADR `architecture/adrs/029-issue-thread-gate-model.md` (Deferred execution and provenance-bound publication amendment (#1632))
 - DOCUMENTS → DOCUMENTATION `architecture/notes/review-execution-publication-separation-preflight.md` (Issue #1632 binding preflight guidance)
