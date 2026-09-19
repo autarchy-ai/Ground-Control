@@ -15,6 +15,7 @@ import { verifyMergedRequirementState } from "./merged-requirement-state.js";
 import { validateFinalReportInput } from "./plan-posting.js";
 import { readRemoteGateSnapshot } from "./remote-gates.js";
 import { execFile } from "./runtime-primitives.js";
+import { readTrustedReviewPublicationEvidence } from "./review-publication-evidence.js";
 
 const FULL_GIT_OID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
@@ -76,6 +77,28 @@ async function _readCompletionObligationState(repository, issueNumber, assertion
     };
   }
   return { ok: true };
+}
+
+async function _assertReviewPublished(repository, issueNumber, assertions) {
+  const evidence = await readTrustedReviewPublicationEvidence({
+    repoRoot: repository.repoRoot,
+    owner: repository.owner,
+    name: repository.name,
+    issueNumber,
+  });
+  if (evidence.ok && evidence.published) {
+    assertions.push({ name: "codex_review_published", ok: true, comment_id: evidence.comment_id });
+    return null;
+  }
+  return {
+    ok: false,
+    error: evidence.error ?? "completion_review_publication_missing",
+    message: evidence.message ?? "A trusted published Codex decision record is required before readiness or completion.",
+    issue_number: issueNumber,
+    assertions,
+    final_report: null,
+    next_action: "publish_the_retained_review_or_run_the_automatic_review_cycle",
+  };
 }
 
 // Phase D terminal (phase="pre_merge"): post the readiness record and return its
@@ -399,6 +422,10 @@ export async function runAssertCompletion(input, { workspaceAuthorizationResolve
       return { ok: false, error: "completion_hosted_checks_not_green", hosted,
         next_action: "repair_or_wait_for_current_head_hosted_checks", assertions, final_report: null };
     }
+    if (lane !== "quickfix") {
+      const reviewRefusal = await _assertReviewPublished(repository, issueNumber, assertions);
+      if (reviewRefusal) return reviewRefusal;
+    }
     return _runPreMergeReadiness({
       subInput, repoPath: authorizedRepoPath, issueNumber, prNumber, assertions, workspaceAuthorizationResolver,
     });
@@ -442,6 +469,10 @@ export async function runAssertCompletion(input, { workspaceAuthorizationResolve
   // The override reason is the trusted authorization comment itself, so recording it in
   // the final report keeps the durable record self-consistent.
   if (verify.overridden) subInput.requirementStateOverrideReason = verify.reason;
+  if (lane !== "quickfix") {
+    const reviewRefusal = await _assertReviewPublished(repository, issueNumber, assertions);
+    if (reviewRefusal) return reviewRefusal;
+  }
   return _runPostMergeCompletion({
     subInput, repoPath: authorizedRepoPath, issueNumber, prNumber, assertions, workspaceAuthorizationResolver,
   });

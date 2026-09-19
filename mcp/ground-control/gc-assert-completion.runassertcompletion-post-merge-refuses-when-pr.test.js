@@ -85,6 +85,7 @@ function makeCompletionShimRepo({
   commentIdSeq = [9500, 9501, 9502],
   prNumber = 42,
   prMerged = true,
+  publishedReview = true,
   permissions = {
     fake: "write",
     "other-collaborator": "write",
@@ -92,6 +93,14 @@ function makeCompletionShimRepo({
     "repository-owner": "admin",
   },
 } = {}) {
+  if (publishedReview) {
+    const provenance = `schema="gc.review-publication/v1" publication="${"a".repeat(64)}" original="${"b".repeat(64)}" revision="${"c".repeat(64)}" sanitized="${"d".repeat(64)}"`;
+    comments = [...comments,
+      { id: 8997, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:review-publication stage="findings" reviewer="codex" issue="963" cycle="1" ${provenance} -->\n\n**gc_codex_review** — sanitized deferred publication` },
+      { id: 8998, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:codex-prepush-cycle issue="963" branch="x" cycle="1" ${provenance} -->\n\n_gc_codex_review pre-push cycle 1 complete` },
+      { id: 8999, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:decision-record reviewer="codex" cycle="1" issue="963" ${provenance} -->\n\n## Review decision record — codex cycle 1` },
+    ];
+  }
   // We need to handle multiple POSTs. Use a counter in a wrapper script.
   // Build a shim that cycles through commentIdSeq for each POST call.
   const repoDir = initGitRepo(mkdtempSync(join(tmpdir(), "gc-completion-shim-")));
@@ -249,12 +258,12 @@ describe("runAssertCompletion — post_merge refuses when PR not merged", () => 
 
 // ---------------------------------------------------------------------------
 // Test 8: pre_merge readiness — posts ready-for-review record, no merge gate,
-// no reconciliation assertions (issue #963; ADR-089 §2 removed the GRC
-// pre-merge assertion, so pre_merge now runs zero assertions).
+// only the published-review evidence assertion (issue #963; ADR-089 §2
+// removed the GRC pre-merge assertion).
 // ---------------------------------------------------------------------------
 
 describe("runAssertCompletion — pre_merge readiness report", () => {
-  it("returns ok:true phase:pre_merge with readiness_report; no assertions run; no merge gate", async () => {
+  it("returns ok:true phase:pre_merge with readiness_report and published-review evidence", async () => {
     // No traceability markers and an UNMERGED PR. pre_merge must still succeed:
     // it skips the merge gate and every reconciliation assertion.
     const shim = makeCompletionShimRepo({ comments: [], prMerged: false });
@@ -275,10 +284,36 @@ describe("runAssertCompletion — pre_merge readiness report", () => {
       assert.equal(r.ok, true, `expected ok:true; got: ${JSON.stringify(r)}`);
       assert.equal(r.phase, "pre_merge");
       assert.ok(Array.isArray(r.assertions));
-      assert.equal(r.assertions.length, 0, "pre_merge runs no reconciliation assertions");
+      assert.deepEqual(r.assertions, [{
+        name: "codex_review_published",
+        ok: true,
+        comment_id: 8999,
+      }]);
       assert.equal(r.final_report, null);
       assert.ok(r.readiness_report != null);
       assert.ok(typeof r.readiness_report.comment_url === "string");
+    } finally {
+      shim.cleanup();
+    }
+  });
+
+  it("refuses an unpublished local review before posting readiness", async () => {
+    const shim = makeCompletionShimRepo({ comments: [], prMerged: false, publishedReview: false });
+    try {
+      const r = await withShimPath(shim.binDir, () => runAssertCompletion({
+        repoPath: shim.repoDir,
+        issueNumber: 963,
+        prNumber: 42,
+        requirements: [],
+        reviews: [{ reviewer: "codex", summary: "retained locally" }],
+        ciStatus: "green",
+        sonarStatus: "skipped",
+        plainEnglishOutcome: "Ready for review.",
+        phase: "pre_merge",
+      }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) }));
+      assert.equal(r.ok, false);
+      assert.equal(r.error, "completion_review_publication_missing");
+      assert.equal(r.next_action, "publish_the_retained_review_or_run_the_automatic_review_cycle");
     } finally {
       shim.cleanup();
     }

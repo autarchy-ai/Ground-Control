@@ -16,6 +16,7 @@ import { readTrustedImplementSyncRecord } from "./knowledge-capture.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { rejectReservedMarkerSequence } from "./repo-vocabulary.js";
 import { checkPrBodyShape, execFile } from "./runtime-primitives.js";
+import { readTrustedReviewPublicationEvidence } from "./review-publication-evidence.js";
 
 export class ReviewerCapConfigError extends Error {
   constructor(blockName, configErrors) {
@@ -260,6 +261,7 @@ export async function runCreateSynchronizedImplementPr(input, {
   contextResolver = getRepoGroundControlContext,
   syncRecordReader = readTrustedImplementSyncRecord,
   issueThreadReader = (args) => runGetIssueThread(args, { workspaceAuthorizationResolver }),
+  reviewEvidenceReader = readTrustedReviewPublicationEvidence,
 } = {}) {
   const inputValidation = validateSynchronizedImplementPrInput(input);
   if (!inputValidation.ok) return inputValidation;
@@ -296,6 +298,20 @@ export async function runCreateSynchronizedImplementPr(input, {
   }
   const closingBinding = await assertPrBodyClosingKeywordBoundToIssueScope(input, issueThreadReader);
   if (!closingBinding.ok) return closingBinding;
+  const reviewEvidence = await reviewEvidenceReader({
+    repoRoot,
+    owner: repoAuthorization.owner,
+    name: repoAuthorization.name,
+    issueNumber: input.issueNumber,
+  });
+  if (reviewEvidence?.ok !== true || reviewEvidence.published !== true) {
+    return {
+      ok: false,
+      error: "implement_pr_review_publication_missing",
+      message: reviewEvidence?.message ?? "A complete trusted review publication is required before PR creation.",
+      next_action: "publish_the_retained_review_and_retry",
+    };
+  }
   try {
     const synchronization = await validateImplementSynchronization({
       repoRoot,

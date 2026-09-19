@@ -139,7 +139,11 @@ export function buildCodexReviewToolDescription({ postPushCap, prepushCap }) {
     "When any slice fails to produce a valid reviewer envelope the tool returns " +
     "ok=false with error='review_coverage_incomplete' BEFORE writing any findings " +
     "record, decision record, or cycle marker, so the failed attempt does not " +
-    "consume a cycle and a retry is free."
+    "consume a cycle and a retry is free. For uncommitted issue-bound reviews, " +
+    "publication_mode='deferred' performs no GitHub write and returns an opaque " +
+    "restart-durable review_handle; inspect it with gc_get_review_result and publish " +
+    "a validated sanitized mapping with gc_publish_review_result. The default " +
+    "publication_mode='automatic' preserves the established direct-call behavior."
   );
 }
 export function buildCodexReviewOverrideCapDescription({ postPushCap, prepushCap }) {

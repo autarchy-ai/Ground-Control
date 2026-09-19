@@ -249,9 +249,15 @@ export function parseOwnerRepoFromRemoteUrl(url) {
 }
 export const EXECUTION_OBLIGATION_WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 export const ENRICH_THREAD_PAGE_CAP = 100;
-export function selectDiffMode({ diffText, maxBytes = getDefaultCodexReviewMaxDiffBytes() }) {
+function reviewDiffBudget(maxBytes, promptOverheadBytes) {
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0) return maxBytes;
+  const overhead = Number.isSafeInteger(promptOverheadBytes) && promptOverheadBytes > 0
+    ? promptOverheadBytes : 0;
+  return Math.max(1, maxBytes - overhead);
+}
+export function selectDiffMode({ diffText, maxBytes = getDefaultCodexReviewMaxDiffBytes(), promptOverheadBytes = 0 }) {
   if (!maxBytes || maxBytes <= 0) return "inline";
-  if (Buffer.byteLength(diffText || "", "utf8") > maxBytes) return "manifest";
+  if (Buffer.byteLength(diffText || "", "utf8") > reviewDiffBudget(maxBytes, promptOverheadBytes)) return "manifest";
   return "inline";
 }
 const DIFF_FILE_HEADER_RE = /^diff --git /;
@@ -404,12 +410,12 @@ function countDiffFiles(text) {
   const headers = new Set(text.match(DIFF_FILE_HEADER_LINE_RE) ?? []);
   return headers.size;
 }
-export function planReviewSlices({ diffText, maxBytes = getDefaultCodexReviewMaxDiffBytes() }) {
+export function planReviewSlices({ diffText, maxBytes = getDefaultCodexReviewMaxDiffBytes(), promptOverheadBytes = 0 }) {
   const text = typeof diffText === "string" ? diffText : "";
   const filesTotal = countDiffFiles(text);
   // Same guard shape as selectDiffMode, so the two never disagree about
   // whether a diff is over budget.
-  const budget = Number.isFinite(maxBytes) ? maxBytes : 0;
+  const budget = Number.isFinite(maxBytes) ? reviewDiffBudget(maxBytes, promptOverheadBytes) : 0;
   if (text === "" || budget <= 0 || Buffer.byteLength(text, "utf8") <= budget) {
     return {
       slices: [text],

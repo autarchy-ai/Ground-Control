@@ -16,7 +16,7 @@ import {
   getRepoGroundControlContext,
   runCloseIssueAfterMerge,
   runCodexArchitecturePreflight,
-  runCodexReview,
+  runCodexReviewWithPublication,
   runPostImplementationPlan,
   runUpdateIssueRequirements,
   startAsyncJob,
@@ -226,8 +226,9 @@ export function registerQuery(server, ctx) {
       override_phase_gate: z.boolean().optional(),
       override_phase_reason: z.string().optional(),
       async: z.boolean().optional().describe(ASYNC_REVIEW_PARAM_DESC),
+      publication_mode: z.enum(["automatic", "deferred"]).optional(),
     },
-    async ({ repo_path, base_branch, uncommitted, pr_number, issue_number, override_cap, override_reason, override_phase_gate, override_phase_reason, async: asyncMode }) => {
+    async ({ repo_path, base_branch, uncommitted, pr_number, issue_number, override_cap, override_reason, override_phase_gate, override_phase_reason, async: asyncMode, publication_mode }) => {
       try {
         const params = {
           repoPath: repo_path, baseBranch: base_branch ?? null,
@@ -238,14 +239,15 @@ export function registerQuery(server, ctx) {
           overrideReason: override_reason ?? null,
           overridePhaseGate: Boolean(override_phase_gate),
           overridePhaseReason: override_phase_reason ?? null,
+          publicationMode: publication_mode ?? "automatic",
         };
         if (asyncMode) {
           return ok(JSON.stringify(startAsyncJob(
             "codex_review",
-            (signal) => runCodexReview({ ...params, signal }),
+            (signal) => runCodexReviewWithPublication({ ...params, signal }),
           ), null, 2));
         }
-        return ok(JSON.stringify(await runCodexReview(params), null, 2));
+        return ok(JSON.stringify(await runCodexReviewWithPublication(params), null, 2));
       } catch (e) { return err(e); }
     },
   );

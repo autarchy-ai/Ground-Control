@@ -24,6 +24,11 @@ import {
   runRenderPrBody,
   runWatchCiRun,
   runReviewCycleTransport,
+  runGetReviewResult,
+  runPublishReviewResult,
+  REVIEW_HANDLE_RE,
+  REVIEW_NOTES_MAX,
+  REVIEW_VERDICTS,
 } from "../lib.js";
 import { ok, err } from "./respond.js";
 
@@ -39,6 +44,66 @@ export function registerPostDecisionRecord(server, ctx) {
   _registerGcGetIssueThread(server);
   _registerGcWatchCiRun(server);
   _registerGcCodexReviewCycle(server);
+  _registerGcGetReviewResult(server);
+  _registerGcPublishReviewResult(server);
+}
+
+function _registerGcGetReviewResult(server) {
+  server.tool(
+    "gc_get_review_result",
+    "Inspect a restart-durable deferred Codex review by its opaque review_handle. Reauthorizes the launch-workspace repository before lookup, reads only protected per-worktree Git metadata, returns bounded revision, coverage, findings, and publication state, and performs no GitHub writes.",
+    {
+      repo_path: z.string(),
+      review_handle: z.string().regex(REVIEW_HANDLE_RE),
+    },
+    async ({ repo_path, review_handle }) => {
+      try {
+        return ok(JSON.stringify(await runGetReviewResult({
+          repoPath: repo_path,
+          reviewHandle: review_handle,
+        }), null, 2));
+      } catch (e) { return err(e); }
+    },
+  );
+}
+
+function _registerGcPublishReviewResult(server) {
+  server.tool(
+    "gc_publish_review_result",
+    "Publish one retained Codex result. For a verdict, the server verifies the retained verdict, complete sanitized finding-id mapping, classifications, and caller dispositions, then posts provenance-bound findings, cycle, and decision records. For publication_kind=non_verdict, no reviewer prose is accepted; it posts only closed-code station-observation opened/escalated records, consumes no cycle, and remains an unobserved gate. Both paths reject stale revisions and reconcile retries without rerunning the reviewer.",
+    {
+      repo_path: z.string(),
+      review_handle: z.string().regex(REVIEW_HANDLE_RE),
+      publication_kind: z.enum(["verdict", "non_verdict"]).optional(),
+      verdict: z.enum(REVIEW_VERDICTS).optional(),
+      notes: z.array(z.object({ text: z.string().min(1).max(4000) })).max(REVIEW_NOTES_MAX).optional(),
+      architectural_read: z.string().min(1).max(20000).optional(),
+      findings: z.array(z.object({
+        id: z.string().min(1).max(200),
+        title: z.string().min(1).max(200),
+        classification: z.enum(DECISION_RECORD_CLASSIFICATIONS),
+        decision: z.enum(DECISION_RECORD_DECISIONS),
+        rationale: z.string().min(1).max(4000),
+        location: z.string().min(1).max(4096).optional(),
+        user_authorization: z.string().min(1).max(2000).optional(),
+        instances: z.array(z.string().min(1).max(4096)).max(500).optional(),
+        structural_blocker: z.boolean().optional(),
+      })).max(500).optional(),
+    },
+    async ({ repo_path, review_handle, publication_kind, verdict, notes, architectural_read, findings }) => {
+      try {
+        return ok(JSON.stringify(await runPublishReviewResult({
+          repoPath: repo_path,
+          reviewHandle: review_handle,
+          publicationKind: publication_kind ?? "verdict",
+          sanitized: publication_kind === "non_verdict"
+            ? (verdict == null && notes == null && architectural_read == null && findings == null
+              ? null : { verdict, notes, architectural_read, findings })
+            : { verdict, notes, architectural_read, findings },
+        }), null, 2));
+      } catch (e) { return err(e); }
+    },
+  );
 }
 
 function _registerGcPostDecisionRecord(server) {
@@ -344,7 +409,7 @@ function _registerGcWatchCiRun(server) {
 function _registerGcCodexReviewCycle(server) {
   server.tool(
     "gc_codex_review_cycle",
-    "Async-only pre-push codex-review cycle wrapper. Requires one bounded idempotency_key per logical attempt, returns a gc_codex_job handle immediately, runs gc_codex_review (uncommitted=true), and auto-posts the canonical per-cycle decision record. Reuse the same key when the start response is lost; changed input conflicts and concurrent distinct starts for the same repository, issue, and reviewer are refused. Poll gc_codex_job for the compact terminal result: {ok, reviewer, cycle, cap, status, next_action, findings_summary, findings_record_url, decision_record_url, diff_mode, review_coverage}. Verbatim review prose remains server-side.",
+    "Async-only pre-push codex-review cycle wrapper. Requires one bounded idempotency_key per logical attempt, returns a gc_codex_job handle immediately, and runs gc_codex_review (uncommitted=true). publication_mode=automatic preserves canonical per-cycle posting. publication_mode=deferred performs zero GitHub writes, consumes no cycle, and returns a restart-durable review_handle for gc_get_review_result and gc_publish_review_result. Reuse the same key when the start response is lost; changed input conflicts and concurrent distinct starts for the same repository, issue, and reviewer are refused. Poll gc_codex_job for the terminal result. Original review prose remains protected local state until a validated sanitized rendering is published.",
     {
       repo_path: z.string(),
       issue_number: z.number().int().positive(),
@@ -359,8 +424,9 @@ function _registerGcCodexReviewCycle(server) {
         .min(1)
         .max(ASYNC_JOB_IDEMPOTENCY_KEY_MAX)
         .regex(ASYNC_JOB_IDEMPOTENCY_KEY_RE),
+      publication_mode: z.enum(["automatic", "deferred"]).optional(),
     },
-    async ({ repo_path, issue_number, base_branch, uncommitted, override_cap, override_reason, auto_grant, async: asyncMode, idempotency_key }) => {
+    async ({ repo_path, issue_number, base_branch, uncommitted, override_cap, override_reason, auto_grant, async: asyncMode, idempotency_key, publication_mode }) => {
       try {
         const params = {
           repoPath: repo_path,
@@ -370,6 +436,7 @@ function _registerGcCodexReviewCycle(server) {
           overrideCap: Boolean(override_cap),
           overrideReason: override_reason ?? null,
           autoGrant: Boolean(auto_grant),
+          publicationMode: publication_mode ?? "automatic",
         };
         return ok(JSON.stringify(await runReviewCycleTransport({
           reviewer: "codex",

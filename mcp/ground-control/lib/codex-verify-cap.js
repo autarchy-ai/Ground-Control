@@ -158,6 +158,7 @@ export async function postCodexReviewPrePushCycleMarker(
     override: extras.override === true,
     overrideReason: extras.overrideReason ?? null,
     hardCap: extras.hardCap ?? CODEX_REVIEW_PREPUSH_HARD_CAP,
+    publication: extras.publication ?? null,
   });
   await execFile(
     "gh",

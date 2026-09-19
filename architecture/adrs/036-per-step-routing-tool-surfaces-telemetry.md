@@ -8,6 +8,15 @@ Accepted
 
 2026-05-11
 
+> **Issue #1632 amendment (2026-09-18):** The deterministic durable-record
+> surface now includes `gc_get_review_result` and
+> `gc_publish_review_result`. Review execution can return an opaque,
+> restart-durable handle without a GitHub write; explicit publication validates
+> a sanitized complete mapping, exact revision, cycle slot, and trusted
+> provenance before writing the canonical issue-thread records. Publication
+> retry reconciliation uses those records, while the original review remains
+> local. No backend, database, or new telemetry state is introduced.
+
 > **Issue #1303 amendment (2026-09-11):** The #1500 MCP-only re-platform removed
 > the persistence targets for step, workflow-run, and tool-call measurements.
 > The remaining telemetry emitters, lifecycle adapters, configuration knob, and

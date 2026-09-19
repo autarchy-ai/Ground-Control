@@ -6,6 +6,7 @@
 
 import { readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { buildReviewPublicationMarkerAttributes } from "./review-publication-markers.js";
 
 const ARCH_VOCABULARY_TOP_KEYS = new Set(["patterns", "canonical_helpers", "boundary_contract", "binding_adrs", "anti_recommendations"]);
 const ARCH_PATTERN_KEYS = new Set(["name", "applies_to", "example_path"]);
@@ -217,8 +218,11 @@ export function rejectReservedMarkerSequence(text, fieldName) {
   }
   return null;
 }
-export function buildDecisionRecordMarker({ reviewer, cycle, issueNumber }) {
-  return `<!-- gc:decision-record reviewer="${reviewer}" cycle="${cycle}" issue="${issueNumber}" -->`;
+export function buildDecisionRecordMarker({ reviewer, cycle, issueNumber, provenance = null }) {
+  const attrs = provenance == null
+    ? ""
+    : ` ${buildReviewPublicationMarkerAttributes(provenance)}`;
+  return `<!-- gc:decision-record reviewer="${reviewer}" cycle="${cycle}" issue="${issueNumber}"${attrs} -->`;
 }
 export const SONAR_BASE_URL = "https://sonarcloud.io";
 const SONAR_SEVERITY_RANK = {

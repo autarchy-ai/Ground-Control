@@ -71,7 +71,7 @@ function validateDecisionVerdictConsistency({ verdict, findings }) {
   return checkVerdictBlockingConsistency({
     verdict,
     blocking: findings,
-    blockingHasStructural: (f) => f?.classification === "class",
+    blockingHasStructural: (f) => f?.classification === "class" || f?.structural_blocker === true,
   });
 }
 function validateFindingDecision(f, i) {
@@ -153,14 +153,14 @@ export function validateDecisionRecordInput(input) {
   if (errors.length) return { ok: false, errors };
   return { ok: true };
 }
-export function buildDecisionRecord({ issueNumber, cycle, reviewer, findings, verdict, architectural_read, notes }) {
+export function buildDecisionRecord({ issueNumber, cycle, reviewer, findings, verdict, architectural_read, notes, provenance = null }) {
   const validation = validateDecisionRecordInput({ issueNumber, cycle, reviewer, findings, verdict, architectural_read, notes });
   if (!validation.ok) {
     throw new Error(`buildDecisionRecord input invalid: ${validation.errors.join("; ")}`);
   }
   const lines = [];
   lines.push(
-    buildDecisionRecordMarker({ reviewer, cycle, issueNumber }),
+    buildDecisionRecordMarker({ reviewer, cycle, issueNumber, provenance }),
     "",
     `## Review decision record — ${reviewer} cycle ${cycle} (issue #${issueNumber})`,
     "",
@@ -279,10 +279,7 @@ function rejectReservedMarkersInDecisionInput({ findings, architectural_read, no
   }
   return rejectReservedMarkersInNotes(notes, issueNumber);
 }
-export async function runPostDecisionRecord(
-  { repoPath, issueNumber, cycle, reviewer, findings, verdict, architectural_read, notes },
-  { workspaceAuthorizationResolver = undefined } = {},
-) {
+export function prepareDecisionRecordBody({ issueNumber, cycle, reviewer, findings, verdict, architectural_read, notes, provenance = null }) {
   const validation = validateDecisionRecordInput({ issueNumber, cycle, reviewer, findings, verdict, architectural_read, notes });
   if (!validation.ok) {
     return {
@@ -298,7 +295,7 @@ export async function runPostDecisionRecord(
   // body-size cap) BEFORE any network I/O, so a body that would be rejected
   // never costs a `gh repo view` round trip. The reserved-marker reject
   // above is also cheap and runs first.
-  const body = buildDecisionRecord({ issueNumber, cycle, reviewer, findings, verdict, architectural_read, notes });
+  const body = buildDecisionRecord({ issueNumber, cycle, reviewer, findings, verdict, architectural_read, notes, provenance });
   const sensitiveError = detectSensitiveBodyContent(body);
   if (sensitiveError) {
     return {
@@ -321,6 +318,17 @@ export async function runPostDecisionRecord(
       next_action: "reduce_findings_or_split_across_cycles_and_retry",
     };
   }
+  return { ok: true, body };
+}
+
+export async function runPostDecisionRecord(
+  { repoPath, issueNumber, cycle, reviewer, findings, verdict, architectural_read, notes, provenance = null },
+  { workspaceAuthorizationResolver = undefined } = {},
+) {
+  const prepared = prepareDecisionRecordBody({ issueNumber, cycle, reviewer, findings,
+    verdict, architectural_read, notes, provenance });
+  if (!prepared.ok) return prepared;
+  const { body } = prepared;
   const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
   if (!repository.ok) {
     return issueRepositoryNotAuthorized("decision_record", repository, { issue_number: issueNumber });
