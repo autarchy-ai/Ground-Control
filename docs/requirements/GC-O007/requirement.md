@@ -217,6 +217,7 @@ second workflow implementation.
 - IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/review-publication-evidence.js` (Trusted publication evidence for retry and completion gates (#1632))
 - IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/codex-review-runner.js` (Deferred zero-publication review execution (#1632))
 - IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/review-cycle-seam.js` (Cycle wrapper publication-mode boundary (#1632))
+- IMPLEMENTS → CODE_FILE `tools/policy/execution_contract.py` (Published-decision-before-repair workflow anchor (#1632))
 - IMPLEMENTS → CODE_FILE `mcp/ground-control/tools/post-decision-record.js` (Retained-review inspection, publication, and deferred cycle tool schemas (#1632))
 - IMPLEMENTS → CODE_FILE `mcp/ground-control/tools/query.js` (Direct Codex review publication-mode schema (#1632))
 - IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/assert-completion.js` (Readiness and completion require trusted published Codex evidence (#1632))
