@@ -10,7 +10,7 @@ import { postCodexReviewCycleMarker, readPriorCodexReviewCycleCount } from "./cl
 import { buildCodexReviewFindingsComments, buildReviewCommentPostFailedEnvelope, collectPostFailures, mergeReviewerArchitecturalReads, renderReviewerEnvelope } from "./codex-review.js";
 import { buildReviewerCommentsList, postCodexReviewFindingsComment, postCodexReviewPrePushCycleMarker, readPriorCodexReviewPrePushCycleCount, resolveFindingsRecordIssueNumber } from "./codex-verify-cap.js";
 import { resolveReviewerPrePushCap } from "./codex-workflow-5.js";
-import { detectSensitiveBodyContent, planReviewSlices, selectDiffMode } from "./grc-legacy-compat-2.js";
+import { detectSensitiveBodyContent } from "./grc-legacy-compat-2.js";
 import { getPullRequestClosingIssues, postCodexReviewFindings } from "./grc-legacy-compat-3.js";
 import { autoDetectPrNumber, computeReviewDiff, getCurrentBranchName, readCompletedPhases } from "./grc-legacy-compat-4.js";
 import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
@@ -20,6 +20,8 @@ import { readVocabularyForReview } from "./plan-posting.js";
 import { evaluateCodexReviewCycleCap } from "./repo-context-2.js";
 import { enforcePostPushReviewGate, enforcePrePushReviewCap } from "./codex-review-cap.js";
 import { guardStationReobservation } from "./station-observation-records.js";
+import { prepareDeferredReviewRevision, retainDeferredCodexReview, validateReviewPublicationMode, validateReviewPublicationRequest } from "./deferred-review-execution.js";
+import { planBoundedReviewPrompts } from "./review-prompt-planning.js";
 
 export async function runCodexReview({
   repoPath,
@@ -34,7 +36,10 @@ export async function runCodexReview({
   signal = undefined,
   // Open station-observation obligation from an earlier non-verdict attempt (issue #1476).
   stationObservation = null,
+  publicationMode = "automatic",
 }, { workspaceAuthorizationResolver = undefined } = {}) {
+  const publicationRequestError = validateReviewPublicationMode(publicationMode);
+  if (publicationRequestError) return publicationRequestError;
   // Findings records, cycle markers, and the reviewed tree all belong to the launch workspace; a
   // caller-named checkout is refused before any GitHub read or reviewer run (issue #1583).
   const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
@@ -72,6 +77,10 @@ export async function runCodexReview({
     if (gate.refusal) return gate.refusal;
     prePushOwnership = gate.ownership;
   }
+  const deferredRequestError = validateReviewPublicationRequest(
+    publicationMode, uncommitted, prePushOwnership?.issueNumber ?? issueNumber,
+  );
+  if (deferredRequestError) return deferredRequestError;
 
   if (!uncommitted && effectivePr != null) {
     const gate = await enforcePostPushReviewGate({
@@ -89,12 +98,11 @@ export async function runCodexReview({
   }
 
   // Compute the diff once and reuse it across both reviewers.
-  const { diffText, manifest, baseRefDescriptor, unreviewedUntrackedPaths, trackedSymlinks } = await computeReviewDiff(
-    repoRoot,
-    baseBranch,
-    uncommitted,
-  );
-  const diffMode = selectDiffMode({ diffText });
+  const deferredStart = publicationMode === "deferred"
+    ? await prepareDeferredReviewRevision({ repoRoot, baseBranch, uncommitted })
+    : null;
+  const reviewDiff = deferredStart?.diff ?? await computeReviewDiff(repoRoot, baseBranch, uncommitted);
+  const { diffText, manifest, baseRefDescriptor, unreviewedUntrackedPaths, trackedSymlinks } = reviewDiff;
 
   // Read the repo's architecture.vocabulary (issue #931). Sourced from a
   // trusted base ref when the PR's diff modifies .ground-control.yaml so the
@@ -102,20 +110,17 @@ export async function runCodexReview({
   // Best-effort: null vocabulary falls through to workflow-level defaults.
   const vocabulary = await readVocabularyForReview(repoRoot, baseBranch);
 
-  // Plan how the authoritative diff reaches the reviewers. Inline mode yields
-  // exactly one slice and the prompts are byte-identical to before; manifest
-  // mode yields the bounded slices the server supplies itself instead of asking
-  // the reviewer to fetch per-file diffs (issue #1414).
-  const slicePlan = planReviewSlices({ diffText });
-  const promptArgs = {
+  // Reserve the full prompt wrapper before choosing whole-diff or sliced mode.
+  const sharedPromptArgs = {
     baseBranch,
     uncommitted,
-    diffMode,
     diffManifest: manifest,
     baseRefDescriptor,
     vocabulary,
     trackedSymlinks,
   };
+  const { diffMode, slicePlan } = planBoundedReviewPrompts({ diffText, promptArgs: sharedPromptArgs });
+  const promptArgs = { ...sharedPromptArgs, diffMode };
 
   // Parse each reviewer's tail independently. A malformed payload from one
   // reviewer must not lose the other reviewer's findings (per #793 the
@@ -161,7 +166,7 @@ export async function runCodexReview({
     unreviewedUntrackedPaths,
   });
   if (!reviewCoverage.complete) {
-    return buildReviewCoverageIncompleteEnvelope({
+    const incomplete = buildReviewCoverageIncompleteEnvelope({
       repoRoot,
       baseBranch,
       uncommitted,
@@ -172,6 +177,23 @@ export async function runCodexReview({
       parseErrors,
       core,
       security,
+    });
+    if (publicationMode !== "deferred") return incomplete;
+    return retainDeferredCodexReview({
+      repoRoot, repositoryId: `${owner}/${name}`, baseBranch, uncommitted,
+      ownership: prePushOwnership, initialRevision: deferredStart.revision,
+      diffMode, reviewCoverage, core, security, terminal: incomplete, stationObservation,
+    });
+  }
+
+  if (publicationMode === "deferred") {
+    const deferredFindingCount = (core?.findings?.length ?? 0) + (security?.findings?.length ?? 0);
+    return retainDeferredCodexReview({
+      repoRoot, repositoryId: `${owner}/${name}`, baseBranch, uncommitted,
+      ownership: prePushOwnership, initialRevision: deferredStart.revision,
+      diffMode, reviewCoverage, core, security,
+      terminal: { ok: true, next_action: deferredFindingCount === 0
+        ? "proceed_clean" : prePushOwnership?.nextAction ?? null }, stationObservation,
     });
   }
 
@@ -353,7 +375,6 @@ export async function runCodexReview({
       );
     } catch (markerError) {
       // Surface as warning text; do not throw.
-      // eslint-disable-next-line no-console
       console.error(
         `[gc_codex_review] cycle marker post failed for PR #${cycleOwnership.prNumber}: ${markerError.message}`,
       );

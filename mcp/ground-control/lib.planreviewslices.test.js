@@ -47,6 +47,19 @@ describe("planReviewSlices", () => {
     assert.equal(plan.files_covered, 1);
   });
 
+  it("reserves the reviewer prompt overhead before accepting a whole-diff slice", () => {
+    const a = fileDiff("A.js", ["a".repeat(200)]);
+    const b = fileDiff("B.js", ["b".repeat(200)]);
+    const diffText = a + b;
+    const maxBytes = Buffer.byteLength(diffText, "utf8") + 1;
+    const promptOverheadBytes = Buffer.byteLength(a, "utf8") + 1;
+    const plan = planReviewSlices({ diffText, maxBytes, promptOverheadBytes });
+    assert.equal(plan.slices.length, 2);
+    assert.equal(plan.slices.join(""), diffText);
+    assert.ok(plan.slices.every((slice) =>
+      Buffer.byteLength(slice, "utf8") + promptOverheadBytes <= maxBytes));
+  });
+
   it("returns a single slice when the byte cap is disabled", () => {
     const diffText = fileDiff("Big.java", Array.from({ length: 500 }, (_, i) => `line ${i}`));
     const plan = planReviewSlices({ diffText, maxBytes: 0 });

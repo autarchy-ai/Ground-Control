@@ -73,8 +73,9 @@ For each agent or script/agent band:
    inspection, planning, acknowledgment, or partial progress. Validate the
    primary-owned execution contract, then merge the remaining cached state.
 
-Keep raw CI/Sonar payloads and verbatim review findings server-side in their
-MCP records. The primary consumes compact structured envelopes.
+Keep raw CI/Sonar payloads server-side. Keep original deferred-review findings
+in protected local MCP artifacts and publish only the validated sanitized
+rendering. The primary consumes compact structured envelopes.
 
 ## Execution bands
 

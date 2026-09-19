@@ -20,6 +20,7 @@
 argdown-feedback @ git+https://github.com/debatelab/argdown-feedback@0bd882ea1a2ad1ec8f375d7afb69ef4ee51b97cb
 
 # Security floors for transitive dependencies used by the validator stack.
+anyio>=4.14.2
 cryptography>=50.0.0
 orjson>=3.11.9
 gradio>=6.20.0

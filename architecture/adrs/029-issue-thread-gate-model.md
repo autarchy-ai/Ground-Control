@@ -8,6 +8,22 @@ Accepted
 
 2026-05-03
 
+> **Amended by issue #1632 (2026-09-18):** Review execution and public
+> durable-record publication are separate operations. A pre-push Codex review
+> may run in `deferred` publication mode, which retains the exact reviewed
+> revision and complete original result in protected per-worktree Git metadata
+> and performs no GitHub write. `gc_publish_review_result` accepts a sanitized
+> one-to-one rendering, preserves the reviewer verdict and finding identity
+> and classification, validates caller dispositions, rechecks the revision
+> and cycle slot, then writes findings, cycle, and decision records in that
+> order with provenance. Trusted stage markers make retries idempotent. An
+> exhausted non-verdict result is a separate retained kind whose explicit
+> publication writes only closed-code station-observation opening and
+> escalation records; no decision record or cycle is consumed. `automatic`
+> pre-push mode composes the same executor and publisher. An unpublished local
+> result is never issue-thread gate evidence and cannot satisfy readiness or
+> completion.
+
 > **Amended by ADR-099 (2026-09-17):** The dedicated test-quality reviewer,
 > Step 6.6, its MCP tools, configuration, markers, and policy contract are
 > removed. The Codex cap bounds additional review iterations; after all known

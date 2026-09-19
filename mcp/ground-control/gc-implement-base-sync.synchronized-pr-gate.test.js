@@ -202,6 +202,7 @@ describe("synchronized PR gate", () => {
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
+      reviewEvidenceReader: async () => ({ ok: true, published: true }),
       syncRecordReader: async () => ({
         ok: true,
         record: {
@@ -223,6 +224,27 @@ describe("synchronized PR gate", () => {
     assert.equal(result.error, "implement_pr_sync_stale");
     assert.equal(result.next_action, "return_to_the_synchronization_boundary");
     assert.equal(prCreateCalled, false);
+  });
+
+  it("refuses PR creation before any repository write when trusted publication evidence is absent", async () => {
+    const calls = [];
+    const result = await runCreateSynchronizedImplementPr({
+      repoPath: REPO_ROOT,
+      issueNumber: ISSUE,
+      branchName: BRANCH,
+      recordId: RECORD,
+      title: "feat: require synchronized implement PRs",
+      body: renderedPrBody(),
+    }, {
+      workspaceAuthorizationResolver: workspaceAuthorization,
+      commandRunner: async (command, args) => { calls.push([command, args]); return { stdout: "" }; },
+      contextResolver: async () => context(),
+      issueThreadReader: requirementsThreadReader(),
+      reviewEvidenceReader: async () => ({ ok: true, published: false }),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "implement_pr_review_publication_missing");
+    assert.deepEqual(calls, []);
   });
 
   it("pins PR lookup and creation to the authorized repository", async () => {
@@ -261,6 +283,7 @@ describe("synchronized PR gate", () => {
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
+      reviewEvidenceReader: async () => ({ ok: true, published: true }),
       syncRecordReader: async () => ({
         ok: true,
         record: {
@@ -326,6 +349,7 @@ describe("synchronized PR gate", () => {
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
+      reviewEvidenceReader: async () => ({ ok: true, published: true }),
       syncRecordReader: async () => ({
         ok: true,
         record: {
@@ -383,6 +407,7 @@ describe("synchronized PR gate", () => {
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
+      reviewEvidenceReader: async () => ({ ok: true, published: true }),
       syncRecordReader: async () => ({
         ok: true,
         record: {

@@ -342,7 +342,7 @@ process.stdin.on("end", () => {
     }
   });
 
-  it("reports a coverage failure through the cycle envelope as post_failed", async () => {
+  it("retains an exhausted sliced review without a cycle or GitHub write", async () => {
     const shim = makeOverCapRepo({
       codexTails: [cleanTail("Slice one read."), "no structured tail\n"],
     });
@@ -352,10 +352,12 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           issueNumber: 1414,
           uncommitted: true,
+          publicationMode: "deferred",
         }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.ok, false);
-        assert.equal(result.status, "post_failed");
-        assert.equal(result.error, "review_coverage_incomplete");
+        assert.equal(result.error, "review_station_unobserved");
+        assert.equal(result.publication_status, "unpublished_failure");
+        assert.deepEqual(result.failure_causes, ["missing_tail"]);
         assert.equal(result.diff_mode, "manifest");
         // No decision record either — the cycle wrapper must not paper over a
         // review that never covered the diff.

@@ -35,13 +35,16 @@ const NOT_GROUND_CONTROL_OWNED = new Set([
 ]);
 
 function sourceFiles(dir) {
+  // Test fixtures execute in the test runner, not the launched server. Their
+  // PATH shims must not expand the server's documented environment contract.
   const found = [];
   for (const entry of readdirSync(dir)) {
     if (entry === "node_modules" || entry === "coverage" || entry.startsWith(".")) continue;
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
       found.push(...sourceFiles(full));
-    } else if (entry.endsWith(".js") && !entry.endsWith(".test.js")) {
+    } else if (entry.endsWith(".js") && !entry.endsWith(".test.js")
+      && !entry.endsWith(".test-helpers.js")) {
       found.push(full);
     }
   }
@@ -66,6 +69,12 @@ function documentedNames(text) {
 }
 
 describe("Ground Control environment inventory parity", () => {
+  it("scans runtime source without treating test helpers as server consumers", () => {
+    const files = sourceFiles(SERVER_ROOT);
+    assert.ok(files.some((file) => file.endsWith("/lib/server-env.js")));
+    assert.ok(files.every((file) => !file.endsWith(".test-helpers.js")));
+  });
+
   it("inventories every variable the server's own source reads", () => {
     const unowned = new Map();
     for (const file of sourceFiles(SERVER_ROOT)) {

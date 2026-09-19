@@ -133,3 +133,14 @@ export async function acquireImplementPublishLock(gitDir, { retries = 0 } = {}) 
     lockedMessage: `an implement publish is already in progress for: ${canonical}`,
   });
 }
+
+export async function acquireReviewPublicationLock(gitDir, { issueNumber, reviewer, retries = 5 }) {
+  const canonical = canonicalLeaseDirectory("acquireReviewPublicationLock", gitDir);
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0 || reviewer !== "codex") {
+    throw new Error("acquireReviewPublicationLock: canonical issueNumber and reviewer are required");
+  }
+  return acquireFilesystemLock(canonical, `.gc-review-publication-${issueNumber}-${reviewer}-lock`, {
+    retries,
+    lockedMessage: `review publication is already in progress for issue ${issueNumber} and ${reviewer}`,
+  });
+}
