@@ -138,8 +138,19 @@ describe("MCP tool description parity (issue #1169)", { timeout: 30000 }, () => 
       assert.match(descriptionMap[name], /async-only/i);
       assert.match(descriptionMap[name], /idempotency_key/);
       assert.match(descriptionMap[name], /gc_codex_job/);
+      assert.deepEqual(properties?.publication_mode?.enum, ["automatic", "deferred"]);
     }
     assert.equal(toolMap.gc_test_quality_review, undefined);
     assert.equal(toolMap.gc_test_quality_review_cycle, undefined);
+  });
+
+  it("publishes separate retained-review inspection and publication capabilities", () => {
+    const inspect = toolMap.gc_get_review_result?.inputSchema?.properties;
+    const publish = toolMap.gc_publish_review_result?.inputSchema?.properties;
+    assert.deepEqual(Object.keys(inspect ?? {}).sort(), ["repo_path", "review_handle"]);
+    assert.deepEqual(Object.keys(publish ?? {}).sort(), ["architectural_read", "findings", "notes", "publication_kind", "repo_path", "review_handle", "verdict"]);
+    assert.match(descriptionMap.gc_get_review_result, /no GitHub writes/i);
+    assert.match(descriptionMap.gc_publish_review_result, /sanitized/i);
+    assert.match(descriptionMap.gc_publish_review_result, /stale/i);
   });
 });

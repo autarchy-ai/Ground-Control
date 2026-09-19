@@ -8,6 +8,14 @@ Proposed
 
 2026-05-09
 
+> **Amended by issue #1632 (2026-09-18):** Executing a deferred review does not
+> consume a cycle. The cycle is consumed only when the exact reviewed revision's
+> sanitized record is published, after the server proves a complete one-to-one
+> mapping to the retained findings and preserves classification and disposition.
+> A stale or incomplete result is retained for diagnosis but cannot be
+> published. This changes the publication boundary, not the cap or stopping
+> semantics established here and amended by ADR-099.
+
 > **Superseded in part by ADR-099 (2026-09-17):** The Codex cap is a bound on
 > review iterations, not a clean-verdict delivery gate. After known findings are
 > fixed or explicitly dispositioned and verified, declining another cycle

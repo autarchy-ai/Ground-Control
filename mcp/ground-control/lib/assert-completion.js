@@ -15,6 +15,7 @@ import { verifyMergedRequirementState } from "./merged-requirement-state.js";
 import { validateFinalReportInput } from "./plan-posting.js";
 import { readRemoteGateSnapshot } from "./remote-gates.js";
 import { execFile } from "./runtime-primitives.js";
+import { readTrustedReviewPublicationEvidence } from "./review-publication-evidence.js";
 
 const FULL_GIT_OID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
@@ -76,6 +77,28 @@ async function _readCompletionObligationState(repository, issueNumber, assertion
     };
   }
   return { ok: true };
+}
+
+async function _assertReviewPublished(repository, issueNumber, assertions) {
+  const evidence = await readTrustedReviewPublicationEvidence({
+    repoRoot: repository.repoRoot,
+    owner: repository.owner,
+    name: repository.name,
+    issueNumber,
+  });
+  if (evidence.ok && evidence.published) {
+    assertions.push({ name: "codex_review_published", ok: true, comment_id: evidence.comment_id });
+    return null;
+  }
+  return {
+    ok: false,
+    error: evidence.error ?? "completion_review_publication_missing",
+    message: evidence.message ?? "A trusted published Codex decision record is required before readiness or completion.",
+    issue_number: issueNumber,
+    assertions,
+    final_report: null,
+    next_action: "publish_the_retained_review_or_run_the_automatic_review_cycle",
+  };
 }
 
 // Phase D terminal (phase="pre_merge"): post the readiness record and return its
@@ -310,9 +333,8 @@ async function _runPostMergeCompletion({ subInput, repoPath, issueNumber, prNumb
   };
 }
 
-export async function runAssertCompletion(input, { workspaceAuthorizationResolver = undefined } = {}) {
+function completionSubInput(input) {
   const {
-    repoPath,
     issueNumber,
     prNumber,
     requirements = [],
@@ -326,13 +348,8 @@ export async function runAssertCompletion(input, { workspaceAuthorizationResolve
     plainEnglishOutcome,
     documentation_outcome,
     lane = "implement",
-    phase = "post_merge",
   } = input;
-
-  const assertions = [];
-
-  // Fail-fast: validate the final-report sub-input BEFORE any side effects.
-  const subInput = {
+  return {
     issueNumber,
     prNumber,
     requirements: requirements.map((r) => ({
@@ -352,6 +369,46 @@ export async function runAssertCompletion(input, { workspaceAuthorizationResolve
     documentation_outcome: documentation_outcome ?? null,
     lane,
   };
+}
+
+async function runPreMergeCompletion({ subInput, repository, issueNumber, prNumber, assertions, workspaceAuthorizationResolver }) {
+  if (subInput.ciStatus !== "green") {
+    return { ok: false, error: "final_report_ci_not_green", assertions, final_report: null };
+  }
+  const repoPath = repository.repoRoot;
+  const hosted = await readRemoteGateSnapshot({ repoPath, prNumber }, { workspaceAuthorizationResolver });
+  if (!hosted.ok || !hosted.passed || hosted.state !== "OPEN") {
+    return { ok: false, error: "completion_hosted_checks_not_green", hosted,
+      next_action: "repair_or_wait_for_current_head_hosted_checks", assertions, final_report: null };
+  }
+  if (subInput.lane !== "quickfix") {
+    const reviewRefusal = await _assertReviewPublished(repository, issueNumber, assertions);
+    if (reviewRefusal) return reviewRefusal;
+  }
+  return _runPreMergeReadiness({
+    subInput, repoPath, issueNumber, prNumber, assertions, workspaceAuthorizationResolver,
+  });
+}
+
+function applyObservedMergedRequirements(subInput, verify) {
+  if (verify.ok && !verify.skip && Array.isArray(verify.observed)) {
+    const observedByUid = new Map(verify.observed.map((o) => [o.uid, o]));
+    subInput.requirements = subInput.requirements.map((r) => {
+      const observed = observedByUid.get(r.uid);
+      return observed
+        ? { ...r, title: observed.observed_title ?? r.title, status: observed.observed_status ?? r.status }
+        : r;
+    });
+  }
+  subInput.mergeRevision = verify.revision ?? null;
+  if (verify.overridden) subInput.requirementStateOverrideReason = verify.reason;
+}
+
+export async function runAssertCompletion(input, { workspaceAuthorizationResolver = undefined } = {}) {
+  const { repoPath, issueNumber, prNumber, requirements = [], lane = "implement", phase = "post_merge" } = input;
+  const assertions = [];
+  // Fail-fast: validate the final-report sub-input BEFORE any side effects.
+  const subInput = completionSubInput(input);
   const validation = validateFinalReportInput(subInput);
   if (!validation.ok) {
     return {
@@ -384,24 +441,11 @@ export async function runAssertCompletion(input, { workspaceAuthorizationResolve
   if (obligationCheck.earlyReturn) return obligationCheck.earlyReturn;
 
   // Phase D terminal (phase="pre_merge", issue #963): post the ready-for-review
-  // record only. The requirement-status transition and traceability
-  // reconciliation have NOT run yet — they are Phase E work that lands after the
-  // PR merges — so this path skips that assertion and posts no `gc:final-report`
-  // marker. Every input gate (CI green, Sonar pass/legit-skip, codex review
-  // present, sensitive/reserved/defer scrubs) still runs inside runPostFinalReport.
-  // Traceability reconciliation is deliberately NOT asserted here — it depends
-  // on the post-merge DRAFT→ACTIVE transition and is verified by the
-  // phase="post_merge" completion.
+  // record only. Requirement status and traceability are proposed in the delivery
+  // PR, not authoritative until merged. Every hosted and publication gate still
+  // applies; this path posts no `gc:final-report` marker.
   if (phase === "pre_merge") {
-    if (ciStatus !== "green") return { ok: false, error: "final_report_ci_not_green", assertions, final_report: null };
-    const hosted = await readRemoteGateSnapshot({ repoPath: authorizedRepoPath, prNumber }, { workspaceAuthorizationResolver });
-    if (!hosted.ok || !hosted.passed || hosted.state !== "OPEN") {
-      return { ok: false, error: "completion_hosted_checks_not_green", hosted,
-        next_action: "repair_or_wait_for_current_head_hosted_checks", assertions, final_report: null };
-    }
-    return _runPreMergeReadiness({
-      subInput, repoPath: authorizedRepoPath, issueNumber, prNumber, assertions, workspaceAuthorizationResolver,
-    });
+    return runPreMergeCompletion({ subInput, repository, issueNumber, prNumber, assertions, workspaceAuthorizationResolver });
   }
 
   // Phase E (phase="post_merge", default): the reconciled completion record is
@@ -429,19 +473,11 @@ export async function runAssertCompletion(input, { workspaceAuthorizationResolve
   });
   if (verify.earlyReturn) return verify.earlyReturn;
   // Render OBSERVED merged values, not caller-supplied status/title (issue #1541).
-  if (verify.ok && !verify.skip && Array.isArray(verify.observed)) {
-    const observedByUid = new Map(verify.observed.map((o) => [o.uid, o]));
-    subInput.requirements = subInput.requirements.map((r) => {
-      const observed = observedByUid.get(r.uid);
-      return observed
-        ? { ...r, title: observed.observed_title ?? r.title, status: observed.observed_status ?? r.status }
-        : r;
-    });
+  applyObservedMergedRequirements(subInput, verify);
+  if (lane !== "quickfix") {
+    const reviewRefusal = await _assertReviewPublished(repository, issueNumber, assertions);
+    if (reviewRefusal) return reviewRefusal;
   }
-  subInput.mergeRevision = verify.revision ?? null;
-  // The override reason is the trusted authorization comment itself, so recording it in
-  // the final report keeps the durable record self-consistent.
-  if (verify.overridden) subInput.requirementStateOverrideReason = verify.reason;
   return _runPostMergeCompletion({
     subInput, repoPath: authorizedRepoPath, issueNumber, prNumber, assertions, workspaceAuthorizationResolver,
   });

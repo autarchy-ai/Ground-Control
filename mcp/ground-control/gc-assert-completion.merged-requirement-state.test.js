@@ -46,7 +46,13 @@ function writeGhShim(dir, { oid, issueBody, issueNumber, comments = [] }) {
   const restPull = restPullRequest({
     number: 42, state: "MERGED", mergedAt: "2026-09-03T00:00:00Z", baseRefName: "dev", mergeCommitOid: oid,
   });
-  const cfg = { oid, issueBody, issueNumber, restPull, comments };
+  const provenance = `schema="gc.review-publication/v1" publication="${"a".repeat(64)}" original="${"b".repeat(64)}" revision="${"c".repeat(64)}" sanitized="${"d".repeat(64)}"`;
+  const publication = [
+    { id: 8997, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:review-publication stage="findings" reviewer="codex" issue="${issueNumber}" cycle="1" ${provenance} -->\n\n**gc_codex_review** — sanitized deferred publication` },
+    { id: 8998, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:codex-prepush-cycle issue="${issueNumber}" branch="x" cycle="1" ${provenance} -->\n\n_gc_codex_review pre-push cycle 1 complete` },
+    { id: 8999, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:decision-record reviewer="codex" cycle="1" issue="${issueNumber}" ${provenance} -->\n\n## Review decision record — codex cycle 1` },
+  ];
+  const cfg = { oid, issueBody, issueNumber, restPull, comments: [...comments, ...publication] };
   const cfgPath = join(dir, "cfg.json");
   writeFileSync(cfgPath, JSON.stringify(cfg));
   const src = `#!/usr/bin/env node

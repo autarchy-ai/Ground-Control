@@ -16,6 +16,7 @@ import { readTrustedImplementSyncRecord } from "./knowledge-capture.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { rejectReservedMarkerSequence } from "./repo-vocabulary.js";
 import { checkPrBodyShape, execFile } from "./runtime-primitives.js";
+import { readTrustedReviewPublicationEvidence } from "./review-publication-evidence.js";
 
 export class ReviewerCapConfigError extends Error {
   constructor(blockName, configErrors) {
@@ -254,48 +255,70 @@ async function assertPrBodyClosingKeywordBoundToIssueScope(input, issueThreadRea
   }
   return { ok: true };
 }
-export async function runCreateSynchronizedImplementPr(input, {
-  workspaceAuthorizationResolver = resolveMcpLaunchWorkspaceAuthorization,
-  commandRunner = execFile,
-  contextResolver = getRepoGroundControlContext,
-  syncRecordReader = readTrustedImplementSyncRecord,
-  issueThreadReader = (args) => runGetIssueThread(args, { workspaceAuthorizationResolver }),
-} = {}) {
-  const inputValidation = validateSynchronizedImplementPrInput(input);
-  if (!inputValidation.ok) return inputValidation;
+async function prepareSynchronizedPrContext(input, { workspaceAuthorizationResolver, contextResolver }) {
   let repoRoot;
   let context;
   try {
     repoRoot = realpathSync(await ensureGitRepo(input.repoPath));
     context = await contextResolver(repoRoot);
   } catch (error) {
-    return { ok: false, error: "implement_pr_context_failed", message: error.message };
+    return { earlyReturn: { ok: false, error: "implement_pr_context_failed", message: error.message } };
   }
   if (context?.status !== "ok") {
-    return {
+    return { earlyReturn: {
       ok: false,
       error: "implement_pr_context_invalid",
       message: "The repository Ground Control context is invalid",
       next_action: "repair_ground_control_configuration_and_retry",
-    };
+    } };
   }
   const repoAuthorization = await authorizeImplementRepoRoot(
     repoRoot,
     workspaceAuthorizationResolver,
   );
-  if (!repoAuthorization.ok) return repoAuthorization;
+  if (!repoAuthorization.ok) return { earlyReturn: repoAuthorization };
   const baseBranch = context?.workflow?.base_branch ?? "dev";
   const titleValidation = validateImplementPrTitle(input.title, context?.workflow?.pr_title);
   if (!titleValidation.ok) {
-    return {
+    return { earlyReturn: {
       ok: false,
       error: "implement_pr_title_invalid",
       message: titleValidation.message,
       next_action: "reshape_the_title_and_retry",
-    };
+    } };
   }
+  return { repoRoot, repoAuthorization, baseBranch };
+}
+
+export async function runCreateSynchronizedImplementPr(input, {
+  workspaceAuthorizationResolver = resolveMcpLaunchWorkspaceAuthorization,
+  commandRunner = execFile,
+  contextResolver = getRepoGroundControlContext,
+  syncRecordReader = readTrustedImplementSyncRecord,
+  issueThreadReader = (args) => runGetIssueThread(args, { workspaceAuthorizationResolver }),
+  reviewEvidenceReader = readTrustedReviewPublicationEvidence,
+} = {}) {
+  const inputValidation = validateSynchronizedImplementPrInput(input);
+  if (!inputValidation.ok) return inputValidation;
+  const prepared = await prepareSynchronizedPrContext(input, { workspaceAuthorizationResolver, contextResolver });
+  if (prepared.earlyReturn) return prepared.earlyReturn;
+  const { repoRoot, repoAuthorization, baseBranch } = prepared;
   const closingBinding = await assertPrBodyClosingKeywordBoundToIssueScope(input, issueThreadReader);
   if (!closingBinding.ok) return closingBinding;
+  const reviewEvidence = await reviewEvidenceReader({
+    repoRoot,
+    owner: repoAuthorization.owner,
+    name: repoAuthorization.name,
+    issueNumber: input.issueNumber,
+  });
+  if (reviewEvidence?.ok !== true || reviewEvidence.published !== true) {
+    return {
+      ok: false,
+      error: "implement_pr_review_publication_missing",
+      message: reviewEvidence?.message ?? "A complete trusted review publication is required before PR creation.",
+      next_action: "publish_the_retained_review_and_retry",
+    };
+  }
   try {
     const synchronization = await validateImplementSynchronization({
       repoRoot,

@@ -269,9 +269,9 @@ function _registerGcCreateSynchronizedImplementPr(server) {
     "Inputs are repo_path, issue_number, branch_name, synchronization record_id, title, and the body rendered by " +
     "gc_render_pr_body. Immediately before the GitHub write it re-fetches the configured integration branch, verifies " +
     "the trusted issue-thread record, verified tree, local feature SHA, remote feature SHA, fetched base SHA, ancestry, " +
-    "repository identity, repository-scoped existing PR identity/content, and configured Conventional Commit title policy. " +
-    "Any stale or missing evidence refuses with a next_action returning " +
-    "the workflow to gc_synchronize_implement_branch; callers must not fall back to direct gh pr create.",
+    "repository identity, a complete trusted review-publication tuple, repository-scoped existing PR identity/content, " +
+    "and configured Conventional Commit title policy. Any stale or missing evidence refuses with a next_action returning " +
+    "the workflow to the named repair or synchronization boundary; callers must not fall back to direct gh pr create.",
     {
       repo_path: z.string(),
       issue_number: z.number().int().positive(),

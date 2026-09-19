@@ -57,6 +57,12 @@ function makeCompletionShimRepo({
     "repository-owner": "admin",
   },
 } = {}) {
+  const provenance = `schema="gc.review-publication/v1" publication="${"a".repeat(64)}" original="${"b".repeat(64)}" revision="${"c".repeat(64)}" sanitized="${"d".repeat(64)}"`;
+  comments = [...comments,
+    { id: 8997, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:review-publication stage="findings" reviewer="codex" issue="1103" cycle="1" ${provenance} -->\n\n**gc_codex_review** — sanitized deferred publication` },
+    { id: 8998, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:codex-prepush-cycle issue="1103" branch="x" cycle="1" ${provenance} -->\n\n_gc_codex_review pre-push cycle 1 complete` },
+    { id: 8999, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:decision-record reviewer="codex" cycle="1" issue="1103" ${provenance} -->\n\n## Review decision record — codex cycle 1` },
+  ];
   const repoDir = initGitRepo(mkdtempSync(join(tmpdir(), "gc-completion-shim-")));
   const binDir = mkdtempSync(join(tmpdir(), "gc-completion-bin-"));
   const counterPath = join(binDir, "counter.json");
@@ -179,11 +185,12 @@ process.exit(1);
 
 // ---------------------------------------------------------------------------
 // Happy path — no in-scope requirements, ci green / sonar skipped, codex review
-// present, PR merged → ok:true. The thin gate carries NO reconcile assertion.
+// present, PR merged → ok:true. The gate records trusted published-review
+// evidence without restoring the removed GRC reconciliation assertion.
 // ---------------------------------------------------------------------------
 
 describe("runAssertCompletion — thin post-merge happy path", () => {
-  it("returns ok:true, empty assertions[], final_report with comment_url", async () => {
+  it("returns ok:true with published-review evidence and a final report", async () => {
     const shim = makeCompletionShimRepo({ comments: [], commentIdSeq: [9500, 9501, 9502] });
     try {
       const r = await withShimPath(shim.binDir, () =>
@@ -200,7 +207,11 @@ describe("runAssertCompletion — thin post-merge happy path", () => {
       );
       assert.equal(r.ok, true, `expected ok:true; got: ${JSON.stringify(r)}`);
       assert.ok(Array.isArray(r.assertions));
-      assert.equal(r.assertions.length, 0, "thin completion carries no reconcile assertion");
+      assert.deepEqual(r.assertions, [{
+        name: "codex_review_published",
+        ok: true,
+        comment_id: 8999,
+      }]);
       assert.ok(r.final_report != null);
       assert.ok(typeof r.final_report.comment_url === "string");
     } finally {

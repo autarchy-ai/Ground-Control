@@ -23,7 +23,8 @@
 //   tools/post-decision-record.js — gc_post_decision_record, gc_post_final_report,
 //                                   gc_assert_completion, gc_render_pr_body,
 //                                   gc_get_issue_thread, gc_watch_ci_run,
-//                                   gc_codex_review_cycle
+//                                   gc_codex_review_cycle, gc_get_review_result,
+//                                   gc_publish_review_result
 //   tools/review-cap-disposition.js — gc_review_cap_disposition, gc_codex_job,
 //                                   gc_watch_sonar_analysis, gc_prepare_implement_branch,
 //                                   gc_implement_mechanical, gc_synchronize_implement_branch,

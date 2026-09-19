@@ -94,6 +94,20 @@ class ImplementExecutionChecksTest(PolicyChecksFixture):
                 {item.code for item in violations},
             )
 
+    def test_implement_execution_contract_requires_published_decision_before_repair(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = self._implement_contract_root(tmp_dir)
+            rules = root / "skills/implement/steps/_review-loop-rules.md"
+            text = rules.read_text(encoding="utf-8")
+            anchor = "published decision record is written before the repair"
+            self.assertIn(anchor, text)
+            rules.write_text(text.replace(anchor, "decision record is optional"), encoding="utf-8")
+            violations = run_implement_execution_contract(root=root)
+            self.assertIn(
+                "implement-review-fix-evidence-contract",
+                {item.code for item in violations},
+            )
+
     def test_implement_execution_contract_rejects_dropped_sync_policy_command_token(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = self._implement_contract_root(tmp_dir)

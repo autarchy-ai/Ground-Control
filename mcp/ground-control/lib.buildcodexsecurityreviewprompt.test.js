@@ -276,6 +276,10 @@ describe("buildDiffBlock", () => {
 });
 
 describe("selectDiffMode", () => {
+  it("counts prompt overhead when selecting manifest mode", () => {
+    assert.equal(selectDiffMode({ diffText: "x".repeat(900), maxBytes: 1024,
+      promptOverheadBytes: 200 }), "manifest");
+  });
   it("returns 'inline' for diffs under the cap", () => {
     assert.equal(selectDiffMode({ diffText: "x".repeat(100), maxBytes: 1024 }), "inline");
   });

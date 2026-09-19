@@ -6,6 +6,7 @@
 
 import { readFileSync } from "node:fs";
 import { isAbsolute, relative } from "node:path";
+import { buildReviewPublicationMarkerAttributes } from "./review-publication-markers.js";
 
 export function isPathStrictlyInside(canonicalRoot, canonicalPath) {
   const rel = relative(canonicalRoot, canonicalPath);
@@ -136,6 +137,7 @@ export function buildCodexReviewPrePushCycleMarker({
   // pass the cfg-resolved cap so the marker headline reflects what the run
   // actually enforced.
   hardCap = CODEX_REVIEW_PREPUSH_HARD_CAP,
+  publication = null,
 }) {
   const branchAttr = JSON.stringify(String(branchName)).slice(1, -1); // raw inner JSON-encoded form
   const overrideAttr = override === true ? ' override="true"' : "";
@@ -143,6 +145,9 @@ export function buildCodexReviewPrePushCycleMarker({
     override === true && typeof overrideReason === "string" && overrideReason.trim() !== ""
       ? ` reason=${JSON.stringify(overrideReason.trim())}`
       : "";
+  const publicationAttr = publication == null
+    ? ""
+    : ` ${buildReviewPublicationMarkerAttributes(publication)}`;
   const headline = override
     ? `_gc_codex_review pre-push cycle ${cycleNumber} (USER-AUTHORIZED OVERRIDE past cap ${hardCap}) complete for issue #${issueNumber} on branch '${branchName}'._`
     : `_gc_codex_review pre-push cycle ${cycleNumber} of ${hardCap} complete for issue #${issueNumber} on branch '${branchName}'._`;
@@ -151,7 +156,7 @@ export function buildCodexReviewPrePushCycleMarker({
       ? `\nOverride reason: ${overrideReason.trim()}`
       : "";
   return [
-    `${CODEX_REVIEW_PREPUSH_MARKER_PREFIX} issue="${issueNumber}" branch="${branchAttr}" cycle="${cycleNumber}"${overrideAttr}${reasonAttr} -->`,
+    `${CODEX_REVIEW_PREPUSH_MARKER_PREFIX} issue="${issueNumber}" branch="${branchAttr}" cycle="${cycleNumber}"${overrideAttr}${reasonAttr}${publicationAttr} -->`,
     "",
     headline +
       ` Posted by the MCP server to enforce the pre-push hard-cap-${hardCap} contract (issues #796, #804, #906). ` +
