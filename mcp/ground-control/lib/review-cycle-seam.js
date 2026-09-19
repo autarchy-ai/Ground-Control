@@ -7,9 +7,56 @@
 import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { runCodexReview } from "./codex-review-runner.js";
 import { runPostDecisionRecord } from "./decision-records.js";
+import { buildAutomaticReviewPublication, retainDeferredStationFailure } from "./deferred-review-execution.js";
 import { _statusForReviewerAction, buildAutoFixDecisionFindings, normalizeReviewCycleNextAction, reviewCycleFindings, summarizeReviewFindings } from "./knowledge-capture.js";
 import { verifyAutoDispositionGrant } from "./review-cap-disposition-2.js";
 import { _decorateUnobservedStation, _runStationWithObservationLedger } from "./station-observation-seam.js";
+import { runPublishReviewResult } from "./review-result-publication.js";
+
+async function publishRetainedReview(execution, publicationKind, publish) {
+  try {
+    const result = await publish();
+    if (result?.ok === true) return result;
+    return {
+      ok: false,
+      status: "post_failed",
+      error: typeof result?.error === "string" ? result.error : "review_publication_failed",
+      message: "Automatic review publication did not complete; retry the retained result.",
+      review_handle: execution.review_handle,
+      publication_kind: publicationKind,
+      next_action: "retry_review_publication",
+    };
+  } catch {
+    return {
+      ok: false,
+      status: "post_failed",
+      error: "review_publication_failed",
+      message: "Automatic review publication did not complete; retry the retained result.",
+      review_handle: execution.review_handle,
+      publication_kind: publicationKind,
+      next_action: "retry_review_publication",
+    };
+  }
+}
+
+export async function runCodexReviewWithPublication(params, {
+  workspaceAuthorizationResolver = undefined,
+  reviewRunner = runCodexReview,
+  publisher = runPublishReviewResult,
+} = {}) {
+  if (params?.publicationMode !== "automatic" || params?.uncommitted !== true) {
+    return reviewRunner(params, { workspaceAuthorizationResolver });
+  }
+  const execution = await reviewRunner(
+    { ...params, publicationMode: "deferred" }, { workspaceAuthorizationResolver },
+  );
+  if (execution?.ok !== true || typeof execution.review_handle !== "string") return execution;
+  return publishRetainedReview(execution, "verdict", () => publisher({
+    repoPath: params.repoPath,
+    reviewHandle: execution.review_handle,
+    sanitized: buildAutomaticReviewPublication(execution),
+  }, { workspaceAuthorizationResolver }));
+}
 
 async function _runReviewCycleShared({
   reviewer,
@@ -222,7 +269,8 @@ export async function runCodexReviewCycle({
   overrideReason = null,
   autoGrant = false,
   signal = undefined,
-}, { workspaceAuthorizationResolver = undefined } = {}) {
+  publicationMode = "automatic",
+}, { workspaceAuthorizationResolver = undefined, reviewPublisher = runPublishReviewResult } = {}) {
   const prepared = await _prepareReviewCycle({
     reviewer: "codex",
     errorPrefix: "codex_review_cycle",
@@ -245,6 +293,7 @@ export async function runCodexReviewCycle({
     repoPath: authorizedRepoPath,
     issueNumber,
     signal,
+    recordDurably: false,
     invokeReview: ({ stationObservation }) => runCodexReview({
       repoPath: authorizedRepoPath,
       baseBranch: baseBranch ?? "dev",
@@ -254,8 +303,31 @@ export async function runCodexReviewCycle({
       overrideReason: prepared.overrideReason,
       stationObservation,
       signal,
+      publicationMode: "deferred",
     }, { workspaceAuthorizationResolver }),
   });
+
+  if (run.exhaustedNonVerdict && typeof run.envelope?.review_handle === "string") {
+    const failure = await retainDeferredStationFailure({
+      repoRoot: authorizedRepoPath,
+      reviewHandle: run.envelope.review_handle,
+      attempts: run.attempts,
+    });
+    if (publicationMode === "deferred" || failure.ok === false
+      && failure.publication_status !== "unpublished_failure") return failure;
+    return publishRetainedReview(failure, "non_verdict", () => reviewPublisher({ repoPath: authorizedRepoPath,
+      reviewHandle: failure.review_handle, publicationKind: "non_verdict" },
+    { workspaceAuthorizationResolver }));
+  }
+  if (publicationMode === "deferred") return run.envelope;
+
+  if (run.envelope?.ok === true && typeof run.envelope.review_handle === "string") {
+    return publishRetainedReview(run.envelope, "verdict", () => reviewPublisher({
+      repoPath: authorizedRepoPath,
+      reviewHandle: run.envelope.review_handle,
+      sanitized: buildAutomaticReviewPublication(run.envelope),
+    }, { workspaceAuthorizationResolver }));
+  }
 
   return _finishReviewCycle({ reviewer: "codex", run, authorizedRepoPath, issueNumber, workspaceAuthorizationResolver });
 }

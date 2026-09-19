@@ -2,7 +2,7 @@
 
 This is the current enforcement inventory after the #1500 MCP-only re-platform
 and the issue #1303 reconciliation. It covers repository policy, local hooks,
-GitHub Actions and protection, `/implement`, and all 33 registered MCP tools.
+GitHub Actions and protection, `/implement`, and all 34 registered MCP tools.
 Historical ADR text is not evidence that a gate still exists.
 
 ## Placement doctrine

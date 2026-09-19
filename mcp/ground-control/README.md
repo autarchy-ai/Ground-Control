@@ -173,6 +173,8 @@ The complete keep/delete and placement record is in
 | Tool | Purpose |
 |---|---|
 | `gc_post_decision_record` | Render a review cycle's decision record from structured findings |
+| `gc_get_review_result` | Inspect a protected restart-durable deferred review by opaque handle, without a GitHub write |
+| `gc_publish_review_result` | Validate and idempotently publish a sanitized exact-revision review result with provenance |
 | `gc_post_final_report` | Render the trusted final record used inside the shared post-merge finalizer; `lane` selects the `/implement` or slim `/quickfix` shape |
 | `gc_assert_completion` | The merge-gated composite completion assertion |
 | `gc_render_pr_body` | Compose a PR body that satisfies `check_pr_body`'s policy gates from structured input |
@@ -192,7 +194,7 @@ enforcement layer every driver shares.
 |---|---|
 | `gc_codex_architecture_preflight` | Codex architecture preflight before planning |
 | `gc_codex_review` | Codex production-quality review with cycle caps |
-| `gc_codex_review_cycle` | Async-only, idempotent pre-push review cycle |
+| `gc_codex_review_cycle` | Async-only, idempotent pre-push review cycle; `publication_mode=deferred` retains locally without GitHub writes |
 | `gc_codex_verify_finding` | Verify a specific finding is resolved |
 
 **Maintainer PR review lane (`tools/pr-review.js`)**
@@ -253,7 +255,32 @@ Per ADR-027 and issue #793, the codex-backed review tools follow a strict separa
 - **Codex is the planner / reviewer.** It runs in a `read-only` sandbox with no GitHub credentials and returns structured payloads only. It must never invoke `gh`, `git`, or `curl` to post comments.
 - **The MCP server is the GitHub poster.** It validates codex's payloads against the schema below, then performs all GitHub writes (inline review comments, threaded replies, thread-resolution mutations, phase markers, cycle markers) from the host's authenticated `gh`.
 
-`gc_codex_review` consumes a `===FINDINGS===…===END===` JSON tail from each reviewer's stdout. The MCP server validates each finding lexically (path lives inside the repo, line is positive or null, body is non-empty and within GitHub's 65535-char limit) and then POSTs each finding to `/repos/{owner}/{repo}/pulls/{pr}/comments` with the PR's current head SHA. The `[core]` / `[security]` reviewer label is prepended to the comment body by the poster; codex does not include it in the JSON.
+For pre-push review, `publication_mode="deferred"` separates those boundaries.
+Execution stores the complete original result under protected per-worktree Git
+metadata and returns an opaque `review_handle`; it writes no finding, station,
+cycle, or decision comment and consumes no cycle. `gc_get_review_result`
+reauthorizes the repository before returning the bounded artifact.
+`gc_publish_review_result` accepts public prose for every stable finding id,
+requires the retained verdict and original classification, validates caller
+dispositions under the incumbent decision rules, rechecks the exact
+HEAD/base/diff identity and available cycle slot, applies the sensitive-content
+guards, and writes sanitized findings, cycle, and decision records in order.
+Hashes in each marker bind the local original, reviewed revision, and public
+rendering. Trusted versioned stage-marker reconciliation requires the latest
+consumed cycle to have a complete findings/cycle/decision tuple and makes a
+retry after a timeout or lost response resume without rerunning Codex or
+duplicating records. The `automatic` pre-push mode composes the same retained
+execution and publisher; if publication fails, its bounded response preserves
+the handle and directs the caller to retry publication, not execution.
+An exhausted non-verdict cycle instead retains a distinct `non_verdict`
+handle carrying only closed failure classes, local diagnostic causes, and
+attempt ordinals. Raw parser messages and engine output are not exposed. Explicit
+publication with `publication_kind="non_verdict"` and no reviewer prose posts
+only the station-observation opening and escalation; it consumes no cycle,
+writes no decision record, and retries reconcile those records. Only a trusted
+published decision record satisfies readiness or completion.
+
+`gc_codex_review` consumes a `===REVIEW===…===END===` JSON tail from each reviewer. The MCP server validates each finding lexically (repo-relative path, positive line, bounded non-empty body); automatic post-push publication then POSTs findings to `/repos/{owner}/{repo}/pulls/{pr}/comments` with the PR's current head SHA. The `[core]` / `[security]` label is prepended by the poster.
 
 Per-finding schema:
 
@@ -272,10 +299,10 @@ The MCP server owns diff retrieval end to end. Two independent facts are reporte
 
 | Field | Meaning |
 |-------|---------|
-| `diff_mode` | Transport. `inline` when the complete diff fit one prompt; `manifest` when it exceeded `GC_CODEX_REVIEW_MAX_DIFF_BYTES` (default 256 KiB; `0` disables the cap). |
+| `diff_mode` | Transport. `inline` when the complete diff plus its reviewer prompt wrapper fit the configured 256-KiB default; `manifest` when bounded slices were needed. `GC_CODEX_REVIEW_MAX_DIFF_BYTES=0` disables the cap. |
 | `review_coverage` | Coverage. `{strategy, chunks_total, chunks_completed, files_total, files_covered, oversized_slices, unreviewed_untracked_paths, complete}`. Counts and paths only, never diff content. `strategy` is `whole-diff`, `file-slices`, or `hunk-slices`. |
 
-Above the cap the server splits the authoritative diff into bounded inline slices and runs **both** reviewers over **every** slice as one logical review cycle. Boundaries are tried in descending order of fidelity: `diff --git` file blocks, then `@@` hunks, then whole lines. A single line larger than the budget is the smallest unit that survives splitting intact, so it is emitted whole and counted in `oversized_slices` rather than truncated; dropped bytes would read as reviewed content nobody saw.
+The planner reserves the exact reviewer prompt wrapper plus slice-metadata headroom before deciding whether to split the authoritative diff. It runs **both** reviewers over **every** slice as one logical review cycle. Boundaries are tried in descending order of fidelity: `diff --git` file blocks, then `@@` hunks, then whole lines. A single line larger than the budget is the smallest unit that survives splitting intact, so it is emitted whole and counted in `oversized_slices` rather than truncated; dropped bytes would read as reviewed content nobody saw.
 
 Every fragment is a valid standalone diff. Each slice goes to an independent reviewer process, so a sub-file fragment carries its `diff --git` attribution and, for a line-split hunk, a **recomputed** `@@` header whose old/new starts and counts describe that fragment. Repeating the original header would make every `line` in a finding from a later fragment point at the wrong code. The numstat manifest is still supplied, but as whole-change context only. Slices are not cycles: the per-issue cycle counter, the marker family, and the cap are unchanged no matter how many slices a diff needs.
 

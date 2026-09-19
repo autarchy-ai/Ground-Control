@@ -91,6 +91,12 @@ function makeCompletionShimRepo({
     "repository-owner": "admin",
   },
 } = {}) {
+  const provenance = `schema="gc.review-publication/v1" publication="${"a".repeat(64)}" original="${"b".repeat(64)}" revision="${"c".repeat(64)}" sanitized="${"d".repeat(64)}"`;
+  comments = [...comments,
+    { id: 8997, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:review-publication stage="findings" reviewer="codex" issue="1416" cycle="1" ${provenance} -->\n\n**gc_codex_review** — sanitized deferred publication` },
+    { id: 8998, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:codex-prepush-cycle issue="1416" branch="x" cycle="1" ${provenance} -->\n\n_gc_codex_review pre-push cycle 1 complete` },
+    { id: 8999, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:decision-record reviewer="codex" cycle="1" issue="1416" ${provenance} -->\n\n## Review decision record — codex cycle 1` },
+  ];
   // We need to handle multiple POSTs. Use a counter in a wrapper script.
   // Build a shim that cycles through commentIdSeq for each POST call.
   const repoDir = initGitRepo(mkdtempSync(join(tmpdir(), "gc-completion-shim-")));

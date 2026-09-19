@@ -46,6 +46,7 @@ export async function _runStationWithObservationLedger({
   issueNumber,
   invokeReview,
   signal,
+  recordDurably = true,
   deps = DEFAULT_LEDGER_DEPS,
 }) {
   const stationId = REVIEW_STATION_BY_REVIEWER[reviewer];
@@ -68,6 +69,9 @@ export async function _runStationWithObservationLedger({
   // opened by an EARLIER invocation is invisible to this one's in-memory state, so a verdict
   // rendered here posted no `reobserved` and the obligation stranded. The durable ledger is the
   // only record that spans invocations, so the wrapper must consult it before it can render.
+  // Deferred execution remains read-only, but it still recovers an obligation
+  // opened by an earlier invocation so the later publication can resolve it
+  // between the findings record and cycle marker.
   const recovered = await _recoverOpenObservation({ repoPath, issueNumber, reviewer, stationId, deps });
   let { ledger, logicalCycle, obligationId } = recovered;
   let observationOpened = recovered.open;
@@ -88,6 +92,7 @@ export async function _runStationWithObservationLedger({
       }),
     onAttempt: async (attempt) => {
       if (attempt.station_result !== "not_evaluable") return;
+      if (!recordDurably) return;
       if (observationOpened) return;
       ledger = await deps.resolveLedgerTarget(repoPath, ledger);
       if (ledger == null) return;
@@ -113,7 +118,7 @@ export async function _runStationWithObservationLedger({
     && run.attempts.length > 0
     && run.attempts.every((a) => a.station_result === "not_evaluable");
 
-  if (exhaustedNonVerdict && observationOpened) {
+  if (recordDurably && exhaustedNonVerdict && observationOpened) {
     ledger = await deps.resolveLedgerTarget(repoPath, ledger);
     if (ledger != null) {
       await deps.postEscalation({
