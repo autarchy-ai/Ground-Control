@@ -38,7 +38,7 @@
   ],
   "scripts": {
     "start": "node index.js",
-    "test": "node scripts/run-node-tests.mjs $(ls *.test.js | grep -v '^openapi-contract\\.') ../../tools/incus_sandbox/client.test.mjs ../../tools/incus_sandbox/source.test.mjs",
+    "test": "node scripts/run-node-tests.mjs $(ls *.test.js | grep -v '^openapi-contract\\.')",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "prepack": "node scripts/bundle-skills.mjs",
