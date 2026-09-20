@@ -14,7 +14,11 @@ sudo bash tools/incus_sandbox/setup.sh install
 
 Use `--dry-run` to inspect its fixed resource actions. The installer only
 creates `gc-sandbox` project/profile/pool/bridge resources, a dedicated nftables
-table, and root-owned helper/config/event paths. Its pool is a dedicated 64 GiB
+table, and root-owned helper/config/event paths. Where another host firewall
+already drops forwarded traffic by default, which Docker and libvirt both do,
+setup also adds an accept for the `gcbr0` bridge alone in that chain; without it
+the guest has no network at all. Docker recreates its chains when it restarts,
+so rerun setup after a Docker restart. Its pool is a dedicated 64 GiB
 loop-backed Btrfs volume; the host filesystem is neither repartitioned nor
 reformatted. Setup refuses an already exposed Incus HTTPS management API or a
 quota probe that cannot demonstrate a size limit. It does not flush firewall
@@ -65,29 +69,54 @@ host path, command, mount, credential, or Docker endpoint. It uses fixed Git
 argv with hooks, global/system configuration, prompts, credential helpers, and
 fsmonitor disabled. Repository code and hooks do not run on the host.
 
-For a published commit, use the guest-clone form. The guest clones directly and
-checks out the resolved immutable commit:
+For an unpublished **committed** revision, use the bundle form. It transfers Git
+objects only and materializes the same resolved commit in the guest, and it
+needs no guest credentials:
 
 ```sh
 gc-incus-sandbox create agent-1
-gc-incus-sandbox prepare agent-1 clone "$PWD" HEAD
-gc-incus-sandbox attach agent-1
-```
-
-For an unpublished **committed** revision, use the bundle form. It transfers Git
-objects only and materializes the same resolved commit in the guest:
-
-```sh
 gc-incus-sandbox prepare agent-1 bundle "$PWD" HEAD
 gc-incus-sandbox attach agent-1
 ```
 
+A bundle carries no remote, so the guest checkout has no `origin`. Add the one
+you intend to publish through after authenticating in the guest:
+
+```sh
+git -C ~/workspace remote add origin https://github.com/OWNER/REPOSITORY.git
+```
+
+For a published commit, use the guest-clone form. The guest clones directly and
+checks out the resolved immutable commit:
+
+```sh
+gc-incus-sandbox prepare agent-1 clone "$PWD" HEAD
+```
+
+The guest, not the host, reads that repository. For a private repository,
+complete the guest GitHub credential steps below first; a guest without a
+credential cannot clone it, and the host never lends its own.
+
+Preparing the same commit again is safe: an existing guest checkout at that
+commit is kept and the remaining steps rerun, so a preparation interrupted by a
+missing credential or a failed install is finished by repeating the command. A
+guest checkout at a different commit is refused rather than replaced; remove
+`~/workspace` in the guest to prepare another source there.
+
 Dirty working-tree migration is unsupported. Two guests receive separate
 checkouts, `.git` directories, homes, runtime state, credentials, and Docker
-daemons. The guest bootstrap installs `grndctl` and Codex into the sandbox
-user's local prefix; it does not copy a host home, Codex cache, credential store,
-SSH agent, runtime socket, or Docker context. Run installs, hooks, tests,
-reviewers, and builds in the attached guest.
+daemons. Preparation installs the Codex CLI into the sandbox user's local
+prefix; it does not copy a host home, Codex cache, credential store, SSH agent,
+runtime socket, or Docker context. Run installs, hooks, tests, reviewers, and
+builds in the attached guest.
+
+Guest output stays in the guest. When preparation reports a guest failure, or
+the template is missing a prerequisite, read the reason in the guest:
+
+```sh
+gc-incus-sandbox attach agent-1
+cat ~/.gc-transfer/bootstrap.log
+```
 
 Inside the guest, authenticate Codex explicitly with the account and ChatGPT
 workspace you intend to use. Ensure an API key is absent first, then use device
@@ -120,6 +149,19 @@ gh auth status --hostname github.com
 gh repo view OWNER/REPOSITORY --json nameWithOwner,viewerPermission
 git push --dry-run origin HEAD
 ```
+
+Install Ground Control in the guest as any other host installs it, then install
+its skills for the checkout:
+
+```sh
+npm install -g grndctl
+grndctl install-skills
+```
+
+Until the first release publishes `grndctl` to npm, the only guest-local source
+is a Ground Control checkout the guest already holds, such as
+`npm install -g ./mcp/ground-control` when the prepared repository is Ground
+Control itself.
 
 Run `/implement` from the guest checkout. If the scoped credential cannot push
 or create a PR, keep the guest branch and its focused-test/review evidence, then

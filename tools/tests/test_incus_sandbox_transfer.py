@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import runpy
+import subprocess
 import sys
 import tempfile
 import types
@@ -51,7 +52,7 @@ class PacketBoundaryTest(unittest.TestCase):
             "DOCKER_HOST": "unix:///host.sock", "OPENAI_API_KEY": "secret-canary",
             "CODEX_HOME": "/host/codex", "GH_TOKEN": "secret-canary", "PATH": "/usr/bin",
         })
-        self.assertEqual(environment, {"PATH": "/usr/bin"})
+        self.assertEqual(environment, {"PATH": "/usr/bin", "GIT_TERMINAL_PROMPT": "0"})
 
     def test_guest_bootstrap_rejects_caller_controlled_paths_before_reading(self) -> None:
         with self.assertRaises(PacketError):
@@ -78,65 +79,109 @@ class PacketBoundaryTest(unittest.TestCase):
 
 
 class GuestMaterializationTest(unittest.TestCase):
-    def test_bundle_copy_uses_fixed_paths_and_preserves_existing_files(self) -> None:
+    def test_bundle_copy_uses_fixed_paths_and_replaces_a_stale_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             packet_path, bundle_path = root / "source.gcs", root / "source.bundle"
             packet_path.write_bytes(b"header-bundle")
+            bundle_path.write_bytes(b"stale bundle from an interrupted run")
             with patch.multiple(guest_bootstrap, _PACKET_PATH=packet_path, _BUNDLE_PATH=bundle_path):
                 guest_bootstrap._copy_bundle_payload(len(b"header-"))
                 self.assertEqual(bundle_path.read_bytes(), b"bundle")
-                with self.assertRaises(PacketError):
-                    guest_bootstrap._copy_bundle_payload(0)
-            self.assertEqual(bundle_path.read_bytes(), b"bundle")
-            bundle_path.unlink()
-            packet_path.unlink()
-            with patch.multiple(guest_bootstrap, _PACKET_PATH=packet_path, _BUNDLE_PATH=bundle_path):
+                bundle_path.unlink()
+                packet_path.unlink()
                 with self.assertRaises(FileNotFoundError):
                     guest_bootstrap._copy_bundle_payload(0)
             self.assertFalse(bundle_path.exists())
 
+    def _materialization_paths(self, root: Path) -> dict[str, Path]:
+        transfer = root / ".gc-transfer"
+        transfer.mkdir()
+        home = root / "home"
+        home.mkdir()
+        return {"_PACKET_PATH": transfer / "source.gcs", "_WORKSPACE_PATH": root / "workspace",
+                "_BUNDLE_PATH": transfer / "source.bundle", "_LOG_PATH": transfer / "bootstrap.log",
+                "_REQUIRED_TOOLS": (), "home": home}
+
     def test_materialize_uses_fixed_guest_paths_for_clone_and_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            transfer = root / ".gc-transfer"
-            transfer.mkdir()
-            packet_path, workspace = transfer / "source.gcs", root / "workspace"
-            bundle_path, home = transfer / "source.bundle", root / "home"
-            home.mkdir()
+            paths = self._materialization_paths(root)
+            home = paths.pop("home")
             sources = (
                 packet({"schema": "gc.incus-sandbox.source/v1", "kind": "clone", "commit": "a" * 40,
                         "repository": "https://github.com/example/private.git"}),
                 packet({"schema": "gc.incus-sandbox.source/v1", "kind": "bundle", "commit": "a" * 40}, b"bundle"),
             )
             for source in sources:
-                packet_path.write_bytes(source)
-                with patch.multiple(guest_bootstrap, _PACKET_PATH=packet_path,
-                                    _WORKSPACE_PATH=workspace, _BUNDLE_PATH=bundle_path), \
+                paths["_PACKET_PATH"].write_bytes(source)
+                with patch.multiple(guest_bootstrap, **paths), \
                      patch.object(guest_bootstrap.Path, "home", return_value=home), \
                      patch("tools.incus_sandbox.guest_bootstrap.subprocess.run") as run:
                     guest_bootstrap.materialize()
                 commands = [call.args[0] for call in run.call_args_list]
                 self.assertEqual(commands[0][0], "/usr/bin/git")
                 self.assertEqual(commands[1][-1], "a" * 40)
-                self.assertEqual(commands[2][0], "/usr/bin/npm")
-                self.assertFalse(bundle_path.exists())
+                self.assertEqual(commands[-1][0], "/usr/bin/npm")
+                self.assertFalse(paths["_BUNDLE_PATH"].exists())
+                # The packet is a full copy of the private source; it does not outlive the run.
+                self.assertFalse(paths["_PACKET_PATH"].exists())
+            # A transferred bundle is deleted after checkout, so its remote is removed with it.
+            self.assertEqual(commands[2], ["/usr/bin/git", "-C", str(paths["_WORKSPACE_PATH"]),
+                                           "remote", "remove", "origin"])
 
-    def test_materialize_rejects_an_existing_fixed_workspace(self) -> None:
+    def test_materialize_reuses_a_workspace_holding_the_same_commit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            transfer = root / ".gc-transfer"
-            transfer.mkdir()
-            packet_path, workspace = transfer / "source.gcs", root / "workspace"
-            packet_path.write_bytes(packet({
+            paths = self._materialization_paths(root)
+            home = paths.pop("home")
+            paths["_PACKET_PATH"].write_bytes(packet({
                 "schema": "gc.incus-sandbox.source/v1", "kind": "clone", "commit": "a" * 40,
                 "repository": "https://github.com/example/private.git",
             }))
-            workspace.mkdir()
-            with patch.multiple(guest_bootstrap, _PACKET_PATH=packet_path,
-                                _WORKSPACE_PATH=workspace, _BUNDLE_PATH=transfer / "source.bundle"):
+            paths["_WORKSPACE_PATH"].mkdir()
+            with patch.multiple(guest_bootstrap, **paths), \
+                 patch.object(guest_bootstrap.Path, "home", return_value=home), \
+                 patch("tools.incus_sandbox.guest_bootstrap.subprocess.run") as run:
+                run.return_value = types.SimpleNamespace(returncode=0, stdout="a" * 40 + "\n")
+                guest_bootstrap.materialize()
+            commands = [call.args[0] for call in run.call_args_list]
+            self.assertNotIn("clone", [command[3] for command in commands if len(command) > 3])
+            self.assertEqual(commands[-1][0], "/usr/bin/npm")
+
+    def test_materialize_rejects_a_workspace_holding_another_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self._materialization_paths(root)
+            home = paths.pop("home")
+            paths["_PACKET_PATH"].write_bytes(packet({
+                "schema": "gc.incus-sandbox.source/v1", "kind": "clone", "commit": "a" * 40,
+                "repository": "https://github.com/example/private.git",
+            }))
+            paths["_WORKSPACE_PATH"].mkdir()
+            with patch.multiple(guest_bootstrap, **paths), \
+                 patch.object(guest_bootstrap.Path, "home", return_value=home), \
+                 patch("tools.incus_sandbox.guest_bootstrap.subprocess.run") as run:
+                run.return_value = types.SimpleNamespace(returncode=0, stdout="b" * 40 + "\n")
                 with self.assertRaises(PacketError):
                     guest_bootstrap.materialize()
+
+    def test_missing_guest_prerequisites_are_named(self) -> None:
+        with patch.multiple(guest_bootstrap, _REQUIRED_TOOLS=("/usr/bin/git", "/nonexistent/npm")):
+            with self.assertRaises(PacketError) as result:
+                guest_bootstrap.require_guest_tools()
+        self.assertIn("/nonexistent/npm", str(result.exception))
+
+    def test_guest_command_output_stays_in_the_guest_log(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "bootstrap.log"
+            with patch.multiple(guest_bootstrap, _LOG_PATH=log_path):
+                guest_bootstrap.run_guest_command(["/bin/echo", "guest-only-output"], {})
+                with self.assertRaises(subprocess.CalledProcessError):
+                    guest_bootstrap.run_guest_command(["/bin/false"], {})
+            recorded = log_path.read_text(encoding="utf-8")
+        self.assertIn("guest-only-output", recorded)
+        self.assertIn("/bin/false", recorded)
 
     def test_main_uses_only_the_fixed_paths(self) -> None:
         expected = [str(guest_bootstrap._PACKET_PATH), str(guest_bootstrap._WORKSPACE_PATH)]
@@ -168,6 +213,15 @@ class TransferCommandTest(unittest.TestCase):
         self.assertIn("/usr/bin/install", commands[0])
         self.assertIn("sandbox", commands[-1])
         self.assertNotIn("/bin/sh", rendered)
+        # A guest command takes an absolute guest path; only a file push is instance-relative.
+        for command in (commands[0], commands[-1]):
+            self.assertNotIn("agent-1/home", " ".join(command[5:]))
+        self.assertEqual([argument for argument in commands[0] if argument.startswith("/home")],
+                         ["/home/sandbox/.local", "/home/sandbox/.local/bin", "/home/sandbox/.gc-transfer"])
+        self.assertTrue(all(command[4].startswith("agent-1/home/sandbox/")
+                            for command in commands[1:3]))
+        # The bootstrap is root-owned and run by the unprivileged guest user.
+        self.assertIn("--mode=0755", commands[1])
 
     def test_transfer_rejects_a_name_that_could_change_the_guest_command(self) -> None:
         with self.assertRaises(TransferError):
@@ -227,6 +281,18 @@ class TransferCommandTest(unittest.TestCase):
              patch.dict("tools.incus_sandbox.transfer.os.environ", {}, clear=True):
             with self.assertRaises(TransferError):
                 incus_transfer.main(["agent-1", "clone"])
+
+    def test_guest_failure_names_the_guest_log_without_host_details(self) -> None:
+        config_module = types.SimpleNamespace(load_config=lambda _: types.SimpleNamespace(operator_uid=1000))
+        failure = subprocess.CalledProcessError(64, ["/usr/bin/incus", "exec", "agent-1"])
+        with patch("tools.incus_sandbox.transfer.os.geteuid", return_value=0), \
+             patch.dict("tools.incus_sandbox.transfer.os.environ", {"SUDO_UID": "1000"}, clear=True), \
+             patch.dict(sys.modules, {"config": config_module}), \
+             patch("tools.incus_sandbox.transfer.audited_transfer", side_effect=failure):
+            with self.assertRaises(TransferError) as result:
+                incus_transfer.main(["agent-1", "bundle"])
+        self.assertIn("bootstrap.log", str(result.exception))
+        self.assertNotIn("/usr/bin/incus", str(result.exception))
 
 
 if __name__ == "__main__":

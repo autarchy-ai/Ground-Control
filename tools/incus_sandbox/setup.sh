@@ -6,6 +6,7 @@ readonly PROJECT="gc-sandbox"
 readonly PROFILE="gc-sandbox-default"
 readonly POOL="gc-sandbox-pool"
 readonly BRIDGE="gcbr0"
+readonly BRIDGE_ADDRESS="10.74.0.1"
 readonly INSTALL_ROOT="/usr/local/lib/gc-incus-sandbox"
 readonly CONFIG_ROOT="/etc/gc-incus-sandbox"
 readonly STATE_ROOT="/var/lib/gc-incus-sandbox"
@@ -67,11 +68,39 @@ quota_write_probe() {
   fi
 }
 
+allow_bridge_forwarding() {
+  # Docker, libvirt and hardened hosts set the legacy FORWARD policy to DROP, which drops
+  # guest traffic before this table sees it; an accept here cannot override that chain.
+  "$dry_run" && { echo "allow $BRIDGE where the legacy FORWARD policy is DROP"; return 0; }
+  command -v iptables >/dev/null 2>&1 || return 0
+  iptables -S FORWARD 2>/dev/null | grep -qx -- "-P FORWARD DROP" || return 0
+  local chain=FORWARD direction
+  if iptables -S DOCKER-USER >/dev/null 2>&1; then chain=DOCKER-USER; fi
+  for direction in -i -o; do
+    iptables -C "$chain" "$direction" "$BRIDGE" -j ACCEPT 2>/dev/null ||
+      iptables -I "$chain" "$direction" "$BRIDGE" -j ACCEPT
+  done
+  printf '%s\n' "forwarding $chain" >>"$OWNERSHIP_RECORD"
+}
+
+remove_bridge_forwarding() {
+  local chain direction
+  [[ -f "$OWNERSHIP_RECORD" ]] || return 0
+  chain="$(awk '/^forwarding / { print $2 }' "$OWNERSHIP_RECORD" | tail -n 1)"
+  [[ -n "$chain" ]] || return 0
+  for direction in -i -o; do
+    while iptables -C "$chain" "$direction" "$BRIDGE" -j ACCEPT 2>/dev/null; do
+      iptables -D "$chain" "$direction" "$BRIDGE" -j ACCEPT
+    done
+  done
+}
+
 populate_nft_sets() {
-  "$dry_run" && { echo "populate gc_incus_sandbox host and DNS address sets"; echo "record network-addresses.sha256"; return 0; }
+  "$dry_run" && { echo "populate gc_incus_sandbox host, bridge, and DNS address sets"; echo "record network-addresses.sha256"; return 0; }
   local host_addresses dns_addresses address
   host_addresses="$(ip -o -4 addr show | awk '{print $4}' | cut -d/ -f1 | sort -u)"
   dns_addresses="$(awk '/^nameserver / { print $2 }' /etc/resolv.conf | sort -u)"
+  nft add element inet gc_incus_sandbox bridge_ipv4 "{ $BRIDGE_ADDRESS }"
   for address in $host_addresses; do
     [[ "$address" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || { echo "invalid host address" >&2; exit 65; }
     nft add element inet gc_incus_sandbox host_ipv4 "{ $address }"
@@ -145,7 +174,7 @@ install_resources() {
   run incus project set "$PROJECT" limits.memory 32GiB
   run incus storage create "$POOL" btrfs size="$POOL_SIZE"
   "$dry_run" || printf '%s\n' pool >>"$OWNERSHIP_RECORD"
-  run incus network create "$BRIDGE" ipv4.address=10.74.0.1/24 ipv4.nat=true ipv6.address=none dns.mode=none
+  run incus network create "$BRIDGE" "ipv4.address=$BRIDGE_ADDRESS/24" ipv4.nat=true ipv6.address=none dns.mode=none
   "$dry_run" || printf '%s\n' network >>"$OWNERSHIP_RECORD"
   run incus profile create "$PROFILE" --project "$PROJECT"
   "$dry_run" || printf '%s\n' profile >>"$OWNERSHIP_RECORD"
@@ -156,6 +185,7 @@ install_resources() {
   run incus profile set "$PROFILE" limits.memory 4GiB --project "$PROJECT"
   run nft -f "$RULES_PATH"
   populate_nft_sets
+  allow_bridge_forwarding
   quota_write_probe
   "$dry_run" || printf '%s\n' complete >>"$OWNERSHIP_RECORD"
 }
@@ -177,6 +207,7 @@ rollback_partial() {
   grep -Fxq network "$OWNERSHIP_RECORD" && incus network delete "$BRIDGE" 2>/dev/null || true
   grep -Fxq pool "$OWNERSHIP_RECORD" && incus storage delete "$POOL" 2>/dev/null || true
   grep -Fxq rules "$OWNERSHIP_RECORD" && nft delete table inet gc_incus_sandbox 2>/dev/null || true
+  remove_bridge_forwarding
   rm -f /etc/sudoers.d/gc-incus-sandbox "$RULES_PATH"
   rm -rf "$INSTALL_ROOT" "$CONFIG_ROOT" "$STATE_ROOT" /var/log/gc-incus-sandbox
 }
@@ -192,6 +223,7 @@ rollback() {
   incus network delete "$BRIDGE"
   incus storage delete "$POOL"
   nft delete table inet gc_incus_sandbox 2>/dev/null || true
+  remove_bridge_forwarding
   rm -f /etc/sudoers.d/gc-incus-sandbox "$RULES_PATH"
   rm -rf "$INSTALL_ROOT" "$CONFIG_ROOT" "$STATE_ROOT" /var/log/gc-incus-sandbox
 }

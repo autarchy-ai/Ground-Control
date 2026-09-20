@@ -18,6 +18,7 @@ class TransferError(RuntimeError):
 _NAME = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
 _INCUS = "/usr/bin/incus"
 _BOOTSTRAP = "/usr/local/lib/gc-incus-sandbox/guest-bootstrap.py"
+_GUEST_HOME = "/home/sandbox"
 _MAX_PACKET_BYTES = 1024 * 1024 * 1024
 
 
@@ -44,17 +45,22 @@ def transfer_commands(project: str, sandbox: str, packet_path: str) -> list[list
     """Build only the fixed file-push and host-owned guest-bootstrap commands."""
     if not _NAME.fullmatch(sandbox):
         raise TransferError("sandbox name is invalid")
-    guest_prefix = f"{sandbox}/home/sandbox"
-    bootstrap = f"{guest_prefix}/.local/bin/gc-guest-bootstrap.py"
-    packet = f"{guest_prefix}/.gc-transfer/source.gcs"
+    bootstrap = f"{_GUEST_HOME}/.local/bin/gc-guest-bootstrap.py"
+    packet = f"{_GUEST_HOME}/.gc-transfer/source.gcs"
     return [
+        # Guest commands take an absolute guest path; a file push takes the instance-relative
+        # form. Each created directory needs the owner named, which install applies per operand.
         [_INCUS, "exec", sandbox, "--project", project, "--", "/usr/bin/install", "-d",
-         "-o", "sandbox", "-g", "sandbox", "-m", "0700", f"{guest_prefix}/.local/bin",
-         f"{guest_prefix}/.gc-transfer"],
-        [_INCUS, "file", "push", _BOOTSTRAP, bootstrap, "--project", project, "--mode=0700"],
-        [_INCUS, "file", "push", packet_path, packet, "--project", project, "--mode=0644"],
+         "-o", "sandbox", "-g", "sandbox", "-m", "0700", f"{_GUEST_HOME}/.local",
+         f"{_GUEST_HOME}/.local/bin", f"{_GUEST_HOME}/.gc-transfer"],
+        # The guest runs the bootstrap as the unprivileged sandbox user, so this root-owned
+        # script stays readable and is never writable inside the guest.
+        [_INCUS, "file", "push", _BOOTSTRAP, f"{sandbox}{bootstrap}", "--project", project,
+         "--mode=0755"],
+        [_INCUS, "file", "push", packet_path, f"{sandbox}{packet}", "--project", project,
+         "--mode=0644"],
         [_INCUS, "exec", sandbox, "--project", project, "--", "su", "-", "sandbox", "-c",
-         f"exec /usr/bin/python3 {bootstrap} {packet} {guest_prefix}/workspace"],
+         f"exec /usr/bin/python3 {bootstrap} {packet} {_GUEST_HOME}/workspace"],
     ]
 
 
@@ -100,7 +106,12 @@ def main(argv: list[str]) -> int:
     config = load_config(Path("/etc/gc-incus-sandbox/config.json"))
     if int(sudo_uid) != config.operator_uid:
         raise TransferError("caller is not the configured sandbox operator")
-    audited_transfer(config, argv[0], sys.stdin.buffer, argv[1])
+    try:
+        audited_transfer(config, argv[0], sys.stdin.buffer, argv[1])
+    except subprocess.CalledProcessError as exc:
+        # Guest output never reaches the host, so name the guest-local log instead of
+        # reporting a host command the operator cannot act on.
+        raise TransferError("guest preparation failed; read ~/.gc-transfer/bootstrap.log in the guest") from exc
     return 0
 
 

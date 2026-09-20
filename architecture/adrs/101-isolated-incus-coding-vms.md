@@ -67,7 +67,13 @@ a host-owned guest bootstrap program through fixed Incus argv.
 
 Published commits use a guest-side HTTPS clone and then detached checkout of
 the resolved commit. An unpublished committed revision uses a Git object bundle
-and the same detached checkout. Dirty worktrees remain unsupported. Checkout,
+built from the source objects without writing a ref in the source repository,
+and the same detached checkout. Preparing the same commit again is a no-op for
+an existing guest checkout rather than an error, so a run interrupted by a
+missing credential or a failed install is resumed instead of restarted with a
+new guest. Preparation installs the guest-local Codex CLI only; Ground Control
+and every credential are installed in the guest session by the operator.
+Dirty worktrees remain unsupported. Checkout,
 tool installation, hooks, tests, reviewers, builds, Docker use, and publication
 run in the guest. Every guest owns its checkout, Git metadata, home, runtime
 state, credentials, and Docker daemon; host homes, checkouts, credential stores,
@@ -116,9 +122,13 @@ the applicable precedent, not a VM admission implementation to repurpose.
 ### Network policy is deny-by-default and dual-stack
 
 The privileged setup adds only sandbox-owned nftables chains and sets; it never
-flushes or replaces the host's firewall. The dedicated bridge permits DHCP and
-the configured DNS resolver, return traffic, and outbound TCP 443 to public
-addresses. It denies guest-to-guest traffic, all unsolicited inbound traffic,
+flushes or replaces the host's firewall. The dedicated bridge permits DHCP,
+name resolution through the bridge resolver and the configured host resolvers,
+return traffic, and outbound TCP 443 to public
+addresses. Where another host firewall drops forwarded traffic by default, setup
+adds an accept for this bridge alone in the chain that drops it and removes that
+accept on rollback; the sandbox policy above stays the effective one. It denies
+guest-to-guest traffic, all unsolicited inbound traffic,
 host-management and host-service addresses (including every configured host
 address), private/LAN/link-local/loopback/metadata ranges, and every other
 destination. IPv6 is disabled for the sandbox bridge and guests and is also
