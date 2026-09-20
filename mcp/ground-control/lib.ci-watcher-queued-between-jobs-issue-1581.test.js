@@ -11,6 +11,7 @@ import { ciRunQueuedSeconds, runWatchCiRun } from "./lib.js";
 
 const CREATED = "2026-09-13T00:36:26Z";
 const CREATED_MS = Date.parse(CREATED);
+const HEAD_SHA = "1581feedfacecafebabe0000000000000000beef";
 
 function job(name, status, conclusion = "") {
   return { name, status, conclusion, steps: [] };
@@ -41,6 +42,7 @@ async function watch(repoDir, runIds, timeline, options = {}) {
     repoPath: repoDir,
     branch: "1581-feature",
     authorizeRepoRead: async () => ({ ok: true, repoSlug: "o/r" }),
+    resolveHeadSha: async () => HEAD_SHA,
     resolveRuns: async () => runIds.map((databaseId) => ({ databaseId })),
     fetchRunSnapshot: async (_root, _slug, id) =>
       timeline(Math.floor((nowMs - CREATED_MS) / 1000)).find((snap) => snap.databaseId === id),

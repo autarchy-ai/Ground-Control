@@ -198,13 +198,17 @@ process.exit(2);
       remote: "https://github.com/test-owner/test-repo.git",
       routes: [
         {
+          argv_prefix: ["api", "repos/test-owner/test-repo/commits/feature/x", "--jq", ".sha"],
+          stdout: "5ba10c9f2e7d4a3b8c6f1e0d9a2b3c4d5e6f7081\n",
+        },
+        {
           argv_prefix: [
             "--repo", "test-owner/test-repo",
             "run", "list", "--branch", "feature/x", "--limit", "20",
-            "--json", "status,conclusion,databaseId,url,createdAt,headSha",
+            "--json", "status,conclusion,databaseId,url,createdAt,headSha,workflowName,event",
           ],
           stdout: JSON.stringify([
-            { status: "completed", conclusion: "success", databaseId: 789, url: "https://example.test/runs/789", createdAt: "2026-01-01T00:00:00Z", headSha: "sha1" },
+            { status: "completed", conclusion: "success", databaseId: 789, url: "https://example.test/runs/789", createdAt: "2026-01-01T00:00:00Z", headSha: "5ba10c9f2e7d4a3b8c6f1e0d9a2b3c4d5e6f7081" },
           ]),
         },
         {
@@ -249,10 +253,14 @@ process.exit(2);
       remote: "https://github.com/test-owner/test-repo.git",
       routes: [
         {
+          argv_prefix: ["api", "repos/test-owner/test-repo/commits/feature/x", "--jq", ".sha"],
+          stdout: "deadbeef\n",
+        },
+        {
           argv_prefix: [
             "--repo", "test-owner/test-repo",
             "run", "list", "--branch", "feature/x", "--limit", "20",
-            "--json", "status,conclusion,databaseId,url,createdAt,headSha",
+            "--json", "status,conclusion,databaseId,url,createdAt,headSha,workflowName,event",
           ],
           stdout: JSON.stringify([
             { status: "completed", conclusion: "success", databaseId: 111, url: "https://example.test/runs/111", createdAt: "2026-01-01T00:00:05Z", headSha: "deadbeef" },

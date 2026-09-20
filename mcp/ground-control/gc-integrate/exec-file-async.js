@@ -118,6 +118,10 @@ async function defaultRunCiWatcher(pr, ctx) {
   const result = await runWatchCiRun({
     repoPath: ctx.repoRoot,
     branch: pr.head_ref,
+    // The rebased commit this lane just force-pushed. Without it the watch
+    // would bind to whatever the branch tip read back as, and the pre-rebase
+    // run's green could stand in for a rebase nobody has built yet (#1365).
+    expectedHeadSha: pr.pushed_head_sha ?? null,
   });
 
   if (!result.ok) {
@@ -159,6 +163,7 @@ async function defaultRunSonarWatcher(pr, ctx, _deps, watchSonar = runWatchSonar
   const result = await watchSonar({
     repoPath: ctx.repoRoot,
     prNumber: pr.pr_number,
+    expectedHeadSha: pr.pushed_head_sha ?? null,
   });
 
   if (!result.ok) {

@@ -64,6 +64,16 @@ describe("defaultRunSonarWatcher — watcher envelope to hook contract", () => {
       observed = args;
       return { ok: true, skipped: true };
     });
-    assert.deepEqual(observed, { repoPath: "/repo", prNumber: 2114 });
+    assert.deepEqual(observed, { repoPath: "/repo", prNumber: 2114, expectedHeadSha: null });
+  });
+
+  it("forwards the commit the lane pushed so the scan is read for that head (issue #1365)", async () => {
+    let observed = null;
+    const pushed = "0f3c1d2e4a5b6c7d8e9f0a1b2c3d4e5f60718293";
+    await defaultRunSonarWatcher({ ...PR, pushed_head_sha: pushed }, CTX, undefined, async (args) => {
+      observed = args;
+      return { ok: true, skipped: true };
+    });
+    assert.equal(observed.expectedHeadSha, pushed);
   });
 });

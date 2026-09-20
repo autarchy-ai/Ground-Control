@@ -84,6 +84,12 @@ function makePrepareExecFileFake(prs, stepHandlers = []) {
     execFile: async (file, argv, _options) => {
       calls.push([file, ...argv]);
 
+      // The pushed-head read (issue #1365) is answered ahead of the step
+      // handlers so adding it did not shift every existing handler index.
+      if (file === "git" && argv.includes("rev-parse")) {
+        return { stdout: `${"0".repeat(32)}pushedhead\n`, stderr: "" };
+      }
+
       // First check step handlers in order.
       if (handlerIdx < stepHandlers.length) {
         const handler = stepHandlers[handlerIdx];
@@ -434,5 +440,16 @@ describe("gc_integration_manager — CI watcher mapping", () => {
     const { pr, ctx } = ciWatcherCalls[0];
     assert.equal(pr.head_ref, "feature/pr-7", `expected head_ref='feature/pr-7', got: ${pr.head_ref}`);
     assert.ok(typeof ctx.repoRoot === "string" && ctx.repoRoot.length > 0, "ctx.repoRoot must be present");
+  });
+
+  it("names the rebased commit it pushed, so the watcher cannot read the pre-rebase run (issue #1365)", async () => {
+    const ciWatcherCalls = [];
+    const fakeCiWatcher = async (pr) => {
+      ciWatcherCalls.push(pr);
+      return { conclusion: "skipped" };
+    };
+    const deps = ciWatcherDeps(fakeCiWatcher, [makePr(7)]);
+    await runIntegrationManager({ action: "prepare", repo_path: "/some/repo" }, deps);
+    assert.equal(ciWatcherCalls[0].pushed_head_sha, `${"0".repeat(32)}pushedhead`);
   });
 });

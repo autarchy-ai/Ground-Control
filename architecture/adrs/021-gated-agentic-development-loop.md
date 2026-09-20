@@ -322,3 +322,21 @@ before unrelated checks finish, preserving child job handles for ongoing
 observation. Readiness reads required hosted checks for the current head SHA and
 refuses missing, pending, failed, or unavailable evidence. A later push invalidates
 old-head completion claims. Review and human merge gates remain in place.
+
+## 2026-09-20 amendment: the CI gate's evidence is bound to a commit
+
+The 2026-09-17 amendment above put broad verification in CI and made readiness
+read required hosted checks for the current head SHA. The CI watch that feeds it
+carried no such binding. `gc_watch_ci_run` grouped runs by the head SHA of the
+newest run `gh run list` reported, and a push's own runs register seconds to
+minutes after the push, so the newest run during that window is the previous
+commit's. The gate could therefore be satisfied by a commit nobody had built
+(issue #1365).
+
+The watch now binds to one commit before selecting any run: the caller's
+expected head, or the branch tip read from GitHub. An unregistered run set is a
+bounded wait and then a refusal, never a pass, and the terminal envelope names
+the head SHA and workflow it reports on. `/implement` monitoring supplies the
+pull request head, and `/integrate` supplies the commit it force-pushed. The
+loop's gates are otherwise unchanged; the mechanics live in the ADR-027
+2026-09-20 amendment.

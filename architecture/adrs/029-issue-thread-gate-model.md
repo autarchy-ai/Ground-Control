@@ -774,3 +774,23 @@ E immediately. It does not wait for target-branch GitHub Actions, release jobs,
 security scans, sibling-agent work, or any other post-merge action to finish.
 The merge-revision requirement verification, final-report gate, and canonical
 issue close remain unchanged and still fail closed on their own prerequisites.
+
+## 2026-09-20 amendment: the /quickfix review carve-out reaches PR creation
+
+`/quickfix` runs AI review only under `--review`. The final report and both
+completion assertions have carried a `lane: "quickfix"` carve-out for that since
+issue #906, and `gc_render_pr_body` renders the lane's "pre-push Codex review not
+run" attestation. The PR-creation boundary introduced with the review
+execution/publication split (issue #1632) did not: it required a complete trusted
+review-publication tuple from every caller. The lane's default path could
+therefore render a pull request body it was structurally unable to submit, and
+the condition was unrecoverable in place, because a pre-push review reads the
+working tree and a post-push review needs the pull request that cannot yet exist.
+
+`gc_create_synchronized_implement_pr` now takes the same `lane` input and waives
+that tuple, and only that tuple, for `lane: "quickfix"`. Every other piece of
+evidence the boundary revalidates is unchanged. The waiver is granted against the
+issue's authoritative `## Requirements` section, which the boundary already reads
+to bind the body's closing keyword, not against the caller's word: a
+requirement-backed issue is not a legal quickfix, so it keeps the mandatory
+review. An unrecognized lane is refused rather than read as `/implement`.

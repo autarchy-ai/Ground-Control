@@ -179,7 +179,7 @@ The complete keep/delete and placement record is in
 | `gc_assert_completion` | The merge-gated composite completion assertion |
 | `gc_render_pr_body` | Compose a PR body that satisfies `check_pr_body`'s policy gates from structured input |
 | `gc_get_issue_thread` | Fetch the issue body and comments through a content-addressed cache |
-| `gc_watch_ci_run` | Bounded watch of the PR's CI run |
+| `gc_watch_ci_run` | Bounded watch, bound to one head SHA, of every run that commit triggered |
 | `gc_watch_sonar_analysis` | Bounded watch of the SonarCloud analysis and quality gate |
 
 All of these filter sensitive content, post under a structured marker family,

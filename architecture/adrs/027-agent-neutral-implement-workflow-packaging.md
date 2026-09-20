@@ -492,3 +492,40 @@ before unrelated checks finish, preserving child job handles for ongoing
 observation. Readiness reads required hosted checks for the current head SHA and
 refuses missing, pending, failed, or unavailable evidence. A later push invalidates
 old-head completion claims. Review and human merge gates remain in place.
+
+## 2026-09-20 amendment: the CI gate binds to a commit, not to the newest run
+
+The 2026-07-28 amendment above grouped runs by head SHA, but took that SHA from
+the newest run `gh run list` reported. Issue #1365 found the window that leaves
+open. A run list is ordered by creation, and a push's own workflow runs register
+seconds to minutes after the push returns, so during exactly the interval the
+gate is consulted in, the newest run belongs to the *previous* commit. Grouping
+by its SHA watched the previous commit's runs, and their success was reported as
+the pushed commit's CI gate. The same list also carried no constraint when the
+caller had pinned nothing: an older green run could answer for a commit nobody
+had built yet.
+
+`gc_watch_ci_run` now binds to one commit before it selects anything. The commit
+is `expected_head_sha` when the caller names one, and otherwise the branch tip
+read from GitHub through the authorized repository slug. Selection filters the
+listing to that commit and nothing else; there is no newest-run fallback left to
+reach. An empty set means the runs have not registered yet, so the watch waits
+up to five minutes for them and then refuses with
+`ci_watch_no_run_for_head_sha`. That wait is spent from the total cap rather
+than beside it, so the documented cap bounds the whole call. A branch tip that
+cannot be read refuses with `ci_watch_head_sha_unresolved`, and a `run_id`
+pinned against a mismatched `expected_head_sha` refuses with
+`ci_watch_run_head_mismatch`. Every terminal envelope carries the `head_sha` and
+`workflow` of the run it reports, alongside the existing `runs` list.
+
+No workflow or event filter is added. Watching every run for the bound commit is
+the stronger constraint, and it needs no repo-specific workflow filename, so the
+agent-neutral context contract this ADR defines is unchanged and
+`.ground-control.yaml` gains no key.
+
+The `/integrate` lane names the commit it force-pushed when it calls the CI and
+Sonar watchers. Pushing before the watchers was never enough on its own: the
+pre-rebase run stays the newest registered run for the first minutes after the
+force-push. Reading that commit is best-effort, because failing a pull request
+whose push succeeded would be wrong, and the watcher still binds to the branch
+tip on its own when the value is absent.

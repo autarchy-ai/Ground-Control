@@ -381,24 +381,28 @@ function _registerGcGetIssueThread(server) {
 function _registerGcWatchCiRun(server) {
   server.tool(
     "gc_watch_ci_run",
-    "Poll a GitHub Actions run to a terminal state server-side and return one compact terminal envelope (conclusion, failed steps, bounded log summary). Designed for the /implement Step 10 monitor: the agent makes one tool call; the MCP server holds the connection while polling so the agent's context is not burned by per-poll turns. Defaults: queued cap 5 min, total cap 45 min, poll every 15s. The queued cap applies per run to the time it has waited for its first runner, measured from its latest attempt's start, so a run that has started any job (including one reading `queued` between jobs) is subject only to the total cap. On queued-too-long or timeout the tool returns ok=true with conclusion='queued_too_long' or 'timed_out' so the caller can decide policy. If run_id is omitted, every run triggered by the branch's newest commit is watched. run_id, status, and url always describe the one run the conclusion is about; a success over several runs sets run_id and url to null, and `runs` lists every watched run. Raw CI logs stay server-side; only a bounded UTF-8 summary (default 4096 bytes from the tail of `--log-failed`) reaches the caller.",
+    "Poll a GitHub Actions run to a terminal state server-side and return one compact terminal envelope (conclusion, failed steps, bounded log summary). Designed for the /implement Step 10 monitor: the agent makes one tool call; the MCP server holds the connection while polling so the agent's context is not burned by per-poll turns. Defaults: queued cap 5 min, total cap 45 min, poll every 15s. The queued cap applies per run to the time it has waited for its first runner, measured from its latest attempt's start, so a run that has started any job (including one reading `queued` between jobs) is subject only to the total cap. On queued-too-long or timeout the tool returns ok=true with conclusion='queued_too_long' or 'timed_out' so the caller can decide policy. If run_id is omitted, the watch binds to one head commit - expected_head_sha when supplied, otherwise the branch tip read from GitHub - and watches every run that commit triggered, waiting up to 5 minutes for those runs to register rather than accepting an earlier commit's green run. A run pinned by run_id that ran on a different commit than expected_head_sha is refused. run_id, status, and url always describe the one run the conclusion is about; a success over several runs sets run_id and url to null, and `runs` lists every watched run. Raw CI logs stay server-side; only a bounded UTF-8 summary (default 4096 bytes from the tail of `--log-failed`) reaches the caller.",
     {
       repo_path: z.string(),
       branch: z.string().min(1),
       run_id: z.number().int().positive().nullable().optional(),
+      expected_head_sha: z.string().regex(/^[0-9a-f]{7,40}$/).nullable().optional(),
       queued_timeout_seconds: z.number().int().positive().optional(),
       total_timeout_seconds: z.number().int().positive().optional(),
       poll_interval_seconds: z.number().int().positive().optional(),
+      run_registration_timeout_seconds: z.number().int().positive().optional(),
     },
-    async ({ repo_path, branch, run_id, queued_timeout_seconds, total_timeout_seconds, poll_interval_seconds }) => {
+    async ({ repo_path, branch, run_id, expected_head_sha, queued_timeout_seconds, total_timeout_seconds, poll_interval_seconds, run_registration_timeout_seconds }) => {
       try {
         return ok(JSON.stringify(await runWatchCiRun({
           repoPath: repo_path,
           branch,
           runId: run_id ?? null,
+          expectedHeadSha: expected_head_sha ?? null,
           queuedTimeoutSeconds: queued_timeout_seconds ?? 300,
           totalTimeoutSeconds: total_timeout_seconds ?? 2700,
           pollIntervalSeconds: poll_interval_seconds ?? 15,
+          runRegistrationTimeoutSeconds: run_registration_timeout_seconds ?? 300,
         }), null, 2));
       } catch (e) { return err(e); }
     },

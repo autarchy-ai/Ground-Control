@@ -38,11 +38,12 @@ function validateSynchronizedImplementPrInput(input) {
     || input.issueNumber <= 0
     || typeof input.recordId !== "string"
     || !/^[0-9a-f]{32}$/.test(input.recordId)
+    || (input.lane != null && input.lane !== "implement" && input.lane !== "quickfix")
   ) {
     return {
       ok: false,
       error: "implement_pr_input_invalid",
-      message: "issueNumber and a synchronization record ID are required",
+      message: "issueNumber and a synchronization record ID are required, and lane must be 'implement' or 'quickfix' when set",
     };
   }
   const branchValidation = validateImplementBranchName(input.branchName, input.issueNumber);
@@ -253,8 +254,20 @@ async function assertPrBodyClosingKeywordBoundToIssueScope(input, issueThreadRea
       next_action: "render_the_pr_body_with_a_non_closing_reference_and_retry",
     };
   }
-  return { ok: true };
+  return { ok: true, scope };
 }
+
+// /quickfix runs AI review only under `--review`, so requiring a published review here
+// made the lane's default path unable to open a pull request at all while
+// `gc_render_pr_body` was already rendering its "reviews not run" attestation. The same
+// carve-out bounds the final report and both completion assertions (ADR-029, issue #906).
+// It is granted against the issue's AUTHORITATIVE Requirements section rather than the
+// caller's word: a requirement-backed issue is not a legal quickfix, so it keeps the
+// mandatory review.
+function reviewPublicationRequired(lane, scope) {
+  return lane !== "quickfix" || scope.length > 0;
+}
+
 async function prepareSynchronizedPrContext(input, { workspaceAuthorizationResolver, contextResolver }) {
   let repoRoot;
   let context;
@@ -305,19 +318,21 @@ export async function runCreateSynchronizedImplementPr(input, {
   const { repoRoot, repoAuthorization, baseBranch } = prepared;
   const closingBinding = await assertPrBodyClosingKeywordBoundToIssueScope(input, issueThreadReader);
   if (!closingBinding.ok) return closingBinding;
-  const reviewEvidence = await reviewEvidenceReader({
-    repoRoot,
-    owner: repoAuthorization.owner,
-    name: repoAuthorization.name,
-    issueNumber: input.issueNumber,
-  });
-  if (reviewEvidence?.ok !== true || reviewEvidence.published !== true) {
-    return {
-      ok: false,
-      error: "implement_pr_review_publication_missing",
-      message: reviewEvidence?.message ?? "A complete trusted review publication is required before PR creation.",
-      next_action: "publish_the_retained_review_and_retry",
-    };
+  if (reviewPublicationRequired(input.lane, closingBinding.scope)) {
+    const reviewEvidence = await reviewEvidenceReader({
+      repoRoot,
+      owner: repoAuthorization.owner,
+      name: repoAuthorization.name,
+      issueNumber: input.issueNumber,
+    });
+    if (reviewEvidence?.ok !== true || reviewEvidence.published !== true) {
+      return {
+        ok: false,
+        error: "implement_pr_review_publication_missing",
+        message: reviewEvidence?.message ?? "A complete trusted review publication is required before PR creation.",
+        next_action: "publish_the_retained_review_and_retry",
+      };
+    }
   }
   try {
     const synchronization = await validateImplementSynchronization({
