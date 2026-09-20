@@ -33,7 +33,7 @@ def config_doc(tmp: Path) -> dict[str, object]:
         "profile": "gc-sandbox-default",
         "pool": "gc-sandbox-pool",
         "bridge": "gcbr0",
-        "image": "sha256:" + "a" * 64,
+        "image": "images:" + "a" * 64,
         "state_dir": str(tmp / "state"),
         "event_log": str(tmp / "events" / "lifecycle.jsonl"),
         "event_max_bytes": 1024,
@@ -97,7 +97,7 @@ class ConfigBoundaryTest(SandboxTestCase):
 
     def test_rejects_the_example_image_placeholder(self) -> None:
         doc = config_doc(self.root)
-        doc["image"] = "sha256:" + "0" * 64
+        doc["image"] = "images:" + "0" * 64
         self.config_path.write_text(json.dumps(doc), encoding="utf-8")
         with self.assertRaises(ConfigError):
             load_config(self.config_path, expected_uid=os.getuid())
@@ -107,6 +107,17 @@ class ConfigBoundaryTest(SandboxTestCase):
         doc["image"] = "images:" + "b" * 64
         self.config_path.write_text(json.dumps(doc), encoding="utf-8")
         self.assertEqual(load_config(self.config_path, expected_uid=os.getuid()).image, doc["image"])
+
+    def test_accepts_a_locally_published_template_and_rejects_an_unlaunchable_digest(self) -> None:
+        doc = config_doc(self.root)
+        doc["image"] = "local:" + "c" * 64
+        self.config_path.write_text(json.dumps(doc), encoding="utf-8")
+        self.assertEqual(load_config(self.config_path, expected_uid=os.getuid()).image, doc["image"])
+        # Incus reads sha256 as a remote name, so this form validates but never launches.
+        doc["image"] = "sha256:" + "c" * 64
+        self.config_path.write_text(json.dumps(doc), encoding="utf-8")
+        with self.assertRaises(ConfigError):
+            load_config(self.config_path, expected_uid=os.getuid())
 
     def test_rejects_an_event_log_bound_too_small_for_one_schema_record(self) -> None:
         doc = config_doc(self.root)

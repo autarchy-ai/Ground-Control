@@ -12,6 +12,16 @@ Run the privileged setup deliberately from a reviewed checkout:
 sudo bash tools/incus_sandbox/setup.sh install
 ```
 
+A host without a checkout runs the same programs from the installed package:
+
+```sh
+grndctl sandbox setup install
+```
+
+`grndctl sandbox` is an unprivileged front end. It prints the privileged command
+before running it under `sudo`, and `grndctl sandbox path` shows the directory
+holding the programs so you can read them first.
+
 Use `--dry-run` to inspect its fixed resource actions. The installer only
 creates `gc-sandbox` project/profile/pool/bridge resources, a dedicated nftables
 table, and root-owned helper/config/event paths. Where another host firewall
@@ -43,6 +53,67 @@ context. Keep the file root-owned and mode `0600`. Setup writes the current host
 its nftables table; run `setup.sh refresh` after an address change so new starts
 are not rejected as stale. Traffic to a host address is dropped whether or not
 that address is in the recorded set.
+
+## Get the guest template
+
+The published template lives in the GitHub Container Registry, and fetching it
+is the ordinary path:
+
+```sh
+grndctl sandbox image
+```
+
+That pulls `ghcr.io/autarchy-ai/gc-sandbox-template:latest`, checks the
+downloaded artifact against the digest its manifest names, imports it for the
+`gc-sandbox` project as `gc-sandbox-template`, and prints the fingerprint to
+pin. Pass a reference to fetch a different tag. The template contains Git,
+Node.js with npm, `python3`, `tmux`, the GitHub CLI and the `sandbox` user, and
+no credential.
+
+### Build one instead
+
+Build locally when you need another base, another architecture, or a template
+you compiled yourself:
+
+```sh
+grndctl sandbox build-image images:almalinux/10/cloud
+```
+
+The build resolves that reference to exactly one virtual-machine image for this
+architecture and refuses an ambiguous one, launches a throwaway guest from the
+resolved fingerprint, installs Git, Node.js with npm, `python3`, `tmux` and a
+checksum-verified GitHub CLI, creates the `sandbox` user, publishes the result
+as `gc-sandbox-template`, and deletes the guest. It prints the template
+fingerprint to pin:
+
+```json
+  "image": "local:<64-hex-fingerprint>"
+```
+
+Put that in `/etc/gc-incus-sandbox/config.json` and create guests again; they
+start from the template instead of a bare base image. Rebuilding refuses to
+replace the existing alias, so remove it first with
+`sudo incus image alias delete gc-sandbox-template --project gc-sandbox`.
+
+Only reference forms Incus can launch are accepted: `images:<fingerprint>` for
+an upstream image and `local:<fingerprint>` for a template that was pulled or
+built here. The build pins its own tooling, so a rebuild produces the same guest
+surface until `build_image.py` changes.
+
+### Publish a template
+
+Publishing is a maintainer step. It exports the local template and stores it in
+the registry as one OCI artifact; the credential is read from standard input, so
+it never reaches argv, the environment, or a file:
+
+```sh
+gh auth token | grndctl sandbox push-image \
+  ghcr.io/autarchy-ai/gc-sandbox-template:latest <template-fingerprint>
+```
+
+The token needs the `write:packages` scope
+(`gh auth refresh -h github.com -s write:packages`). A public package needs no
+credential to pull.
 
 ## Ordinary use
 
