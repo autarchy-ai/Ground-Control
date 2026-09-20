@@ -124,11 +124,11 @@ def _check_top_level(doc: dict[str, object]) -> None:
 def _image(doc: dict[str, object]) -> str:
     """Return a non-placeholder pinned image digest."""
     image = doc["image"]
-    if not isinstance(image, str) or len(image) != 71 or not image.startswith("sha256:"):
-        raise ConfigError("image must be a pinned sha256 digest")
+    if not isinstance(image, str) or len(image) != 71 or not image.startswith(("sha256:", "images:")):
+        raise ConfigError("image must be a pinned sha256 digest or images remote fingerprint")
     digest = image[7:]
     if any(char not in "0123456789abcdef" for char in digest) or digest == "0" * 64:
-        raise ConfigError("image digest is malformed or a template placeholder")
+        raise ConfigError("image fingerprint is malformed or a template placeholder")
     return image
 
 

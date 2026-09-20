@@ -76,10 +76,10 @@ or insufficient observation rather than treating it as zero use.
 Incus project limits are the aggregate configured-allocation backstop; each VM
 also has explicit CPU, memory, and root-disk settings. The setup must prove the
 chosen storage driver enforces the root-disk and aggregate pool limits under an
-actual write probe before it permits ordinary use. A `dir` pool on existing ext4
-is acceptable only when filesystem project quotas are enabled and the probe
-passes. Otherwise setup stops; it does not use an unbounded `dir` pool, repartition
-or reformat existing storage, or infer enforcement from configuration text.
+actual write probe before it permits ordinary use. Setup creates a dedicated,
+loop-backed 64 GiB Btrfs pool, then runs that probe. It does not use unbounded
+`dir` storage, repartition or reformat existing storage, or infer enforcement
+from configuration text.
 
 This is deliberately separate from `gc-test-dispatch`: that dispatcher owns
 host-wide CPU admission for verification commands, has a CPU-only ledger, and

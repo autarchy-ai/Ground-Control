@@ -14,15 +14,17 @@ sudo bash tools/incus_sandbox/setup.sh install
 
 Use `--dry-run` to inspect its fixed resource actions. The installer only
 creates `gc-sandbox` project/profile/pool/bridge resources, a dedicated nftables
-table, and root-owned helper/config/event paths. It refuses an already exposed
-Incus HTTPS management API, a pool filesystem without project quotas, or a
-quota probe that cannot demonstrate a size limit. It does not repartition or
-format storage, flush firewall rules, alter Docker or libvirt resources, expose
+table, and root-owned helper/config/event paths. Its pool is a dedicated 64 GiB
+loop-backed Btrfs volume; the host filesystem is neither repartitioned nor
+reformatted. Setup refuses an already exposed Incus HTTPS management API or a
+quota probe that cannot demonstrate a size limit. It does not flush firewall
+rules, alter Docker or libvirt resources, expose
 the Incus API, or add a user to `incus-admin`.
 
-Before ordinary use, replace the all-zero digest in
-`/etc/gc-incus-sandbox/config.json` with a verified, pinned local Incus image
-fingerprint. The template must contain `tmux` and a `sandbox` user, but no
+Before setup, replace the all-zero `images:` fingerprint in
+`/etc/gc-incus-sandbox/config.json` with a verified, pinned Incus image
+fingerprint, for example `images:<64-hex-fingerprint>`. The template must
+contain `tmux` and a `sandbox` user, but no
 credentials, host mounts, forwarded sockets, or session history. Keep the file
 root-owned and mode `0600`. Setup writes the current host IPv4 address set into
 its nftables table; rerun setup after an address change so new starts are not
