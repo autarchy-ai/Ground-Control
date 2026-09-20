@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import json
+import runpy
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,12 +58,16 @@ class PacketBoundaryTest(unittest.TestCase):
     def test_packet_validation_rejects_malformed_identities_and_payloads(self) -> None:
         invalid_packets = (
             b"not-a-packet",
+            b"GCS1" + (0).to_bytes(4, "big"),
+            b"GCS1" + (2).to_bytes(4, "big"),
             b"GCS1" + (2).to_bytes(4, "big") + b"{x",
             packet({"schema": "unexpected", "kind": "clone", "commit": "a" * 40,
                     "repository": "https://github.com/example/private.git"}),
             packet({"schema": "gc.incus-sandbox.source/v1", "kind": "invalid", "commit": "a" * 40}),
             packet({"schema": "gc.incus-sandbox.source/v1", "kind": "clone", "commit": "short",
                     "repository": "https://github.com/example/private.git"}),
+            packet({"schema": "gc.incus-sandbox.source/v1", "kind": "clone", "commit": "a" * 40,
+                    "repository": "https://github.com/example/private.git", "extra": "field"}),
             packet({"schema": "gc.incus-sandbox.source/v1", "kind": "bundle", "commit": "a" * 40}),
         )
         for source in invalid_packets:
@@ -81,6 +87,12 @@ class GuestMaterializationTest(unittest.TestCase):
                 with self.assertRaises(PacketError):
                     guest_bootstrap._copy_bundle_payload(0)
             self.assertEqual(bundle_path.read_bytes(), b"bundle")
+            bundle_path.unlink()
+            packet_path.unlink()
+            with patch.multiple(guest_bootstrap, _PACKET_PATH=packet_path, _BUNDLE_PATH=bundle_path):
+                with self.assertRaises(FileNotFoundError):
+                    guest_bootstrap._copy_bundle_payload(0)
+            self.assertFalse(bundle_path.exists())
 
     def test_materialize_uses_fixed_guest_paths_for_clone_and_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -107,6 +119,34 @@ class GuestMaterializationTest(unittest.TestCase):
                 self.assertEqual(commands[1][-1], "a" * 40)
                 self.assertEqual(commands[2][0], "/usr/bin/npm")
                 self.assertFalse(bundle_path.exists())
+
+    def test_materialize_rejects_an_existing_fixed_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            transfer = root / ".gc-transfer"
+            transfer.mkdir()
+            packet_path, workspace = transfer / "source.gcs", root / "workspace"
+            packet_path.write_bytes(packet({
+                "schema": "gc.incus-sandbox.source/v1", "kind": "clone", "commit": "a" * 40,
+                "repository": "https://github.com/example/private.git",
+            }))
+            workspace.mkdir()
+            with patch.multiple(guest_bootstrap, _PACKET_PATH=packet_path,
+                                _WORKSPACE_PATH=workspace, _BUNDLE_PATH=transfer / "source.bundle"):
+                with self.assertRaises(PacketError):
+                    guest_bootstrap.materialize()
+
+    def test_main_uses_only_the_fixed_paths(self) -> None:
+        expected = [str(guest_bootstrap._PACKET_PATH), str(guest_bootstrap._WORKSPACE_PATH)]
+        with patch("tools.incus_sandbox.guest_bootstrap.materialize") as materialize:
+            self.assertEqual(main(expected), 0)
+        materialize.assert_called_once_with()
+
+    def test_cli_reports_invalid_arguments(self) -> None:
+        with patch.object(sys, "argv", ["guest-bootstrap.py"]):
+            with self.assertRaises(SystemExit) as result:
+                runpy.run_module("tools.incus_sandbox.guest_bootstrap", run_name="__main__")
+        self.assertEqual(result.exception.code, 64)
 
 
 class TransferCommandTest(unittest.TestCase):
