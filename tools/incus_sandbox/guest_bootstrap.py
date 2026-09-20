@@ -20,6 +20,7 @@ _COMMIT = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _REPOSITORY = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?$")
 _HEADER_BYTES = 8
 _MAX_METADATA_BYTES = 4096
+_INVALID_METADATA = "source packet metadata is invalid"
 _GUEST_HOME = Path("/home/sandbox")
 _PACKET_PATH = _GUEST_HOME / ".gc-transfer/source.gcs"
 _WORKSPACE_PATH = _GUEST_HOME / "workspace"
@@ -32,13 +33,13 @@ def _packet_metadata(packet: bytes) -> tuple[dict[str, object], int]:
         raise PacketError("source packet header is invalid")
     metadata_length = int.from_bytes(packet[4:8], "big")
     if not 2 <= metadata_length <= _MAX_METADATA_BYTES:
-        raise PacketError("source packet metadata is invalid")
+        raise PacketError(_INVALID_METADATA)
     if len(packet) < _HEADER_BYTES + metadata_length:
-        raise PacketError("source packet metadata is invalid")
+        raise PacketError(_INVALID_METADATA)
     try:
         metadata = json.loads(packet[8:8 + metadata_length].decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise PacketError("source packet metadata is invalid") from exc
+        raise PacketError(_INVALID_METADATA) from exc
     if not isinstance(metadata, dict) or metadata.get("schema") != "gc.incus-sandbox.source/v1":
         raise PacketError("source packet schema is invalid")
     return metadata, metadata_length
