@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tools.incus_sandbox import guest_bootstrap
 from tools.incus_sandbox.guest_bootstrap import PacketError, guest_environment, main, parse_packet
 from tools.incus_sandbox.transfer import TransferError, read_packet, transfer, transfer_commands
 
@@ -51,6 +52,61 @@ class PacketBoundaryTest(unittest.TestCase):
     def test_guest_bootstrap_rejects_caller_controlled_paths_before_reading(self) -> None:
         with self.assertRaises(PacketError):
             main(["/tmp/source.gcs", "/tmp/workspace"])
+
+    def test_packet_validation_rejects_malformed_identities_and_payloads(self) -> None:
+        invalid_packets = (
+            b"not-a-packet",
+            b"GCS1" + (2).to_bytes(4, "big") + b"{x",
+            packet({"schema": "unexpected", "kind": "clone", "commit": "a" * 40,
+                    "repository": "https://github.com/example/private.git"}),
+            packet({"schema": "gc.incus-sandbox.source/v1", "kind": "invalid", "commit": "a" * 40}),
+            packet({"schema": "gc.incus-sandbox.source/v1", "kind": "clone", "commit": "short",
+                    "repository": "https://github.com/example/private.git"}),
+            packet({"schema": "gc.incus-sandbox.source/v1", "kind": "bundle", "commit": "a" * 40}),
+        )
+        for source in invalid_packets:
+            with self.assertRaises(PacketError):
+                parse_packet(source)
+
+
+class GuestMaterializationTest(unittest.TestCase):
+    def test_bundle_copy_uses_fixed_paths_and_preserves_existing_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            packet_path, bundle_path = root / "source.gcs", root / "source.bundle"
+            packet_path.write_bytes(b"header-bundle")
+            with patch.multiple(guest_bootstrap, _PACKET_PATH=packet_path, _BUNDLE_PATH=bundle_path):
+                guest_bootstrap._copy_bundle_payload(len(b"header-"))
+                self.assertEqual(bundle_path.read_bytes(), b"bundle")
+                with self.assertRaises(PacketError):
+                    guest_bootstrap._copy_bundle_payload(0)
+            self.assertEqual(bundle_path.read_bytes(), b"bundle")
+
+    def test_materialize_uses_fixed_guest_paths_for_clone_and_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            transfer = root / ".gc-transfer"
+            transfer.mkdir()
+            packet_path, workspace = transfer / "source.gcs", root / "workspace"
+            bundle_path, home = transfer / "source.bundle", root / "home"
+            home.mkdir()
+            sources = (
+                packet({"schema": "gc.incus-sandbox.source/v1", "kind": "clone", "commit": "a" * 40,
+                        "repository": "https://github.com/example/private.git"}),
+                packet({"schema": "gc.incus-sandbox.source/v1", "kind": "bundle", "commit": "a" * 40}, b"bundle"),
+            )
+            for source in sources:
+                packet_path.write_bytes(source)
+                with patch.multiple(guest_bootstrap, _PACKET_PATH=packet_path,
+                                    _WORKSPACE_PATH=workspace, _BUNDLE_PATH=bundle_path), \
+                     patch.object(guest_bootstrap.Path, "home", return_value=home), \
+                     patch("tools.incus_sandbox.guest_bootstrap.subprocess.run") as run:
+                    guest_bootstrap.materialize()
+                commands = [call.args[0] for call in run.call_args_list]
+                self.assertEqual(commands[0][0], "/usr/bin/git")
+                self.assertEqual(commands[1][-1], "a" * 40)
+                self.assertEqual(commands[2][0], "/usr/bin/npm")
+                self.assertFalse(bundle_path.exists())
 
 
 class TransferCommandTest(unittest.TestCase):

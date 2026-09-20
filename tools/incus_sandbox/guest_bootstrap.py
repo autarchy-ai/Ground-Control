@@ -85,7 +85,11 @@ def _validated_source(metadata: dict[str, object], payload: bytes) -> dict[str, 
 def _copy_bundle_payload(offset: int) -> None:
     """Copy bundle bytes from the fixed packet file into a fixed guest-only path."""
     try:
-        with _PACKET_PATH.open("rb") as source, _BUNDLE_PATH.open("xb") as bundle:
+        bundle = _BUNDLE_PATH.open("xb")
+    except FileExistsError as exc:
+        raise PacketError("guest bundle path already exists") from exc
+    try:
+        with bundle, _PACKET_PATH.open("rb") as source:
             source.seek(offset)
             shutil.copyfileobj(source, bundle)
         _BUNDLE_PATH.chmod(0o600)
