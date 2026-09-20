@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TypedDict
 
 
-_ACTIONS = {"create", "boot", "attach", "stop", "start", "delete", "status", "diagnose"}
+_ACTIONS = {"create", "boot", "attach", "stop", "start", "delete", "status", "diagnose", "transfer"}
 _OUTCOMES = {"success", "failure", "denied"}
 _ERRORS = {
     "none", "admission_observation_stale", "admission_insufficient", "command_failed",
