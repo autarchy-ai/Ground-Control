@@ -126,8 +126,10 @@ flushes or replaces the host's firewall. The dedicated bridge permits DHCP,
 name resolution through the bridge resolver and the configured host resolvers,
 return traffic, and outbound TCP 443 to public
 addresses. Where another host firewall drops forwarded traffic by default, setup
-adds an accept for this bridge alone in the chain that drops it and removes that
-accept on rollback; the sandbox policy above stays the effective one. It denies
+adds an accept for this bridge alone in the chain that drops it, covering
+guest-initiated traffic and its return path but not unsolicited inbound traffic,
+and removes that accept on rollback; the sandbox policy above stays the
+effective one. It denies
 guest-to-guest traffic, all unsolicited inbound traffic,
 host-management and host-service addresses (including every configured host
 address), private/LAN/link-local/loopback/metadata ranges, and every other

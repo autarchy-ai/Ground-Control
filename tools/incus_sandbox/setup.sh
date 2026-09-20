@@ -74,24 +74,27 @@ allow_bridge_forwarding() {
   "$dry_run" && { echo "allow $BRIDGE where the legacy FORWARD policy is DROP"; return 0; }
   command -v iptables >/dev/null 2>&1 || return 0
   iptables -S FORWARD 2>/dev/null | grep -qx -- "-P FORWARD DROP" || return 0
-  local chain=FORWARD direction
+  local chain=FORWARD
   if iptables -S DOCKER-USER >/dev/null 2>&1; then chain=DOCKER-USER; fi
-  for direction in -i -o; do
-    iptables -C "$chain" "$direction" "$BRIDGE" -j ACCEPT 2>/dev/null ||
-      iptables -I "$chain" "$direction" "$BRIDGE" -j ACCEPT
-  done
+  # Guest-initiated traffic only, filtered by this table's own rules, plus its
+  # return traffic. Unsolicited inbound traffic keeps hitting the drop policy.
+  iptables -C "$chain" -i "$BRIDGE" -j ACCEPT 2>/dev/null ||
+    iptables -I "$chain" -i "$BRIDGE" -j ACCEPT
+  iptables -C "$chain" -o "$BRIDGE" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null ||
+    iptables -I "$chain" -o "$BRIDGE" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
   printf '%s\n' "forwarding $chain" >>"$OWNERSHIP_RECORD"
 }
 
 remove_bridge_forwarding() {
-  local chain direction
+  local chain
   [[ -f "$OWNERSHIP_RECORD" ]] || return 0
   chain="$(awk '/^forwarding / { print $2 }' "$OWNERSHIP_RECORD" | tail -n 1)"
   [[ -n "$chain" ]] || return 0
-  for direction in -i -o; do
-    while iptables -C "$chain" "$direction" "$BRIDGE" -j ACCEPT 2>/dev/null; do
-      iptables -D "$chain" "$direction" "$BRIDGE" -j ACCEPT
-    done
+  while iptables -C "$chain" -i "$BRIDGE" -j ACCEPT 2>/dev/null; do
+    iptables -D "$chain" -i "$BRIDGE" -j ACCEPT
+  done
+  while iptables -C "$chain" -o "$BRIDGE" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; do
+    iptables -D "$chain" -o "$BRIDGE" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
   done
 }
 
