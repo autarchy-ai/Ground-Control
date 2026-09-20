@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TypeAlias
 
 
 class ConfigError(RuntimeError):
@@ -14,14 +13,18 @@ class ConfigError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class VmLimits:
+class VmLimits(object):
+    """The fixed resource allocation for one sandbox VM."""
+
     cpu: int
     memory_mib: int
     disk_gib: int
 
 
 @dataclass(frozen=True)
-class HostLimits:
+class HostLimits(object):
+    """Host reserves and aggregate capacity permitted for sandbox VMs."""
+
     reserve_memory_mib: int
     reserve_disk_gib: int
     max_cpu: int
@@ -31,7 +34,9 @@ class HostLimits:
 
 
 @dataclass(frozen=True)
-class SandboxConfig:
+class SandboxConfig(object):
+    """Validated host policy used by the root-side lifecycle helper."""
+
     project: str
     profile: str
     pool: str
@@ -46,23 +51,29 @@ class SandboxConfig:
     host: HostLimits
 
 
+JsonObject: TypeAlias = dict[str, object]
 _TOP_LEVEL = {
-    "schema", "project", "profile", "pool", "bridge", "image", "state_dir", "event_log",
-    "event_max_bytes", "observation_max_age_seconds", "operator_uid", "vm", "host",
+    "schema", "project", "profile", "pool", "bridge", "image", "state_dir",
+    "event_log", "event_max_bytes", "observation_max_age_seconds", "operator_uid",
+    "vm", "host",
 }
-_VM = {"cpu", "memory_mib", "disk_gib"}
-_HOST = {"reserve_memory_mib", "reserve_disk_gib", "max_cpu", "max_memory_mib",
-         "max_disk_gib", "overhead_disk_gib"}
+_VM_FIELDS = ("cpu", "memory_mib", "disk_gib")
+_HOST_FIELDS = (
+    "reserve_memory_mib", "reserve_disk_gib", "max_cpu", "max_memory_mib",
+    "max_disk_gib", "overhead_disk_gib",
+)
 _MIN_EVENT_BYTES = 512
 
 
-def _positive(value: Any, field: str) -> int:
+def _positive(value: object, field: str) -> int:
+    """Return a positive integer configuration value."""
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ConfigError(f"{field} must be a positive integer")
     return value
 
 
-def _name(doc: dict[str, Any], field: str) -> str:
+def _name(doc: JsonObject, field: str) -> str:
+    """Read one bounded lower-case Incus resource name."""
     value = doc.get(field)
     if not isinstance(value, str) or not value or len(value) > 63:
         raise ConfigError(f"{field} must be a non-empty bounded string")
@@ -72,6 +83,7 @@ def _name(doc: dict[str, Any], field: str) -> str:
 
 
 def _owned_regular(path: Path, expected_uid: int) -> None:
+    """Require a root-owned non-symlink configuration file."""
     try:
         stat_result = path.lstat()
     except OSError as exc:
@@ -84,51 +96,76 @@ def _owned_regular(path: Path, expected_uid: int) -> None:
         raise ConfigError("configuration must not be writable by group or other")
 
 
-def _path(doc: dict[str, Any], field: str) -> Path:
+def _path(doc: JsonObject, field: str) -> Path:
+    """Read an absolute host-controlled filesystem path."""
     value = doc.get(field)
     if not isinstance(value, str) or not value.startswith("/"):
         raise ConfigError(f"{field} must be an absolute path")
     return Path(value)
 
 
-def load_config(path: Path, *, expected_uid: int = 0) -> SandboxConfig:
-    """Load the fixed host policy; caller input is never configuration."""
-    _owned_regular(path, expected_uid)
+def _read_document(path: Path) -> JsonObject:
+    """Decode the previously ownership-checked JSON policy document."""
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
+        document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise ConfigError(f"configuration is not valid JSON: {exc}") from exc
-    if not isinstance(doc, dict) or set(doc) != _TOP_LEVEL:
+    if not isinstance(document, dict) or not all(isinstance(key, str) for key in document):
+        raise ConfigError("configuration must be a JSON object")
+    return document
+
+
+def _check_top_level(doc: JsonObject) -> None:
+    """Verify the closed versioned configuration vocabulary."""
+    if set(doc) != _TOP_LEVEL:
         raise ConfigError("configuration keys do not match gc.incus-sandbox/v1")
     if doc["schema"] != "gc.incus-sandbox/v1":
         raise ConfigError("unsupported configuration schema")
+
+
+def _image(doc: JsonObject) -> str:
+    """Return a non-placeholder pinned image digest."""
     image = doc["image"]
     if not isinstance(image, str) or len(image) != 71 or not image.startswith("sha256:"):
         raise ConfigError("image must be a pinned sha256 digest")
-    if any(char not in "0123456789abcdef" for char in image[7:]):
-        raise ConfigError("image digest is malformed")
-    if image[7:] == "0" * 64:
-        raise ConfigError("image digest is a template placeholder, not a pinned image")
-    vm_doc, host_doc = doc["vm"], doc["host"]
-    if not isinstance(vm_doc, dict) or set(vm_doc) != _VM:
-        raise ConfigError("vm limits have unexpected fields")
-    if not isinstance(host_doc, dict) or set(host_doc) != _HOST:
-        raise ConfigError("host limits have unexpected fields")
-    vm = VmLimits(*(_positive(vm_doc[field], f"vm.{field}") for field in
-                    ("cpu", "memory_mib", "disk_gib")))
-    host = HostLimits(*(_positive(host_doc[field], f"host.{field}") for field in
-                         ("reserve_memory_mib", "reserve_disk_gib", "max_cpu", "max_memory_mib",
-                          "max_disk_gib", "overhead_disk_gib")))
+    digest = image[7:]
+    if any(char not in "0123456789abcdef" for char in digest) or digest == "0" * 64:
+        raise ConfigError("image digest is malformed or a template placeholder")
+    return image
+
+
+def _limits(doc: JsonObject, fields: tuple[str, ...], label: str) -> tuple[int, ...]:
+    """Validate a closed resource-limit subsection and return its values."""
+    section = doc.get(label)
+    if not isinstance(section, dict) or set(section) != set(fields):
+        raise ConfigError(f"{label} limits have unexpected fields")
+    return tuple(_positive(section[field], f"{label}.{field}") for field in fields)
+
+
+def _build_config(doc: JsonObject) -> SandboxConfig:
+    """Build the typed policy object after individual fields are validated."""
+    vm = VmLimits(*_limits(doc, _VM_FIELDS, "vm"))
+    host = HostLimits(*_limits(doc, _HOST_FIELDS, "host"))
     if vm.cpu > host.max_cpu or vm.memory_mib > host.max_memory_mib or vm.disk_gib > host.max_disk_gib:
         raise ConfigError("one VM exceeds configured aggregate capacity")
     event_max_bytes = _positive(doc["event_max_bytes"], "event_max_bytes")
     if event_max_bytes < _MIN_EVENT_BYTES:
         raise ConfigError(f"event_max_bytes must be at least {_MIN_EVENT_BYTES}")
     return SandboxConfig(
-        project=_name(doc, "project"), profile=_name(doc, "profile"), pool=_name(doc, "pool"),
-        bridge=_name(doc, "bridge"), image=image, state_dir=_path(doc, "state_dir"),
-        event_log=_path(doc, "event_log"), event_max_bytes=event_max_bytes,
-        observation_max_age_seconds=_positive(doc["observation_max_age_seconds"], "observation_max_age_seconds"),
-        operator_uid=_positive(doc["operator_uid"], "operator_uid"),
-        vm=vm, host=host,
+        project=_name(doc, "project"), profile=_name(doc, "profile"),
+        pool=_name(doc, "pool"), bridge=_name(doc, "bridge"), image=_image(doc),
+        state_dir=_path(doc, "state_dir"), event_log=_path(doc, "event_log"),
+        event_max_bytes=event_max_bytes,
+        observation_max_age_seconds=_positive(
+            doc["observation_max_age_seconds"], "observation_max_age_seconds"
+        ),
+        operator_uid=_positive(doc["operator_uid"], "operator_uid"), vm=vm, host=host,
     )
+
+
+def load_config(path: Path, *, expected_uid: int = 0) -> SandboxConfig:
+    """Load the fixed host policy; caller input is never configuration."""
+    _owned_regular(path, expected_uid)
+    document = _read_document(path)
+    _check_top_level(document)
+    return _build_config(document)

@@ -11,12 +11,12 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 if __package__:
     from .config import SandboxConfig, load_config
     from .events import EventWriter
-else:  # Installed as a root-owned standalone helper, outside the checkout package.
+else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from config import SandboxConfig, load_config
     from events import EventWriter
@@ -37,11 +37,12 @@ _IP = "/usr/sbin/ip"
 
 
 def _run(argv: list[str]) -> dict[str, int]:
+    """Run one already-allowlisted executable argument vector."""
     completed = subprocess.run(argv, check=True, stdin=None, stdout=None, stderr=None)
     return {"returncode": completed.returncode}
 
 
-def _observation() -> dict[str, Any]:
+def _observation() -> dict[str, int | bool]:
     """Return conservative host availability facts without exposing process state."""
     memory_available = 0
     try:
@@ -66,11 +67,30 @@ def _network_policy_fresh(config: SandboxConfig) -> bool:
     return expected == hashlib.sha256(addresses.encode("utf-8")).hexdigest()
 
 
-class LifecycleHelper:
+def _positive_fact(value: object) -> int | None:
+    """Return a non-negative integer observation, otherwise no fact."""
+    return value if isinstance(value, int) and value >= 0 else None
+
+
+def _guest_usage(info: object) -> tuple[int | None, int | None, int | None]:
+    """Extract the three numeric guest resource facts from Incus state JSON."""
+    if not isinstance(info, dict):
+        return None, None, None
+    state = info.get("state")
+    if not isinstance(state, dict):
+        return None, None, None
+    cpu = state.get("cpu") if isinstance(state.get("cpu"), dict) else {}
+    memory = state.get("memory") if isinstance(state.get("memory"), dict) else {}
+    disks = state.get("disk") if isinstance(state.get("disk"), dict) else {}
+    root = disks.get("root") if isinstance(disks.get("root"), dict) else {}
+    return _positive_fact(cpu.get("usage")), _positive_fact(memory.get("usage")), _positive_fact(root.get("usage"))
+
+
+class LifecycleHelper(object):
     """Validates caller intent, reserves capacity, then emits only fixed Incus argv."""
 
-    def __init__(self, config: SandboxConfig, *, runner: Callable[[list[str]], Any] = _run,
-                 event_writer: EventWriter, observer: Callable[[], dict[str, Any]] = _observation,
+    def __init__(self, config: SandboxConfig, *, runner: Callable[[list[str]], object] = _run,
+                 event_writer: EventWriter, observer: Callable[[], dict[str, int | bool]] = _observation,
                  network_checker: Callable[[SandboxConfig], bool] = _network_policy_fresh,
                  caller_uid: int | None = None) -> None:
         self.config = config
@@ -87,7 +107,7 @@ class LifecycleHelper:
         return name
 
     def _emit(self, action: str, outcome: str, name: str | None, *, error_code: str = "none",
-              started: float | None = None, observed: dict[str, Any] | None = None) -> None:
+              started: float | None = None, observed: dict[str, int | bool] | None = None) -> None:
         duration = int((time.monotonic() - started) * 1000) if started is not None else 0
         self.events.write({"action": action, "outcome": outcome, "sandbox_id": name,
                            "error_code": error_code, "duration_ms": duration,
@@ -113,9 +133,12 @@ class LifecycleHelper:
             for name, value in doc.items():
                 if not _NAME.fullmatch(name) or not isinstance(value, dict):
                     raise AdmissionError("allocation state is invalid")
-                if set(value) != {"cpu", "memory_mib", "disk_gib", "owner_uid", "active"} or any(
-                        not isinstance(value[key], int) or value[key] <= 0 for key in ("cpu", "memory_mib", "disk_gib", "owner_uid")) \
-                        or not isinstance(value["active"], bool):
+                fields = ("cpu", "memory_mib", "disk_gib", "owner_uid")
+                valid_fields = set(value) == {*fields, "active"}
+                if not valid_fields:
+                    raise AdmissionError("allocation state is invalid")
+                valid_numbers = all(isinstance(value[key], int) and value[key] > 0 for key in fields)
+                if not valid_numbers or not isinstance(value["active"], bool):
                     raise AdmissionError("allocation state is invalid")
                 records[name] = value
             return fd, records
@@ -137,27 +160,51 @@ class LifecycleHelper:
         fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
 
-    def _admit(self, name: str) -> tuple[int, dict[str, dict[str, int]], dict[str, Any]]:
+    def _admission_observation(self) -> dict[str, int | bool]:
+        """Read and validate the host facts used for a new reservation."""
         observed = self.observer()
-        if not isinstance(observed, dict) or observed.get("fresh") is not True:
+        if observed.get("fresh") is not True:
             raise AdmissionError("host observations are stale")
-        if not all(isinstance(observed.get(key), int) and observed[key] >= 0
-                   for key in ("memory_mib", "disk_gib")):
+        if _positive_fact(observed.get("memory_mib")) is None:
+            raise AdmissionError("host observations are unavailable")
+        if _positive_fact(observed.get("disk_gib")) is None:
             raise AdmissionError("host observations are unavailable")
         if not self.network_checker(self.config):
             raise AdmissionError("network policy observations are stale")
-        if observed["memory_mib"] < self.config.host.reserve_memory_mib + self.config.vm.memory_mib or \
-                observed["disk_gib"] < self.config.host.reserve_disk_gib + self.config.vm.disk_gib:
+        return observed
+
+    def _has_headroom(self, observed: dict[str, int | bool]) -> bool:
+        """Check host reserves before taking the allocation lock."""
+        memory = _positive_fact(observed.get("memory_mib"))
+        disk = _positive_fact(observed.get("disk_gib"))
+        if memory is None or disk is None:
+            return False
+        required_memory = self.config.host.reserve_memory_mib + self.config.vm.memory_mib
+        required_disk = self.config.host.reserve_disk_gib + self.config.vm.disk_gib
+        return memory >= required_memory and disk >= required_disk
+
+    def _aggregate_fits(self, records: dict[str, dict[str, int]]) -> bool:
+        """Check aggregate VM allocations against the fixed host capacity."""
+        active = [record for record in records.values() if record["active"]]
+        cpu = sum(record["cpu"] for record in active) + self.config.vm.cpu
+        memory = sum(record["memory_mib"] for record in active) + self.config.vm.memory_mib
+        disk = sum(record["disk_gib"] for record in active)
+        disk += self.config.vm.disk_gib + self.config.host.overhead_disk_gib
+        return (
+            cpu <= self.config.host.max_cpu and memory <= self.config.host.max_memory_mib
+            and disk <= self.config.host.max_disk_gib
+        )
+
+    def _admit(self, name: str) -> tuple[int, dict[str, dict[str, int]], dict[str, int | bool]]:
+        """Reserve capacity for a caller after fresh local admission checks."""
+        observed = self._admission_observation()
+        if not self._has_headroom(observed):
             raise AdmissionError("host headroom is insufficient")
         fd, records = self._locked_allocations()
         if name in records and records[name]["active"]:
             self._unlock(fd)
             raise AdmissionError("sandbox is already reserved")
-        active = [record for record in records.values() if record["active"]]
-        cpu = sum(record["cpu"] for record in active) + self.config.vm.cpu
-        memory = sum(record["memory_mib"] for record in active) + self.config.vm.memory_mib
-        disk = sum(record["disk_gib"] for record in active) + self.config.vm.disk_gib + self.config.host.overhead_disk_gib
-        if cpu > self.config.host.max_cpu or memory > self.config.host.max_memory_mib or disk > self.config.host.max_disk_gib:
+        if not self._aggregate_fits(records):
             self._unlock(fd)
             raise AdmissionError("aggregate allocation is insufficient")
         if self.caller_uid != self.config.operator_uid:
@@ -200,14 +247,17 @@ class LifecycleHelper:
         try:
             return {
                 "cpu": self.config.host.max_cpu - sum(record["cpu"] for record in records.values() if record["active"]),
-                "memory_mib": self.config.host.max_memory_mib - sum(record["memory_mib"] for record in records.values() if record["active"]),
-                "disk_gib": self.config.host.max_disk_gib - self.config.host.overhead_disk_gib
-                - sum(record["disk_gib"] for record in records.values() if record["active"]),
+                "memory_mib": self.config.host.max_memory_mib - sum(
+                    record["memory_mib"] for record in records.values() if record["active"]
+                ),
+                "disk_gib": self.config.host.max_disk_gib - self.config.host.overhead_disk_gib - sum(
+                    record["disk_gib"] for record in records.values() if record["active"]
+                ),
             }
         finally:
             self._unlock(fd)
 
-    def normalized_observation(self, name: str, incus_info: dict[str, Any] | None) -> dict[str, Any]:
+    def normalized_observation(self, name: str, incus_info: dict[str, object] | None) -> dict[str, object]:
         """Render the closed status shape; malformed daemon JSON remains unavailable."""
         observed = self.observer()
         available = isinstance(incus_info, dict) and observed.get("fresh") is True
@@ -215,15 +265,7 @@ class LifecycleHelper:
         if not isinstance(status, str) or len(status) > 32:
             status = "unavailable"
             available = False
-        state = incus_info.get("state") if available else None
-        resources = state if isinstance(state, dict) else {}
-        cpu = resources.get("cpu") if isinstance(resources.get("cpu"), dict) else {}
-        memory = resources.get("memory") if isinstance(resources.get("memory"), dict) else {}
-        disks = resources.get("disk") if isinstance(resources.get("disk"), dict) else {}
-        root_disk = disks.get("root") if isinstance(disks.get("root"), dict) else {}
-        cpu_usage = cpu.get("usage") if isinstance(cpu.get("usage"), int) else None
-        memory_usage = memory.get("usage") if isinstance(memory.get("usage"), int) else None
-        disk_usage = root_disk.get("usage") if isinstance(root_disk.get("usage"), int) else None
+        cpu_usage, memory_usage, disk_usage = _guest_usage(incus_info if available else None)
         return {
             "schema": "gc.incus-sandbox.status/v1",
             "sandbox_id": name,
@@ -232,8 +274,8 @@ class LifecycleHelper:
             "assigned": {"cpu": self.config.vm.cpu, "memory_mib": self.config.vm.memory_mib,
                          "disk_gib": self.config.vm.disk_gib},
             "observed": {"availability": "fresh" if available else "unavailable",
-                         "memory_mib": observed.get("memory_mib") if available else None,
-                         "disk_gib": observed.get("disk_gib") if available else None,
+                         "memory_mib": _positive_fact(observed.get("memory_mib")) if available else None,
+                         "disk_gib": _positive_fact(observed.get("disk_gib")) if available else None,
                          "cpu_usage_ns": cpu_usage,
                          "guest_memory_mib": memory_usage // (1024 * 1024) if memory_usage is not None else None,
                          "guest_disk_gib": disk_usage // (1024 ** 3) if disk_usage is not None else None},
@@ -282,7 +324,7 @@ class LifecycleHelper:
         self.events.ensure_available()
         fd: int | None = None
         records: dict[str, dict[str, int]] | None = None
-        observed: dict[str, Any] | None = None
+        observed: dict[str, int | bool] | None = None
         try:
             if not reserve:
                 self._require_owner(name)
@@ -297,7 +339,8 @@ class LifecycleHelper:
                 self._release(name)
             self._emit(action, "success", name, started=started, observed=observed)
         except AdmissionError as exc:
-            code = "admission_observation_stale" if "stale" in str(exc) or "unavailable" in str(exc) else "admission_insufficient"
+            is_stale = "stale" in str(exc) or "unavailable" in str(exc)
+            code = "admission_observation_stale" if is_stale else "admission_insufficient"
             self._emit(action, "denied", name, error_code=code, started=started, observed=observed)
             raise
         except Exception:
@@ -322,7 +365,8 @@ class LifecycleHelper:
             [_INCUS, "launch", self.config.image, name, "--project", project, "--profile", self.config.profile, "--vm"],
             [_INCUS, "config", "set", name, "limits.cpu", str(self.config.vm.cpu), "--project", project],
             [_INCUS, "config", "set", name, "limits.memory", f"{self.config.vm.memory_mib}MiB", "--project", project],
-            [_INCUS, "config", "device", "set", name, "root", "size", f"{self.config.vm.disk_gib}GiB", "--project", project],
+            [_INCUS, "config", "device", "set", name, "root", "size",
+             f"{self.config.vm.disk_gib}GiB", "--project", project],
         ]
         self._mutate("create", name, commands, reserve=True)
         self._emit("boot", "success", name)
@@ -337,7 +381,8 @@ class LifecycleHelper:
 
     def delete(self, name: str) -> None:
         name = self._name(name)
-        self._mutate("delete", name, [[_INCUS, "delete", name, "--force", "--project", self.config.project]], release=True)
+        command = [_INCUS, "delete", name, "--force", "--project", self.config.project]
+        self._mutate("delete", name, [command], release=True)
         self._forget(name)
 
     def attach(self, name: str) -> None:
@@ -370,6 +415,7 @@ class LifecycleHelper:
 
 
 def main(argv: list[str]) -> int:
+    """Run the fixed root helper entry point invoked by its sudo rule."""
     if os.geteuid() != 0:
         raise UsageError("the helper must run as root through its fixed sudo rule")
     if len(argv) not in (2, 3):

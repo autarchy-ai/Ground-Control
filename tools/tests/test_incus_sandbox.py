@@ -93,6 +93,13 @@ class ConfigBoundaryTest(SandboxTestCase):
         with self.assertRaises(ConfigError):
             load_config(self.config_path, expected_uid=os.getuid())
 
+    def test_rejects_an_event_log_bound_too_small_for_one_schema_record(self) -> None:
+        doc = config_doc(self.root)
+        doc["event_max_bytes"] = 511
+        self.config_path.write_text(json.dumps(doc), encoding="utf-8")
+        with self.assertRaises(ConfigError):
+            load_config(self.config_path, expected_uid=os.getuid())
+
 
 class LifecycleBoundaryTest(SandboxTestCase):
     def test_create_uses_only_fixed_incus_argv_and_records_allowlisted_event(self) -> None:
@@ -159,6 +166,31 @@ class LifecycleBoundaryTest(SandboxTestCase):
         self.assertEqual(record["error_code"], "command_failed")
         self.assertNotIn("secret-canary", json.dumps(record))
 
+    def test_failed_initial_create_releases_the_reservation(self) -> None:
+        calls = 0
+
+        def failing_launch(argv: list[str]) -> dict[str, int]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("launch failed")
+            return {"returncode": 0}
+
+        helper = LifecycleHelper(self.config, runner=failing_launch, event_writer=self.writer,
+                                 observer=lambda: {"memory_mib": 16000, "disk_gib": 256, "fresh": True},
+                                 network_checker=lambda config: True)
+        with self.assertRaises(RuntimeError):
+            helper.create("agent-1")
+        allocations = json.loads((self.config.state_dir / "allocations.json").read_text(encoding="utf-8"))
+        self.assertNotIn("agent-1", allocations)
+
+    def test_stopped_owner_can_delete_the_same_sandbox(self) -> None:
+        self.helper.create("agent-1")
+        self.helper.stop("agent-1")
+        self.helper.delete("agent-1")
+        allocations = json.loads((self.config.state_dir / "allocations.json").read_text(encoding="utf-8"))
+        self.assertNotIn("agent-1", allocations)
+
     def test_network_address_drift_denies_new_vm_admission(self) -> None:
         helper = LifecycleHelper(self.config, runner=lambda argv: self.commands.append(argv), event_writer=self.writer,
                                  observer=lambda: {"memory_mib": 16000, "disk_gib": 256, "fresh": True},
@@ -202,6 +234,13 @@ class EventBoundaryTest(SandboxTestCase):
         self.assertLessEqual(self.config.event_log.stat().st_size, self.config.event_max_bytes)
         with self.assertRaises(ValueError):
             self.writer.write({"action": "start", "outcome": "success", "argv": ["secret"]})
+
+    def test_event_writer_rejects_a_symlink_substituted_after_setup(self) -> None:
+        self.config.event_log.parent.mkdir(parents=True)
+        target = self.root / "outside-log"
+        self.config.event_log.symlink_to(target)
+        with self.assertRaises(RuntimeError):
+            self.writer.write({"action": "start", "outcome": "success"})
 
 
 class SetupContractTest(unittest.TestCase):
