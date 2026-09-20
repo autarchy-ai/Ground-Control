@@ -17,10 +17,12 @@ from collections.abc import Callable
 if __package__:
     from .config import SandboxConfig, load_config
     from .events import EventWriter
+    from .observations import observation, observed_facts, positive_fact, query_payload, status_state
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from config import SandboxConfig, load_config
     from events import EventWriter
+    from observations import observation, observed_facts, positive_fact, query_payload, status_state
 
 
 class UsageError(RuntimeError):
@@ -44,20 +46,6 @@ def _run(argv: list[str]) -> dict[str, int]:
     return {"returncode": completed.returncode}
 
 
-def _observation() -> dict[str, int | bool]:
-    """Return conservative host availability facts without exposing process state."""
-    memory_available = 0
-    try:
-        for line in Path("/proc/meminfo").read_text(encoding="ascii").splitlines():
-            if line.startswith("MemAvailable:"):
-                memory_available = int(line.split()[1]) // 1024
-                break
-        disk_available = os.statvfs("/").f_bavail * os.statvfs("/").f_frsize // (1024 ** 3)
-        return {"memory_mib": memory_available, "disk_gib": disk_available, "fresh": True}
-    except OSError:
-        return {"memory_mib": 0, "disk_gib": 0, "fresh": False}
-
-
 def _network_policy_fresh(config: SandboxConfig) -> bool:
     """A changed host address set invalidates starts until setup refreshes nft sets."""
     stamp = config.state_dir / "network-addresses.sha256"
@@ -69,65 +57,11 @@ def _network_policy_fresh(config: SandboxConfig) -> bool:
     return expected == hashlib.sha256(addresses.encode("utf-8")).hexdigest()
 
 
-def _positive_fact(value: object) -> int | None:
-    """Return a non-negative integer observation, otherwise no fact."""
-    return value if isinstance(value, int) and value >= 0 else None
-
-
-def _guest_usage(info: object) -> tuple[int | None, int | None, int | None]:
-    """Extract the three numeric guest resource facts from Incus state JSON."""
-    if not isinstance(info, dict):
-        return None, None, None
-    state = info.get("state")
-    if not isinstance(state, dict):
-        return None, None, None
-    cpu = state.get("cpu") if isinstance(state.get("cpu"), dict) else {}
-    memory = state.get("memory") if isinstance(state.get("memory"), dict) else {}
-    disks = state.get("disk") if isinstance(state.get("disk"), dict) else {}
-    root = disks.get("root") if isinstance(disks.get("root"), dict) else {}
-    return _positive_fact(cpu.get("usage")), _positive_fact(memory.get("usage")), _positive_fact(root.get("usage"))
-
-
-def _query_payload(stdout: str) -> dict[str, object] | None:
-    """Unwrap Incus' synchronous-query envelope without exposing raw JSON."""
-    try:
-        response = json.loads(stdout)
-    except ValueError:
-        return None
-    if not isinstance(response, dict):
-        return None
-    payload = response.get("metadata")
-    return payload if isinstance(payload, dict) else response
-
-
-def _status_state(info: object, observed: dict[str, int | bool]) -> tuple[bool, str]:
-    """Normalize daemon status only when the independent host facts are fresh."""
-    if not isinstance(info, dict) or observed.get("fresh") is not True:
-        return False, "unavailable"
-    status = info.get("status", "unavailable")
-    if not isinstance(status, str) or len(status) > 32:
-        return False, "unavailable"
-    return True, status.lower()
-
-
-def _observed_facts(observed: dict[str, int | bool], info: object, available: bool) -> dict[str, object]:
-    """Return the stable observed-facts subdocument without raw daemon JSON."""
-    cpu_usage, memory_usage, disk_usage = _guest_usage(info if available else None)
-    memory = _positive_fact(observed.get("memory_mib")) if available else None
-    disk = _positive_fact(observed.get("disk_gib")) if available else None
-    return {
-        "availability": "fresh" if available else "unavailable", "memory_mib": memory,
-        "disk_gib": disk, "cpu_usage_ns": cpu_usage,
-        "guest_memory_mib": memory_usage // (1024 * 1024) if memory_usage is not None else None,
-        "guest_disk_gib": disk_usage // (1024 ** 3) if disk_usage is not None else None,
-    }
-
-
 class LifecycleHelper(object):
     """Validates caller intent, reserves capacity, then emits only fixed Incus argv."""
 
     def __init__(self, config: SandboxConfig, *, runner: Callable[[list[str]], object] = _run,
-                 event_writer: EventWriter, observer: Callable[[], dict[str, int | bool]] = _observation,
+                 event_writer: EventWriter, observer: Callable[[], dict[str, int | bool]] = observation,
                  network_checker: Callable[[SandboxConfig], bool] = _network_policy_fresh,
                  caller_uid: int | None = None) -> None:
         self.config = config
@@ -202,9 +136,9 @@ class LifecycleHelper(object):
         observed = self.observer()
         if observed.get("fresh") is not True:
             raise AdmissionError("host observations are stale")
-        if _positive_fact(observed.get("memory_mib")) is None:
+        if positive_fact(observed.get("memory_mib")) is None:
             raise AdmissionError("host observations are unavailable")
-        if _positive_fact(observed.get("disk_gib")) is None:
+        if positive_fact(observed.get("disk_gib")) is None:
             raise AdmissionError("host observations are unavailable")
         if not self.network_checker(self.config):
             raise AdmissionError("network policy observations are stale")
@@ -212,8 +146,8 @@ class LifecycleHelper(object):
 
     def _has_headroom(self, observed: dict[str, int | bool]) -> bool:
         """Check host reserves before taking the allocation lock."""
-        memory = _positive_fact(observed.get("memory_mib"))
-        disk = _positive_fact(observed.get("disk_gib"))
+        memory = positive_fact(observed.get("memory_mib"))
+        disk = positive_fact(observed.get("disk_gib"))
         if memory is None or disk is None:
             return False
         required_memory = self.config.host.reserve_memory_mib + self.config.vm.memory_mib
@@ -232,24 +166,37 @@ class LifecycleHelper(object):
             and disk <= self.config.host.max_disk_gib
         )
 
-    def _admit(self, name: str) -> tuple[int, dict[str, dict[str, int]], dict[str, int | bool]]:
+    def _check_transition(self, previous: dict[str, int] | None, fresh: bool,
+                          records: dict[str, dict[str, int]]) -> None:
+        """Refuse a reservation that is not a legal transition for this action."""
+        if previous is not None and previous["active"]:
+            raise AdmissionError("sandbox is already reserved")
+        if fresh and previous is not None:
+            raise AdmissionError("sandbox is already allocated")
+        if not fresh and previous is None:
+            raise UsageError("sandbox is not owned by this operator")
+        if not self._aggregate_fits(records):
+            raise AdmissionError("aggregate allocation is insufficient")
+        if self.caller_uid != self.config.operator_uid:
+            raise UsageError("caller is not the configured sandbox operator")
+
+    def _admit(self, name: str, fresh: bool) -> tuple[
+        int, dict[str, dict[str, int]], dict[str, int | bool], dict[str, int] | None,
+    ]:
         """Reserve capacity for a caller after fresh local admission checks."""
         observed = self._admission_observation()
         if not self._has_headroom(observed):
             raise AdmissionError("host headroom is insufficient")
         fd, records = self._locked_allocations()
-        if name in records and records[name]["active"]:
+        previous = records.get(name)
+        try:
+            self._check_transition(previous, fresh, records)
+        except Exception:
             self._unlock(fd)
-            raise AdmissionError("sandbox is already reserved")
-        if not self._aggregate_fits(records):
-            self._unlock(fd)
-            raise AdmissionError("aggregate allocation is insufficient")
-        if self.caller_uid != self.config.operator_uid:
-            self._unlock(fd)
-            raise UsageError("caller is not the configured sandbox operator")
+            raise
         records[name] = {"cpu": self.config.vm.cpu, "memory_mib": self.config.vm.memory_mib,
                          "disk_gib": self.config.vm.disk_gib, "owner_uid": self.caller_uid, "active": True}
-        return fd, records, observed
+        return fd, records, observed, previous
 
     def _require_owner(self, name: str) -> None:
         if self.caller_uid != self.config.operator_uid:
@@ -297,7 +244,7 @@ class LifecycleHelper(object):
     def normalized_observation(self, name: str, incus_info: dict[str, object] | None) -> dict[str, object]:
         """Render the closed status shape; malformed daemon JSON remains unavailable."""
         observed = self.observer()
-        available, status = _status_state(incus_info, observed)
+        available, status = status_state(incus_info, observed)
         return {
             "schema": "gc.incus-sandbox.status/v1",
             "sandbox_id": name,
@@ -305,7 +252,7 @@ class LifecycleHelper(object):
             "observed_state": status,
             "assigned": {"cpu": self.config.vm.cpu, "memory_mib": self.config.vm.memory_mib,
                          "disk_gib": self.config.vm.disk_gib},
-            "observed": _observed_facts(observed, incus_info, available),
+            "observed": observed_facts(observed, incus_info, available),
             "admission_headroom": self._headroom(),
             "last_transition": "unavailable",
             "failure_reason": "none" if available else "observation_unavailable",
@@ -327,12 +274,12 @@ class LifecycleHelper(object):
             instance_path = f"/1.0/instances/{name}?project={self.config.project}"
             completed = subprocess.run([_INCUS, "query", instance_path, "--raw"],
                                        check=True, text=True, capture_output=True)
-            info = _query_payload(completed.stdout)
+            info = query_payload(completed.stdout)
             if isinstance(info, dict):
                 state_path = f"/1.0/instances/{name}/state?project={self.config.project}"
                 state = subprocess.run([_INCUS, "query", state_path, "--raw"],
                                        check=True, text=True, capture_output=True)
-                info["state"] = _query_payload(state.stdout)
+                info["state"] = query_payload(state.stdout)
             report = self.normalized_observation(name, info)
             print(json.dumps(report, separators=(",", ":")))
             self._emit(action, "success", name, started=started, observed=self.observer())
@@ -340,29 +287,30 @@ class LifecycleHelper(object):
             self._emit(action, "failure", name, error_code="command_failed", started=started)
             raise
 
-    def _reservation(
-        self, name: str, reserve: bool,
-    ) -> tuple[int | None, dict[str, dict[str, int]] | None, dict[str, int | bool] | None]:
+    def _reservation(self, name: str, reserve: bool, fresh: bool) -> tuple[
+        int | None, dict[str, dict[str, int]] | None, dict[str, int | bool] | None, dict[str, int] | None,
+    ]:
         """Authorize an existing VM or hold capacity for a new one."""
         if not reserve:
             self._require_owner(name)
-            return None, None, None
-        descriptor, records, observed = self._admit(name)
+            return None, None, None, None
+        descriptor, records, observed, previous = self._admit(name, fresh)
         self._save_allocations(descriptor, records)
-        return descriptor, records, observed
+        return descriptor, records, observed, previous
 
-    def _run_commands(self, commands: list[list[str]]) -> None:
-        """Run the already constructed fixed lifecycle command sequence."""
-        for argv in commands:
-            self.runner(argv)
-
-    def _rollback_create(self, name: str, descriptor: int | None, records: dict[str, dict[str, int]] | None) -> None:
-        """Release a failed create reservation and request Incus cleanup."""
-        if descriptor is None:
+    def _rollback_reservation(self, name: str, descriptor: int | None,
+                              records: dict[str, dict[str, int]] | None,
+                              previous: dict[str, int] | None, *, delete: bool) -> None:
+        """Restore the prior allocation and remove only an instance this call created."""
+        if descriptor is None or records is None:
             return
-        if records is not None:
+        if previous is None:
             records.pop(name, None)
-            self._save_allocations(descriptor, records)
+        else:
+            records[name] = previous
+        self._save_allocations(descriptor, records)
+        if not delete:
+            return
         try:
             self.runner([_INCUS, "delete", name, "--force", "--project", self.config.project])
         except Exception:
@@ -376,16 +324,20 @@ class LifecycleHelper(object):
         return "admission_insufficient"
 
     def _mutate(self, action: str, name: str, commands: list[list[str]], *, reserve: bool = False,
-                release: bool = False) -> None:
+                release: bool = False, fresh: bool = False) -> None:
         name = self._name(name)
         started = time.monotonic()
         self.events.ensure_available()
         descriptor: int | None = None
         records: dict[str, dict[str, int]] | None = None
         observed: dict[str, int | bool] | None = None
+        previous: dict[str, int] | None = None
+        created = False
         try:
-            descriptor, records, observed = self._reservation(name, reserve)
-            self._run_commands(commands)
+            descriptor, records, observed, previous = self._reservation(name, reserve, fresh)
+            for argv in commands:
+                self.runner(argv)
+                created = fresh
             if descriptor is not None and records is not None:
                 self._save_allocations(descriptor, records)
             if release:
@@ -396,8 +348,9 @@ class LifecycleHelper(object):
             self._emit(action, "denied", name, error_code=code, started=started, observed=observed)
             raise
         except Exception:
-            if action == "create":
-                self._rollback_create(name, descriptor, records)
+            # Only an instance this invocation launched is deleted; a reservation that
+            # never completed is returned to the state it replaced.
+            self._rollback_reservation(name, descriptor, records, previous, delete=created)
             self._emit(action, "failure", name, error_code="command_failed", started=started, observed=observed)
             raise
         finally:
@@ -414,7 +367,7 @@ class LifecycleHelper(object):
             [_INCUS, "config", "set", name, "limits.cpu", str(self.config.vm.cpu), "--project", project],
             [_INCUS, "config", "set", name, "limits.memory", f"{self.config.vm.memory_mib}MiB", "--project", project],
         ]
-        self._mutate("create", name, commands, reserve=True)
+        self._mutate("create", name, commands, reserve=True, fresh=True)
         self._emit("boot", "success", name)
 
     def start(self, name: str) -> None:

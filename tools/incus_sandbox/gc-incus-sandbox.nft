@@ -8,6 +8,7 @@ table inet gc_incus_sandbox {
     iifname "gcbr0" udp dport { 67, 68 } accept
     iifname "gcbr0" ip daddr @bridge_ipv4 udp dport 53 accept
     iifname "gcbr0" ip daddr @bridge_ipv4 tcp dport 53 accept
+    iifname "gcbr0" fib daddr type local drop
     iifname "gcbr0" ip daddr @host_ipv4 drop
     iifname "gcbr0" ip6 daddr ::/0 drop
   }

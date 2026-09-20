@@ -82,7 +82,8 @@ allow_bridge_forwarding() {
     iptables -I "$chain" -i "$BRIDGE" -j ACCEPT
   iptables -C "$chain" -o "$BRIDGE" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null ||
     iptables -I "$chain" -o "$BRIDGE" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-  printf '%s\n' "forwarding $chain" >>"$OWNERSHIP_RECORD"
+  grep -Fxq "forwarding $chain" "$OWNERSHIP_RECORD" ||
+    printf '%s\n' "forwarding $chain" >>"$OWNERSHIP_RECORD"
 }
 
 remove_bridge_forwarding() {
@@ -132,6 +133,7 @@ install_files() {
   run install -d -m 0750 "$INSTALL_ROOT" "$STATE_ROOT" /var/log/gc-incus-sandbox
   run install -m 0640 tools/incus_sandbox/config.py "$INSTALL_ROOT/config.py"
   run install -m 0640 tools/incus_sandbox/events.py "$INSTALL_ROOT/events.py"
+  run install -m 0640 tools/incus_sandbox/observations.py "$INSTALL_ROOT/observations.py"
   run install -m 0644 tools/incus_sandbox/guest_bootstrap.py "$INSTALL_ROOT/guest-bootstrap.py"
   run install -m 0750 tools/incus_sandbox/helper.py "$INSTALL_ROOT/helper.py"
   run install -m 0750 tools/incus_sandbox/transfer.py "$INSTALL_ROOT/transfer.py"
@@ -215,6 +217,17 @@ rollback_partial() {
   rm -rf "$INSTALL_ROOT" "$CONFIG_ROOT" "$STATE_ROOT" /var/log/gc-incus-sandbox
 }
 
+refresh() {
+  # Host addresses and another firewall's chains change under a live installation.
+  # Reapplying only those keeps the destructive install path out of the routine case.
+  "$dry_run" && { echo "reapply the sandbox firewall table, address sets, and bridge forwarding"; return 0; }
+  require_complete_ownership_record
+  nft delete table inet gc_incus_sandbox 2>/dev/null || true
+  nft -f "$RULES_PATH"
+  populate_nft_sets
+  allow_bridge_forwarding
+}
+
 rollback() {
   "$dry_run" && { echo "refuse rollback while owned VMs are running"; echo "remove only gc-sandbox project, profile, pool, bridge, and nft table"; return 0; }
   require_complete_ownership_record
@@ -238,6 +251,12 @@ fi
 need_root
 case "${1:-}" in
   install)
+    # A second install would recreate owned resources, fail, and take the partial-install
+    # cleanup path over a working installation.
+    if ! "$dry_run" && [[ -f "$OWNERSHIP_RECORD" ]] && grep -Fxq complete "$OWNERSHIP_RECORD"; then
+      echo "sandbox is already installed; use 'setup.sh refresh' or roll back first" >&2
+      exit 64
+    fi
     if ! install_files; then
       exit 64
     fi
@@ -247,6 +266,7 @@ case "${1:-}" in
     install_failed=false
     trap - EXIT
     ;;
+  refresh) refresh ;;
   rollback) rollback ;;
-  *) echo "usage: setup.sh [--dry-run] {install|rollback}" >&2; exit 64 ;;
+  *) echo "usage: setup.sh [--dry-run] {install|refresh|rollback}" >&2; exit 64 ;;
 esac

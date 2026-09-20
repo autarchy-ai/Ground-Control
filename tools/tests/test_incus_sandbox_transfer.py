@@ -101,7 +101,7 @@ class GuestMaterializationTest(unittest.TestCase):
         home.mkdir()
         return {"_PACKET_PATH": transfer / "source.gcs", "_WORKSPACE_PATH": root / "workspace",
                 "_BUNDLE_PATH": transfer / "source.bundle", "_LOG_PATH": transfer / "bootstrap.log",
-                "_REQUIRED_TOOLS": (), "home": home}
+                "_NPMRC_PATH": root / ".npmrc", "_REQUIRED_TOOLS": (), "home": home}
 
     def test_materialize_uses_fixed_guest_paths_for_clone_and_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -122,10 +122,13 @@ class GuestMaterializationTest(unittest.TestCase):
                 commands = [call.args[0] for call in run.call_args_list]
                 self.assertEqual(commands[0][0], "/usr/bin/git")
                 self.assertEqual(commands[1][-1], "a" * 40)
-                self.assertEqual(commands[-1][0], "/usr/bin/npm")
+                # A transfer materializes source; it never fetches and runs a network package.
+                self.assertTrue(all(command[0] == "/usr/bin/git" for command in commands))
                 self.assertFalse(paths["_BUNDLE_PATH"].exists())
                 # The packet is a full copy of the private source; it does not outlive the run.
                 self.assertFalse(paths["_PACKET_PATH"].exists())
+                self.assertEqual(paths["_NPMRC_PATH"].read_text(encoding="utf-8"),
+                                 f"prefix={home / '.local'}\n")
             # A transferred bundle is deleted after checkout, so its remote is removed with it.
             self.assertEqual(commands[2], ["/usr/bin/git", "-C", str(paths["_WORKSPACE_PATH"]),
                                            "remote", "remove", "origin"])
@@ -147,7 +150,7 @@ class GuestMaterializationTest(unittest.TestCase):
                 guest_bootstrap.materialize()
             commands = [call.args[0] for call in run.call_args_list]
             self.assertNotIn("clone", [command[3] for command in commands if len(command) > 3])
-            self.assertEqual(commands[-1][0], "/usr/bin/npm")
+            self.assertEqual([command[3] for command in commands], ["rev-parse"])
 
     def test_materialize_rejects_a_workspace_holding_another_commit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

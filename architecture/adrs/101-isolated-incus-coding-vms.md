@@ -71,8 +71,10 @@ built from the source objects without writing a ref in the source repository,
 and the same detached checkout. Preparing the same commit again is a no-op for
 an existing guest checkout rather than an error, so a run interrupted by a
 missing credential or a failed install is resumed instead of restarted with a
-new guest. Preparation installs the guest-local Codex CLI only; Ground Control
-and every credential are installed in the guest session by the operator.
+new guest. Preparation materializes source and nothing else: every tool and
+credential, including Codex and Ground Control, is installed by the operator in
+the guest session, so a host-initiated transfer never fetches and runs a moving
+network package beside private source.
 Dirty worktrees remain unsupported. Checkout,
 tool installation, hooks, tests, reviewers, builds, Docker use, and publication
 run in the guest. Every guest owns its checkout, Git metadata, home, runtime
@@ -125,11 +127,15 @@ The privileged setup adds only sandbox-owned nftables chains and sets; it never
 flushes or replaces the host's firewall. The dedicated bridge permits DHCP,
 name resolution through the bridge resolver and the configured host resolvers,
 return traffic, and outbound TCP 443 to public
-addresses. Where another host firewall drops forwarded traffic by default, setup
+addresses. Every address local to the host is denied as such at packet time, so
+a host address added after setup is not reachable while its recorded set is
+stale. Where another host firewall drops forwarded traffic by default, setup
 adds an accept for this bridge alone in the chain that drops it, covering
 guest-initiated traffic and its return path but not unsolicited inbound traffic,
 and removes that accept on rollback; the sandbox policy above stays the
-effective one. It denies
+effective one. A separate refresh operation reapplies the firewall state a
+host-address or foreign-chain change invalidates, because reinstalling over a
+live installation is not the routine repair. It denies
 guest-to-guest traffic, all unsolicited inbound traffic,
 host-management and host-service addresses (including every configured host
 address), private/LAN/link-local/loopback/metadata ranges, and every other

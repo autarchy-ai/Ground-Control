@@ -27,6 +27,7 @@ _PACKET_PATH = _GUEST_HOME / ".gc-transfer/source.gcs"
 _WORKSPACE_PATH = _GUEST_HOME / "workspace"
 _BUNDLE_PATH = _GUEST_HOME / ".gc-transfer/source.bundle"
 _LOG_PATH = _GUEST_HOME / ".gc-transfer/bootstrap.log"
+_NPMRC_PATH = _GUEST_HOME / ".npmrc"
 _GIT = "/usr/bin/git"
 _REQUIRED_TOOLS = (_GIT, "/usr/bin/npm")
 
@@ -156,6 +157,15 @@ def require_guest_tools() -> None:
         raise PacketError(f"guest image is missing {', '.join(missing)}")
 
 
+def guest_tool_prefix(local_prefix: Path) -> None:
+    """Point the guest session's global installs at the sandbox user's own prefix."""
+    if _NPMRC_PATH.exists():
+        return
+    local_prefix.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _NPMRC_PATH.write_text(f"prefix={local_prefix}\n", encoding="utf-8")
+    _NPMRC_PATH.chmod(0o600)
+
+
 def prepared_workspace(commit: str) -> bool:
     """Report whether an earlier run already checked out this exact immutable source."""
     if not _WORKSPACE_PATH.exists():
@@ -181,18 +191,14 @@ def _checkout(metadata: dict[str, str], bundle_offset: int, environment: dict[st
 
 
 def materialize() -> None:
-    """Create a guest checkout and install guest-local CLI dependencies."""
+    """Create a guest checkout and prepare the sandbox user's local tool prefix."""
     metadata, bundle_offset = _validated_packet(_PACKET_PATH.read_bytes())
     require_guest_tools()
-    environment = guest_environment()
-    local_prefix = Path.home() / ".local"
-    environment["NPM_CONFIG_PREFIX"] = str(local_prefix)
-    environment["PATH"] = f"{local_prefix / 'bin'}:{environment.get('PATH', '')}"
     if not prepared_workspace(metadata["commit"]):
-        _checkout(metadata, bundle_offset, environment)
-    # Ground Control and the Codex account are set up by the operator in the guest
-    # session; only the guest-local Codex CLI is installed here.
-    run_guest_command(["/usr/bin/npm", "install", "--global", "@openai/codex"], environment)
+        _checkout(metadata, bundle_offset, guest_environment())
+    # Tools and credentials are installed by the operator in the guest session. A
+    # transfer does not fetch and run a moving network package beside private source.
+    guest_tool_prefix(Path.home() / ".local")
     _PACKET_PATH.unlink(missing_ok=True)
 
 

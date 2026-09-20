@@ -16,9 +16,17 @@ Use `--dry-run` to inspect its fixed resource actions. The installer only
 creates `gc-sandbox` project/profile/pool/bridge resources, a dedicated nftables
 table, and root-owned helper/config/event paths. Where another host firewall
 already drops forwarded traffic by default, which Docker and libvirt both do,
-setup also adds an accept for the `gcbr0` bridge alone in that chain; without it
-the guest has no network at all. Docker recreates its chains when it restarts,
-so rerun setup after a Docker restart. Its pool is a dedicated 64 GiB
+setup also adds an accept for the `gcbr0` bridge alone in that chain, covering
+guest-initiated traffic and its return path; without it the guest has no network
+at all. Docker recreates its chains when it restarts, and the host address set
+goes stale when host addresses change, so reapply that state afterwards:
+
+```sh
+sudo bash tools/incus_sandbox/setup.sh refresh
+```
+
+`refresh` reapplies only the firewall table, its address sets, and the bridge
+forwarding rules. Install refuses to run twice; roll back first to reinstall. Its pool is a dedicated 64 GiB
 loop-backed Btrfs volume; the host filesystem is neither repartitioned nor
 reformatted. Setup refuses an already exposed Incus HTTPS management API or a
 quota probe that cannot demonstrate a size limit. It does not flush firewall
@@ -32,8 +40,9 @@ contain `tmux`, `python3`, Git, GitHub CLI, Node.js with npm, and a `sandbox` us
 credentials, host mounts, forwarded sockets, or session history. It may run a
 guest-local Docker daemon, but must never receive the host Docker socket or
 context. Keep the file root-owned and mode `0600`. Setup writes the current host IPv4 address set into
-its nftables table; rerun setup after an address change so new starts are not
-rejected as stale.
+its nftables table; run `setup.sh refresh` after an address change so new starts
+are not rejected as stale. Traffic to a host address is dropped whether or not
+that address is in the recorded set.
 
 ## Ordinary use
 
@@ -105,10 +114,11 @@ guest checkout at a different commit is refused rather than replaced; remove
 
 Dirty working-tree migration is unsupported. Two guests receive separate
 checkouts, `.git` directories, homes, runtime state, credentials, and Docker
-daemons. Preparation installs the Codex CLI into the sandbox user's local
-prefix; it does not copy a host home, Codex cache, credential store, SSH agent,
-runtime socket, or Docker context. Run installs, hooks, tests, reviewers, and
-builds in the attached guest.
+daemons. Preparation materializes the source and points guest-local global
+installs at the sandbox user's own prefix; it installs no tooling, and it does
+not copy a host home, Codex cache, credential store, SSH agent, runtime socket,
+or Docker context. Run installs, hooks, tests, reviewers, and builds in the
+attached guest.
 
 Guest output stays in the guest. When preparation reports a guest failure, or
 the template is missing a prerequisite, read the reason in the guest:
@@ -118,11 +128,12 @@ gc-incus-sandbox attach agent-1
 cat ~/.gc-transfer/bootstrap.log
 ```
 
-Inside the guest, authenticate Codex explicitly with the account and ChatGPT
-workspace you intend to use. Ensure an API key is absent first, then use device
-login and verify the selected authentication method:
+Inside the guest, install the Codex CLI, then authenticate it explicitly with the
+account and ChatGPT workspace you intend to use. Ensure an API key is absent
+first, then use device login and verify the selected authentication method:
 
 ```sh
+npm install -g @openai/codex
 unset OPENAI_API_KEY CODEX_HOME
 codex login --device-auth
 codex login status
@@ -177,9 +188,11 @@ With two disposable VMs running, run the harmless probes as root:
 sudo python3 tools/incus_sandbox/probe.py agent-1 10.74.0.1 agent-2
 ```
 
-The probe expects guest access to the metadata address, host bridge address,
-private bridge canary, and IPv6 loopback canary to fail. It uses no secrets or
-host checkout data. Also create, attach, stop, start, and attach again to prove
+The probe reads the sibling guest's own address, then requires guest access to
+the metadata address, the host bridge address, the private bridge canary, that
+sibling, and an external IPv6 canary to fail. It exits non-zero when any of them
+answers or when the probe itself cannot run, and it uses no secrets or host
+checkout data. Also create, attach, stop, start, and attach again to prove
 the guest tmux session behavior. A bounded resource exercise should be performed
 on a disposable VM only, while observing that the host remains responsive.
 
