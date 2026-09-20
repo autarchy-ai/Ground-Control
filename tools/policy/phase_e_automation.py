@@ -85,7 +85,7 @@ def _guard_violations(document: dict[str, object]) -> list[Violation]:
     ]
 
 
-def _permission_violations(text: str, document: dict[str, object]) -> list[Violation]:
+def _permission_violations(document: dict[str, object]) -> list[Violation]:
     """Require exactly one write permission, and require it to be `issues: write`."""
     permissions = document.get("permissions")
     if not isinstance(permissions, dict):
@@ -173,41 +173,42 @@ def _trust_anchor_violations(root: Path) -> list[Violation]:
     ]
 
 
-def run_phase_e_automation_contract(root: Path = REPO_ROOT) -> list[Violation]:
-    """Check the automated Phase E workflow and its trust anchor."""
-    workflow = root / WORKFLOW_PATH
+def _load_workflow(root: Path) -> tuple[str, dict[str, object] | None, Violation | None]:
+    """The workflow's text and parsed document, or the single failure that stopped both."""
     try:
-        text = workflow.read_text(encoding="utf-8")
+        text = (root / WORKFLOW_PATH).read_text(encoding="utf-8")
     except OSError:
-        return [
-            _violation(
-                "phase-e-workflow-missing",
-                "Automated Phase E requires its merged-pull-request workflow.",
-                [f"expected at {WORKFLOW_PATH.as_posix()}"],
-            )
-        ]
+        return "", None, _violation(
+            "phase-e-workflow-missing",
+            "Automated Phase E requires its merged-pull-request workflow.",
+            [f"expected at {WORKFLOW_PATH.as_posix()}"],
+        )
     try:
         document = yaml.safe_load(text)
     except yaml.YAMLError as error:
-        return [
-            _violation(
-                "phase-e-workflow-unreadable",
-                "The Phase E workflow could not be parsed.",
-                [f"{WORKFLOW_PATH.as_posix()}: {error}"],
-            )
-        ]
+        return text, None, _violation(
+            "phase-e-workflow-unreadable",
+            "The Phase E workflow could not be parsed.",
+            [f"{WORKFLOW_PATH.as_posix()}: {error}"],
+        )
     if not isinstance(document, dict):
-        return [
-            _violation(
-                "phase-e-workflow-unreadable",
-                "The Phase E workflow could not be parsed.",
-                [f"{WORKFLOW_PATH.as_posix()} is not a mapping"],
-            )
-        ]
+        return text, None, _violation(
+            "phase-e-workflow-unreadable",
+            "The Phase E workflow could not be parsed.",
+            [f"{WORKFLOW_PATH.as_posix()} is not a mapping"],
+        )
+    return text, document, None
+
+
+def run_phase_e_automation_contract(root: Path = REPO_ROOT) -> list[Violation]:
+    """Check the automated Phase E workflow and its trust anchor."""
+    text, document, blocked = _load_workflow(root)
+    if blocked is not None:
+        return [blocked]
     return [
         *_trigger_violations(document),
         *_guard_violations(document),
-        *_permission_violations(text, document),
+        *_permission_violations(document),
         *_run_name_violations(text),
         *_checkout_violations(text),
         *_trust_anchor_violations(root),

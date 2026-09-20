@@ -32,7 +32,7 @@ const STATUS_LINE_RE = /^HTTP\/[\d.]+\s+(\d{3})/i;
  */
 export function parseIncludedResponse(stdout) {
   const text = typeof stdout === "string" ? stdout : "";
-  const normalized = text.replace(/\r\n/g, "\n");
+  const normalized = text.replaceAll("\r\n", "\n");
   let searchFrom = 0;
   let lastStart = -1;
   for (;;) {

@@ -48,7 +48,7 @@ function asInt(value) {
 }
 
 export function encodeDeliveryPayload(payload) {
-  return JSON.stringify(payload).replaceAll("-", "\\u002d");
+  return JSON.stringify(payload).replaceAll("-", String.raw`\u002d`);
 }
 
 export function buildDeliveryReadinessRecord({ issueNumber, prNumber, lane, headSha, payload }) {
@@ -104,6 +104,19 @@ function refusal(error, message) {
   return { ok: false, error, message };
 }
 
+// Every readiness marker on the thread that names this exact issue and pull request.
+// Comments larger than GitHub can store are not parsed at all.
+function collectReadinessMarkers(comments, issueNumber, prNumber) {
+  const found = [];
+  for (const comment of comments) {
+    if (typeof comment.body !== "string" || comment.body.length > GITHUB_ISSUE_COMMENT_BODY_MAX) continue;
+    for (const marker of parseDeliveryReadinessMarkers(comment.body)) {
+      if (marker.issue === issueNumber && marker.pr === prNumber) found.push({ comment, marker });
+    }
+  }
+  return found;
+}
+
 // Decode one marker into its payload, or null when the record is not self-consistent.
 // Bounds come before parsing on purpose.
 function decodeRecord(marker) {
@@ -141,13 +154,7 @@ export async function readTrustedDeliveryReadiness(
   } catch (error) {
     return refusal("delivery_readiness_unreadable", extractGhErrorMessage(error));
   }
-  const bounded = comments.filter((c) => typeof c.body === "string" && c.body.length <= GITHUB_ISSUE_COMMENT_BODY_MAX);
-  const matching = [];
-  for (const comment of bounded) {
-    for (const marker of parseDeliveryReadinessMarkers(comment.body)) {
-      if (marker.issue === issueNumber && marker.pr === prNumber) matching.push({ comment, marker });
-    }
-  }
+  const matching = collectReadinessMarkers(comments, issueNumber, prNumber);
   if (matching.length === 0) {
     return refusal(
       "delivery_readiness_missing",
@@ -169,11 +176,9 @@ export async function readTrustedDeliveryReadiness(
       `delivery-readiness envelope version is not ${DELIVERY_READINESS_VERSION}; refusing to guess its shape`,
     );
   }
-  const decoded = [];
-  for (const { comment, marker } of supported) {
-    const record = decodeRecord(marker);
-    if (record) decoded.push({ commentId: comment.id, record });
-  }
+  const decoded = supported
+    .map(({ comment, marker }) => ({ commentId: comment.id, record: decodeRecord(marker) }))
+    .filter((entry) => entry.record !== null);
   if (decoded.length === 0) {
     return refusal(
       "delivery_readiness_corrupt",
@@ -194,7 +199,7 @@ export async function readTrustedDeliveryReadiness(
       `PR #${prNumber} carries ${digests.size} disagreeing delivery-readiness records for its merged head`,
     );
   }
-  const chosen = atHead[atHead.length - 1];
+  const chosen = atHead.at(-1);
   return { ok: true, record: { ...chosen.record, commentId: chosen.commentId } };
 }
 
@@ -233,7 +238,7 @@ export async function readTrustedDeliveryPointer(
       `PR #${prNumber} points at ${issues.size} different issues; refusing to choose one`,
     );
   }
-  return { ok: true, pointer: trusted[trusted.length - 1].marker };
+  return { ok: true, pointer: trusted.at(-1).marker };
 }
 
 async function postComment(repoRoot, owner, name, number, body) {

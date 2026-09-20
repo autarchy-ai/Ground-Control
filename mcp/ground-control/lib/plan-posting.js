@@ -369,8 +369,10 @@ export function validateFinalReportInput(input) {
 }
 export function buildQuickfixCloseComment({ issueNumber, prNumber, files, reviews, ciStatus, sonarStatus, planCommentUrl, summary, automationRunId = null }) {
   const lines = [];
-  lines.push(buildFinalReportMarker({ issueNumber, prNumber }));
-  lines.push(...buildFinalizerRunMarker({ prNumber, runId: automationRunId }));
+  lines.push(
+    buildFinalReportMarker({ issueNumber, prNumber }),
+    ...buildFinalizerRunMarker({ prNumber, runId: automationRunId }),
+  );
   lines.push("");
   lines.push(`## Quickfix close — issue #${issueNumber} complete`);
   lines.push("");
