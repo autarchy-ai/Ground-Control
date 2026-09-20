@@ -111,6 +111,58 @@ describe("MCP tool description parity (issue #1169)", { timeout: 30000 }, () => 
     assert.doesNotMatch(descriptionMap.gc_codex_job, /re-run the originating tool/i);
   });
 
+  it("publishes a bounded terminal-wait operation beside the immediate poll (issue #1669)", () => {
+    const polling = toolMap.gc_codex_job?.inputSchema?.properties;
+    assert.deepEqual(polling?.action?.enum, ["poll", "await", "cancel"]);
+    assert.equal(polling?.wait_seconds?.type, "integer");
+    assert.equal(polling?.wait_seconds?.minimum, 1);
+    assert.equal(polling?.wait_seconds?.maximum, 1800);
+    assert.match(descriptionMap.gc_codex_job, /wait_seconds/);
+    // The description has to state the two facts a caller cannot infer: that
+    // awaiting replaces repeated polling, and that expiry is not a result.
+    assert.match(descriptionMap.gc_codex_job, /action='await'/);
+    assert.match(descriptionMap.gc_codex_job, /running envelope/i);
+  });
+
+  // Locks the class this cycle's review found (issue #1669): the descriptions
+  // that START an async job are the prompt a workflow agent actually reads, so
+  // any one of them left prescribing a poll cadence reintroduces the model-turn
+  // spend the terminal wait exists to remove.
+  it("directs every async-job-originating tool at the terminal wait, not a poll cadence", () => {
+    // Two surfaces carry this guidance: the tool description for the tools that
+    // name the transport, and the shared `async` parameter description for the
+    // review/preflight tools that do not.
+    for (const name of ["gc_implement_mechanical", "gc_codex_review_cycle"]) {
+      const description = descriptionMap[name];
+      assert.ok(description, `${name} must be registered`);
+      assert.match(description, /await/i, `${name} must direct callers to await the job`);
+    }
+    for (const name of [
+      "gc_implement_mechanical",
+      "gc_codex_review_cycle",
+      "gc_codex_review",
+      "gc_codex_architecture_preflight",
+    ]) {
+      const asyncDescription = toolMap[name]?.inputSchema?.properties?.async?.description;
+      assert.ok(asyncDescription, `${name} must publish an async parameter description`);
+      assert.match(asyncDescription, /await/i, `${name}.async must direct callers to await`);
+    }
+    // No surface may still prescribe polling the job handle.
+    const prescribesPolling = /poll (the job|gc_codex_job|the returned job)/i;
+    for (const name of [
+      "gc_implement_mechanical",
+      "gc_codex_review_cycle",
+      "gc_codex_review",
+      "gc_codex_architecture_preflight",
+    ]) {
+      assert.doesNotMatch(descriptionMap[name], prescribesPolling,
+        `${name} must not instruct the caller to poll gc_codex_job`);
+      const asyncDescription = toolMap[name]?.inputSchema?.properties?.async?.description ?? "";
+      assert.doesNotMatch(asyncDescription, prescribesPolling,
+        `${name}.async must not instruct the caller to poll gc_codex_job`);
+    }
+  });
+
   it("directs merged PRs immediately into finalize without waiting on hosted actions", () => {
     assert.match(descriptionMap.gc_implement_mechanical, /linked PR is merged/i);
     assert.match(descriptionMap.gc_implement_mechanical, /run finalize immediately/i);

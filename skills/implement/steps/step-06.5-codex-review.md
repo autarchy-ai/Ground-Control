@@ -22,8 +22,9 @@ The codex review is THE review pass for the PR - there is no second post-push co
    `uncommitted=true`, `publication_mode="deferred"`, and `async=true`. Reuse
    that key only when the start response was lost; use a new key after a
    terminal attempt and intentional tree change.
-3. Poll `gc_codex_job` until the background review returns its terminal
-   envelope. A missing/expired handle requires an issue-thread refresh and
+3. Await the background review with `gc_codex_job` (`action="await"`) until it
+   returns its terminal envelope; an expired bounded wait returns the running
+   envelope, so await again rather than polling on a cadence. A missing/expired handle requires an issue-thread refresh and
    durable-record reconciliation before selecting a new key. Cycle jobs are
    non-cancellable because cancellation cannot roll back GitHub records.
 4. Inspect the returned `review_handle` with `gc_get_review_result`, produce a

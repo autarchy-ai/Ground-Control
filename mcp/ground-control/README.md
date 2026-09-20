@@ -154,7 +154,7 @@ The complete keep/delete and placement record is in
 | `gc_review_cap_disposition` | Record a review-cap disposition |
 | `gc_record_execution_obligation` | Append to the execution-obligation ledger |
 | `gc_authorize_execution_obligation_wontfix` | Record the user's authorization to close an obligation unfixed |
-| `gc_codex_job` | Poll or cancel any async review, preflight, or mechanical job |
+| `gc_codex_job` | Await, poll, or cancel any async review, preflight, or mechanical job. `action="await"` holds one request until the job is terminal (bounded by `wait_seconds`, default 1500, max 1800) instead of costing a model turn per poll tick |
 
 **Station-observation recovery (`tools/station-observation.js`)**
 

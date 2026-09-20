@@ -8,8 +8,9 @@ has no MCP tool surface.
 
 1. Generate one bounded `idempotency_key` and call
    `gc_codex_review_cycle` with `async=true` and
-   `publication_mode="deferred"`. Poll `gc_codex_job` until it returns
-   `status="done"`. Reuse a key only when the start response was lost; use a
+   `publication_mode="deferred"`. Await it with `gc_codex_job`
+   (`action="await"`) until it returns `status="done"`; the server holds that
+   one call, so do not poll on a cadence. Reuse a key only when the start response was lost; use a
    new key after a terminal attempt and an intentional tree change.
 2. Read the full cycle envelope. `findings_summary`, `diff_mode`, and
    `review_coverage` are server-derived facts. A

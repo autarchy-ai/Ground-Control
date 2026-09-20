@@ -340,3 +340,13 @@ the head SHA and workflow it reports on. `/implement` monitoring supplies the
 pull request head, and `/integrate` supplies the commit it force-pushed. The
 loop's gates are otherwise unchanged; the mechanics live in the ADR-027
 2026-09-20 amendment.
+
+**2026-09-20 (issue #1669).** The start-then-poll wait the #937 amendment
+introduced now has a terminal-wait form: `gc_codex_job action="await"` holds one
+request until the job is terminal, so waiting on architecture preflight, a
+review cycle, or the CI/Sonar monitor costs roughly one model turn instead of
+one per tick. The GC-O007 gate contract is unchanged: the same gates run, the
+same caps apply, the same durable records post to the issue thread, and a bounded
+wait's expiry returns the running envelope rather than any kind of pass. Only how
+the agent waits changes. See ADR-036 (2026-09-20) for the transport model and
+`skills/implement/SKILL.md` plus the step files for the operative prose.

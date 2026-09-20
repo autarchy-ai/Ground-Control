@@ -70,6 +70,6 @@ An unevaluable gate (sub-step 2a) does not return this contract: the step escala
 Begin diagnosis and repair as soon as any CI job or Sonar findings are actionable.
 Do not wait for unrelated pending gates. The mechanical monitor observes CI and
 Sonar concurrently and returns `head_sha`, `monitor_jobs`, and `resume` on failure.
-Poll the remaining child jobs through `gc_codex_job` while batching related fixes.
+Await the remaining child jobs through `gc_codex_job` while batching related fixes.
 A new push starts monitoring the new head; old results are diagnostic only.
 Required current-head checks must all pass before readiness.

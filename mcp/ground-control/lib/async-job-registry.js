@@ -29,6 +29,12 @@ export const ASYNC_JOB_ID_MAX = 80;
 export const ASYNC_JOB_ID_RE = /^job-[a-z0-9]+-[a-z0-9]+$/;
 export const ASYNC_JOB_IDEMPOTENCY_KEY_MAX = 128;
 export const ASYNC_JOB_IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+// The default covers a default-capped codex child (CODEX_TIMEOUT_MS_DEFAULT, 20
+// minutes) in a single wait; the maximum matches the hold gc_watch_sonar_analysis
+// already performs and stays well under the 3,600,000 ms MCP_TOOL_TIMEOUT this
+// repository configures (issue #1669).
+export const ASYNC_JOB_WAIT_SECONDS_DEFAULT = 1500;
+export const ASYNC_JOB_WAIT_SECONDS_MAX = 1800;
 
 const _asyncJobs = new Map();
 let _asyncJobSeq = 0;
@@ -290,6 +296,7 @@ export function startAsyncJob(kind, runFn, options = {}) {
     executionScope: validated.executionScope,
     progress: null,
     diagnostics: null,
+    waiters: new Set(),
   };
   _asyncJobs.set(id, job);
   const reportProgress = (snapshot) => {
@@ -308,6 +315,11 @@ export function startAsyncJob(kind, runFn, options = {}) {
     })
     .finally(() => {
       job.finishedAt = _asyncJobNow();
+      // Release before any further await so a waiter observes the terminal
+      // envelope, never an intermediate state.
+      const outstanding = job.waiters;
+      job.waiters = new Set();
+      for (const release of outstanding) release();
     });
   return _asyncJobEnvelope(job);
 }
@@ -323,6 +335,42 @@ export function pollAsyncJob(jobId) {
   }
   const job = _asyncJobs.get(jobId);
   return job ? _asyncJobEnvelope(job) : _asyncJobNotFound();
+}
+
+// Hold one request open until the job is terminal, instead of charging the
+// caller a full model turn per poll tick (issue #1669). The wait is released by
+// the job's own terminal transition, so no status loop runs server-side either.
+// `waitMs` bounds this request and nothing else: its expiry returns the ordinary
+// running envelope while the job continues, and it is never a job deadline, TTL
+// extension, retry, or cancellation.
+export function awaitAsyncJob(jobId, waitMs = ASYNC_JOB_WAIT_SECONDS_DEFAULT * 1000) {
+  if (!Number.isInteger(waitMs) || waitMs <= 0 || waitMs > ASYNC_JOB_WAIT_SECONDS_MAX * 1000) {
+    return Promise.resolve({
+      ok: false,
+      error: "job_wait_invalid",
+      message:
+        "The bounded wait must be a positive whole number of milliseconds no greater than "
+        + `${ASYNC_JOB_WAIT_SECONDS_MAX * 1000} (${ASYNC_JOB_WAIT_SECONDS_MAX} seconds).`,
+    });
+  }
+  // pollAsyncJob owns handle validation and reaping, so an unknown, expired, or
+  // already-terminal handle returns its exact envelope without waiting.
+  const immediate = pollAsyncJob(jobId);
+  const job = immediate.status === "running" ? _asyncJobs.get(jobId) : null;
+  if (!job) return Promise.resolve(immediate);
+  return new Promise((resolve) => {
+    let timer = null;
+    const settle = () => {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      job.waiters.delete(settle);
+      resolve(_asyncJobEnvelope(job));
+    };
+    job.waiters.add(settle);
+    timer = setTimeout(settle, waitMs);
+  });
 }
 
 // Cancel only jobs that declared and implement end-to-end AbortSignal support.
@@ -369,6 +417,10 @@ export function cancelAsyncJob(jobId) {
 
 // Test-only: clear the registry between cases.
 export function _resetAsyncJobsForTest() {
+  for (const job of _asyncJobs.values()) {
+    for (const release of job.waiters) release();
+    job.waiters.clear();
+  }
   _asyncJobs.clear();
   _asyncJobSeq = 0;
   _asyncJobCapacity = ASYNC_JOB_CAPACITY;
