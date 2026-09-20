@@ -90,8 +90,24 @@ the host never retries with broader credentials or executes guest-supplied
 commands.
 
 The image is selected by a pinned immutable identifier and verified manifest,
-not a moving alias. A normal interactive coding command must be exercised in a
-fresh VM before the image is accepted. Setup records only the exact resources it
+not a moving alias, and configuration accepts only reference forms Incus can
+actually launch. A normal interactive coding command must be exercised in a
+fresh VM before the image is accepted.
+
+That guest template is built by a root-side fixed-argv program in this same
+boundary, not assembled by hand on each host. It resolves its base to exactly
+one virtual-machine image for the host architecture and refuses an ambiguous
+reference, provisions a throwaway guest with pinned, checksum-verified tooling
+and the unprivileged guest user, publishes the result, and reports the template
+fingerprint to pin. It installs no credential and carries no repository content,
+so the published template is a tooling artifact rather than a secret one.
+
+The sandbox programs ship inside the published Ground Control package as well as
+the repository, so a host that runs agents can install the sandbox and build its
+template without a checkout, from the same reviewed and published version. The
+command that exposes them is an unprivileged front end: it names the privileged
+program it is about to run, delegates through `sudo`, and acquires no VM
+authority for the Ground Control service. Setup records only the exact resources it
 created. Rollback removes only those resources and its sandbox-owned firewall
 objects, and refuses while an owned VM remains running; it never destroys an
 existing Incus project, storage pool, bridge, firewall rule, Docker/libvirt

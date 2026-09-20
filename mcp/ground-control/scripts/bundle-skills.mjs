@@ -1,7 +1,7 @@
-// Copy the repository's workflow skills and the `.env` template into this package before it is
-// packed (issue #1587), so one published version carries the server, the skills that drive it, and
-// the template `grndctl init` seeds. `--clean` removes the copies again after packing; neither
-// bundled path is ever committed.
+// Copy the repository assets this package ships into it before it is packed: the workflow skills
+// and the `.env` template (issue #1587), and the Incus sandbox programs (issue #1680) so a host
+// can set up a sandbox and build its guest template without a checkout. `--clean` removes the
+// copies again after packing; no bundled path is ever committed.
 
 import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -10,11 +10,13 @@ const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const skillsSource = `${repoRoot}skills/`;
 const envSource = `${repoRoot}.env.example`;
+const sandboxSource = `${repoRoot}tools/incus_sandbox/`;
 
 rmSync(`${packageRoot}skills`, { recursive: true, force: true });
 rmSync(`${packageRoot}templates`, { recursive: true, force: true });
+rmSync(`${packageRoot}sandbox`, { recursive: true, force: true });
 if (!process.argv.includes("--clean")) {
-  for (const source of [skillsSource, envSource]) {
+  for (const source of [skillsSource, envSource, sandboxSource]) {
     if (!existsSync(source)) {
       process.stderr.write(`bundle-skills: ${source} not found; pack from a Ground Control repository checkout\n`);
       process.exit(1);
@@ -23,4 +25,8 @@ if (!process.argv.includes("--clean")) {
   cpSync(skillsSource, `${packageRoot}skills`, { recursive: true });
   mkdirSync(`${packageRoot}templates`, { recursive: true });
   cpSync(envSource, `${packageRoot}templates/env.example`);
+  cpSync(sandboxSource, `${packageRoot}sandbox`, {
+    recursive: true,
+    filter: (source) => !source.includes("__pycache__") && !source.includes(".test."),
+  });
 }

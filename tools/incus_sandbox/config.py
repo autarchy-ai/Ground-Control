@@ -122,11 +122,14 @@ def _check_top_level(doc: dict[str, object]) -> None:
 
 
 def _image(doc: dict[str, object]) -> str:
-    """Return a non-placeholder pinned image digest."""
+    """Return a non-placeholder pinned image reference Incus can launch."""
     image = doc["image"]
-    if not isinstance(image, str) or len(image) != 71 or not image.startswith(("sha256:", "images:")):
-        raise ConfigError("image must be a pinned sha256 digest or images remote fingerprint")
-    digest = image[7:]
+    # Only remotes Incus resolves: an images: fingerprint, or a locally published
+    # template. A sha256: prefix reads as an unknown remote name and never launches.
+    prefixes = {"images:": 71, "local:": 70}
+    if not isinstance(image, str) or prefixes.get(image[:image.find(":") + 1]) != len(image):
+        raise ConfigError("image must be a pinned images: or local: fingerprint")
+    digest = image.split(":", 1)[1]
     if any(char not in "0123456789abcdef" for char in digest) or digest == "0" * 64:
         raise ConfigError("image fingerprint is malformed or a template placeholder")
     return image

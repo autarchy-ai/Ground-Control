@@ -12,6 +12,16 @@ Run the privileged setup deliberately from a reviewed checkout:
 sudo bash tools/incus_sandbox/setup.sh install
 ```
 
+A host without a checkout runs the same programs from the installed package:
+
+```sh
+grndctl sandbox setup install
+```
+
+`grndctl sandbox` is an unprivileged front end. It prints the privileged command
+before running it under `sudo`, and `grndctl sandbox path` shows the directory
+holding the programs so you can read them first.
+
 Use `--dry-run` to inspect its fixed resource actions. The installer only
 creates `gc-sandbox` project/profile/pool/bridge resources, a dedicated nftables
 table, and root-owned helper/config/event paths. Where another host firewall
@@ -43,6 +53,36 @@ context. Keep the file root-owned and mode `0600`. Setup writes the current host
 its nftables table; run `setup.sh refresh` after an address change so new starts
 are not rejected as stale. Traffic to a host address is dropped whether or not
 that address is in the recorded set.
+
+## Build the guest template
+
+Setup only needs a launchable base image, so install with a pinned upstream
+fingerprint first, then build the template the workflow actually needs:
+
+```sh
+grndctl sandbox build-image images:almalinux/10/cloud
+```
+
+The build resolves that reference to exactly one virtual-machine image for this
+architecture and refuses an ambiguous one, launches a throwaway guest from the
+resolved fingerprint, installs Git, Node.js with npm, `python3`, `tmux` and a
+checksum-verified GitHub CLI, creates the `sandbox` user, publishes the result
+as `gc-sandbox-template`, and deletes the guest. It prints the template
+fingerprint to pin:
+
+```json
+  "image": "local:<64-hex-fingerprint>"
+```
+
+Put that in `/etc/gc-incus-sandbox/config.json` and create guests again; they
+start from the template instead of a bare base image. Rebuilding refuses to
+replace the existing alias, so remove it first with
+`sudo incus image alias delete gc-sandbox-template --project gc-sandbox`.
+
+Only reference forms Incus can launch are accepted: `images:<fingerprint>` for
+an upstream image and `local:<fingerprint>` for a published template. The build
+pins its own tooling, so a rebuild produces the same guest surface until
+`build_image.py` changes.
 
 ## Ordinary use
 
