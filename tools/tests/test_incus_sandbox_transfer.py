@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.incus_sandbox.guest_bootstrap import PacketError, guest_environment, parse_packet
+from tools.incus_sandbox.guest_bootstrap import PacketError, guest_environment, materialize, parse_packet
 from tools.incus_sandbox.transfer import TransferError, read_packet, transfer, transfer_commands
 
 
@@ -47,6 +47,10 @@ class PacketBoundaryTest(unittest.TestCase):
             "CODEX_HOME": "/host/codex", "GH_TOKEN": "secret-canary", "PATH": "/usr/bin",
         })
         self.assertEqual(environment, {"PATH": "/usr/bin"})
+
+    def test_guest_bootstrap_rejects_caller_controlled_paths_before_reading(self) -> None:
+        with self.assertRaises(PacketError):
+            materialize(Path("/tmp/source.gcs"), Path("/tmp/workspace"))
 
 
 class TransferCommandTest(unittest.TestCase):

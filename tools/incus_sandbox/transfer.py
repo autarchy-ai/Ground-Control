@@ -45,13 +45,16 @@ def transfer_commands(project: str, sandbox: str, packet_path: str) -> list[list
     if not _NAME.fullmatch(sandbox):
         raise TransferError("sandbox name is invalid")
     guest_prefix = f"{sandbox}/home/sandbox"
+    bootstrap = f"{guest_prefix}/.local/bin/gc-guest-bootstrap.py"
+    packet = f"{guest_prefix}/.gc-transfer/source.gcs"
     return [
-        [_INCUS, "exec", sandbox, "--project", project, "--", "/usr/bin/install", "-d", "-o", "sandbox",
-         "-g", "sandbox", "-m", "0700", f"{guest_prefix}/.local/bin", f"{guest_prefix}/.gc-transfer"],
-        [_INCUS, "file", "push", _BOOTSTRAP, f"{guest_prefix}/.local/bin/gc-guest-bootstrap.py", "--project", project, "--mode=0700"],
-        [_INCUS, "file", "push", packet_path, f"{guest_prefix}/.gc-transfer/source.gcs", "--project", project, "--mode=0644"],
+        [_INCUS, "exec", sandbox, "--project", project, "--", "/usr/bin/install", "-d",
+         "-o", "sandbox", "-g", "sandbox", "-m", "0700", f"{guest_prefix}/.local/bin",
+         f"{guest_prefix}/.gc-transfer"],
+        [_INCUS, "file", "push", _BOOTSTRAP, bootstrap, "--project", project, "--mode=0700"],
+        [_INCUS, "file", "push", packet_path, packet, "--project", project, "--mode=0644"],
         [_INCUS, "exec", sandbox, "--project", project, "--", "su", "-", "sandbox", "-c",
-         f"exec /usr/bin/python3 {guest_prefix}/.local/bin/gc-guest-bootstrap.py {guest_prefix}/.gc-transfer/source.gcs {guest_prefix}/workspace"],
+         f"exec /usr/bin/python3 {bootstrap} {packet} {guest_prefix}/workspace"],
     ]
 
 
@@ -81,7 +84,8 @@ def audited_transfer(config: object, sandbox: str, stream: object, kind: str) ->
         transfer(config.project, config.state_dir, sandbox, stream)
         events.write({"action": "transfer", "outcome": "success", "sandbox_id": sandbox})
     except Exception:
-        events.write({"action": "transfer", "outcome": "failure", "sandbox_id": sandbox, "error_code": "command_failed"})
+        events.write({"action": "transfer", "outcome": "failure", "sandbox_id": sandbox,
+                      "error_code": "command_failed"})
         raise
 
 

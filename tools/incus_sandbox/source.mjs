@@ -1,7 +1,6 @@
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 const NAME = /^[a-z][a-z0-9-]{0,47}$/;
 const KINDS = new Set(["clone", "bundle"]);
@@ -53,7 +52,9 @@ export function safeGitEnvironment(base = process.env) {
 
 export function buildSourcePacket({ kind, commit, repository, bundle = null }) {
   if (!KINDS.has(kind) || !COMMIT.test(commit)) throw new Error("source packet is invalid");
-  if (kind === "clone" && (typeof repository !== "string" || !repository.startsWith("https://github.com/") || repository.includes("@"))) {
+  if (kind === "clone" && (
+    typeof repository !== "string" || !repository.startsWith("https://github.com/") || repository.includes("@")
+  )) {
     throw new Error("repository URL is invalid");
   }
   if (kind === "clone" && bundle !== null) throw new Error("clone packet must not contain a bundle");

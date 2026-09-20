@@ -19,10 +19,13 @@ _COMMIT = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _REPOSITORY = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?$")
 _HEADER_BYTES = 8
 _MAX_METADATA_BYTES = 4096
+_GUEST_HOME = Path("/home/sandbox")
+_PACKET_PATH = _GUEST_HOME / ".gc-transfer/source.gcs"
+_WORKSPACE_PATH = _GUEST_HOME / "workspace"
 
 
-def parse_packet(packet: bytes) -> dict[str, str]:
-    """Validate the fixed packet envelope without accepting a host path or credential."""
+def _packet_metadata(packet: bytes) -> tuple[dict[str, object], int]:
+    """Decode the fixed binary envelope before validating its declared source."""
     if len(packet) < _HEADER_BYTES or packet[:4] != b"GCS1":
         raise PacketError("source packet header is invalid")
     metadata_length = int.from_bytes(packet[4:8], "big")
@@ -30,21 +33,38 @@ def parse_packet(packet: bytes) -> dict[str, str]:
         raise PacketError("source packet metadata is invalid")
     try:
         metadata = json.loads(packet[8:8 + metadata_length].decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise PacketError("source packet metadata is invalid") from exc
     if not isinstance(metadata, dict) or metadata.get("schema") != "gc.incus-sandbox.source/v1":
         raise PacketError("source packet schema is invalid")
+    return metadata, metadata_length
+
+
+def _validated_source(metadata: dict[str, object], payload: bytes) -> dict[str, str]:
+    """Validate source identity and the closed fields allowed for each transfer kind."""
     kind, commit = metadata.get("kind"), metadata.get("commit")
     if kind not in {"clone", "bundle"} or not isinstance(commit, str) or not _COMMIT.fullmatch(commit):
         raise PacketError("source packet source identity is invalid")
     expected = {"schema", "kind", "commit", "repository"} if kind == "clone" else {"schema", "kind", "commit"}
     if set(metadata) != expected:
         raise PacketError("source packet fields are invalid")
-    if kind == "clone" and (not isinstance(metadata["repository"], str) or not _REPOSITORY.fullmatch(metadata["repository"])):
+    repository = metadata.get("repository")
+    if kind == "clone" and (
+        not isinstance(repository, str) or not _REPOSITORY.fullmatch(repository)
+    ):
         raise PacketError("source packet repository is invalid")
-    if kind == "bundle" and not packet[_HEADER_BYTES + metadata_length:]:
+    if kind == "bundle" and not payload:
         raise PacketError("source packet bundle is empty")
-    return metadata
+    validated = {"schema": "gc.incus-sandbox.source/v1", "kind": kind, "commit": commit}
+    if kind == "clone":
+        validated["repository"] = repository
+    return validated
+
+
+def parse_packet(packet: bytes) -> dict[str, str]:
+    """Validate the fixed packet envelope without accepting a host path or credential."""
+    metadata, metadata_length = _packet_metadata(packet)
+    return _validated_source(metadata, packet[_HEADER_BYTES + metadata_length:])
 
 
 def packet_payload(packet: bytes) -> bytes:
@@ -55,9 +75,11 @@ def packet_payload(packet: bytes) -> bytes:
 
 def checkout_commands(metadata: dict[str, str], workspace: Path, bundle_path: Path) -> list[list[str]]:
     """Construct guest-only Git argv for the validated immutable source identity."""
-    clone = ["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "clone", "--no-checkout", "--"]
+    clone = ["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]
+    clone += ["clone", "--no-checkout", "--"]
     source = metadata["repository"] if metadata["kind"] == "clone" else str(bundle_path)
-    return [clone + [source, str(workspace)], ["/usr/bin/git", "-C", str(workspace), "checkout", "--detach", metadata["commit"]]]
+    checkout = ["/usr/bin/git", "-C", str(workspace), "checkout", "--detach", metadata["commit"]]
+    return [clone + [source, str(workspace)], checkout]
 
 
 def guest_environment(base: dict[str, str] | None = None) -> dict[str, str]:
@@ -70,6 +92,8 @@ def guest_environment(base: dict[str, str] | None = None) -> dict[str, str]:
 
 def materialize(packet_path: Path, workspace: Path) -> None:
     """Create a guest checkout and install guest-local CLI dependencies."""
+    if packet_path != _PACKET_PATH or workspace != _WORKSPACE_PATH:
+        raise PacketError("guest bootstrap paths are invalid")
     packet = packet_path.read_bytes()
     metadata = parse_packet(packet)
     environment = guest_environment()
@@ -86,8 +110,10 @@ def materialize(packet_path: Path, workspace: Path) -> None:
             bundle_path.chmod(0o600)
         for command in checkout_commands(metadata, workspace, bundle_path):
             subprocess.run(command, check=True, env=environment)
-        subprocess.run(["/usr/bin/npm", "install", "--global", "@openai/codex", "grndctl"], check=True, env=environment)
-        subprocess.run([str(local_prefix / "bin/grndctl"), "install-skills"], check=True, cwd=workspace, env=environment)
+        install = ["/usr/bin/npm", "install", "--global", "@openai/codex", "grndctl"]
+        subprocess.run(install, check=True, env=environment)
+        skills = [str(local_prefix / "bin/grndctl"), "install-skills"]
+        subprocess.run(skills, check=True, cwd=workspace, env=environment)
     finally:
         bundle_path.unlink(missing_ok=True)
 
