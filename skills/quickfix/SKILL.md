@@ -126,9 +126,27 @@ dashboard; handle suspected secret values; rotate credentials; rewrite history;
 or change code, configuration, and allowlists in response. After the user
 reports resolution, re-read only the GitHub check status.
 
+### Q6.5. Record the delivery handoff
+
+Call `gc_implement_mechanical` once with `action: "readiness"`, `lane: "quickfix"`,
+the issue and PR numbers, and the completion payload from this run. The action
+re-reads the required hosted checks for the current PR head and records a trusted
+delivery handoff on the issue thread, plus a pointer comment on the PR.
+
+This lane still gets no pre-merge report and none of `/implement`'s requirement or
+review gates; the handoff is a machine record, not an outcome. What it buys is that
+`.github/workflows/ground-control-phase-e.yml` can finalize the merged PR with no
+model or agent session (issue #1671, ADR-102), so **this run may end here**. Nothing
+in this lane polls for or waits on the merge.
+
+If the head changes after this call, re-run it before the merge: the handoff is bound
+to the head whose checks were verified, and a stale one is refused post-merge.
+
 ### Q7. Finalize after merge
 
-After the user merges, call `gc_implement_mechanical` once with
+On the normal path the merged-PR workflow has already done this, with no agent
+session; re-entering `/quickfix` after a merge is the fallback and reaches the same
+tool with the same result. After the user merges, call `gc_implement_mechanical` once with
 `action: "finalize"`, `lane: "quickfix"`, the issue and PR numbers, and the
 completion payload returned from this run: empty `requirements`, changed files,
 optional Codex summary, `ci_status`, `sonar_status`, and one concise outcome

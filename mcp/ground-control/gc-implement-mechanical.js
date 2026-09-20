@@ -27,6 +27,8 @@ import {
   writeImplementPublishJournal,
   removeImplementPublishJournal,
 } from "./lib.js";
+import { runRecordDeliveryReadiness } from "./lib/delivery-readiness.js";
+import { readRemoteGateSnapshot } from "./lib/remote-gates.js";
 import { runFinalize, runReadiness } from "./implement/completion.js";
 import { completionShape, execFileAsync, requirementShape, runBootstrap } from "./implement/gate-helpers.js";
 import { runMonitor, runPublish } from "./implement/publish.js";
@@ -128,6 +130,10 @@ const defaultDeps = {
   assertCompletion: runAssertCompletion,
   authorizeRequirementUid: authorizeRequestedRequirementUid,
   closeIssue: runCloseIssueAfterMerge,
+  // Phase D delivery handoff (issue #1671): the readiness action binds the recorded
+  // completion payload to the head whose hosted checks it just read.
+  readRemoteGates: readRemoteGateSnapshot,
+  recordDeliveryReadiness: runRecordDeliveryReadiness,
   // Mechanical-publish recovery seams (issue #1495). Injected so tests can stub
   // the filesystem lease/journal while production holds the real per-worktree lease.
   resolvePublishGitDir,

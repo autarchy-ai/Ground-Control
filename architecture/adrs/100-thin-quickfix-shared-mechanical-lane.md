@@ -82,3 +82,16 @@ orchestrator again.
   otherwise unactionable pre-merge record.
 - New shared behavior must preserve both lane semantics. Implement-only gates
   must continue to fail closed when invoked with `lane: "quickfix"`.
+
+## 2026-09-20 amendment: the lane records a pre-merge delivery handoff (issue #1671)
+
+`readiness` refused `lane: "quickfix"` outright, because the lane has no pre-merge
+report. It now discriminates instead of refusing: the quickfix lane records the same
+neutral delivery handoff `/implement` does, after the same hosted-check bar and bound to
+the same head, and still produces no pre-merge report and gains no implement-only
+requirement or review gate. Its slim outcome is still written by the shared finalizer
+at Q7.
+
+That handoff is what lets a merged quickfix pull request finalize with no agent session
+(ADR-102). Both lane semantics are otherwise preserved, and implement-only gates still
+fail closed under `lane: "quickfix"`.

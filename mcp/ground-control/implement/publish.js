@@ -333,30 +333,4 @@ async function runFeatureBaseSync(args, deps, { repoRoot, branchName, authorized
   return publishComplete(completed);
 }
 export { runMonitor } from "./monitor.js";
-export function mapCompletion(args, phase) {
-  const input = args.completion;
-  return {
-    repoPath: args.repoPath,
-    issueNumber: args.issueNumber,
-    prNumber: args.prNumber,
-    requirements: (input.requirements ?? []).map((item) => ({
-      uid: item.uid,
-      title: item.title,
-      status: item.status,
-      statusIntent: item.status_intent,
-      note: item.note,
-    })),
-    files: input.files,
-    reviews: input.reviews,
-    traceability: input.traceability,
-    ciStatus: input.ci_status,
-    sonarStatus: input.sonar_status,
-    planCommentUrl: input.plan_comment_url,
-    summary: input.summary,
-    plainEnglishOutcome: input.plain_english_outcome,
-    touchedFiles: input.touched_files,
-    project: input.project,
-    lane: args.lane ?? "implement",
-    phase,
-  };
-}
+export { mapCompletion } from "../lib/completion-mapping.js";

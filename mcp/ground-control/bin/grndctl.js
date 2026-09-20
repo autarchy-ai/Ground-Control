@@ -5,6 +5,7 @@
 //   grndctl install-skills   copy the packaged workflow skills into the agent skill directories
 //   grndctl init             set up Ground Control for the repository in the current directory
 //   grndctl doctor           check this host and repository, naming the fix for anything wrong
+//   grndctl finalize-merged-pr  finish Phase E for a merged delivery PR (the Actions job runs this)
 //   grndctl --version        print the installed version
 //
 // The server always runs from this installed package, never from a checkout, so what an agent
@@ -21,6 +22,7 @@ commands:
   init             set up this repository: confirm each value, preview the changes, then write
                    (--dry-run; --non-interactive with every value as a flag, e.g. --project, --github-repo)
   doctor           check this host and repository
+  finalize-merged-pr  finish Phase E for an already-merged Ground Control delivery PR (--pr <number>)
   --version        print the installed version
 `;
 
@@ -44,6 +46,9 @@ if (command === "mcp") {
   } finally {
     rl?.close();
   }
+} else if (command === "finalize-merged-pr") {
+  const { runFinalizeMergedPrCli } = await import("../lib/grndctl-finalize.js");
+  process.exitCode = await runFinalizeMergedPrCli(args);
 } else if (command === "doctor") {
   const { runDoctor } = await import("../lib/grndctl-doctor.js");
   process.exitCode = await runDoctor({ version: packageVersion() });

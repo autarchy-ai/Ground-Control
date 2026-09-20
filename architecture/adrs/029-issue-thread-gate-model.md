@@ -794,3 +794,29 @@ issue's authoritative `## Requirements` section, which the boundary already read
 to bind the body's closing keyword, not against the caller's word: a
 requirement-backed issue is not a legal quickfix, so it keeps the mandatory
 review. An unrecognized lane is refused rather than read as `/implement`.
+
+**2026-09-20 (issue #1671, the delivery handoff and a verified automation author).**
+Two records join the durable issue-thread surface this ADR governs. A
+**delivery-readiness record** on the issue carries the exact tool-shaped completion
+payload, digest-bound to the issue, the pull request, and the pull-request head OID
+whose required hosted checks readiness verified; a **delivery pointer** on the pull
+request names the issue and that record, for discovery only. Pull-request title,
+body, labels, branch name, and closing keywords confer no authority. Both are
+versioned, and an unknown version or lane fails closed.
+
+The final-report marker keeps its exact shape, and trust for it is still repository
+write permission on the author. One narrow class is added: the repository's own
+GitHub Actions identity, which the collaborator endpoint reports as
+`permission: "none"` and which `isTrusted` therefore correctly rejects. A separate
+`gc:finalizer-run` marker on the same comment names the run, and the gate accepts it
+only when that run resolves through the Actions API to this repository's pinned
+finalizer workflow and is bound to this pull request. The class is scoped to that one
+gate: execution-obligation `wontfix` authorization, the merged-state override, and the
+delivery-readiness record itself still require a repo-write human, so automation
+cannot author the evidence that authorizes it.
+
+Final-report publication becomes idempotent, treating an existing trusted marker for the
+same issue and pull request as a success rather than a second report, and a failed
+finalization writes one bounded, scrubbed, idempotently keyed `gc:delivery-finalization-failed`
+record and leaves the issue OPEN. The single-human-touchpoint contract is unchanged.
+See ADR-102.

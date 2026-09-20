@@ -27,6 +27,34 @@ function observedResult(current, ci, sonar, evidence) {
   return null;
 }
 
+// A pull request that conflicts with its base cannot produce checks at all: GitHub never
+// builds the merge ref, so nothing runs and the watch would otherwise poll out its full cap
+// before reporting a timeout that names none of this. `DIRTY` is GitHub's answer for that
+// state, and it is actionable the moment it is read (issue #1671).
+function conflictFailure(snapshot, extra = {}) {
+  if (snapshot.merge_state !== "DIRTY") return null;
+  return failure(
+    "monitor",
+    "monitor_pr_conflicted",
+    "The pull request conflicts with its base branch, so its checks cannot run. "
+      + "Merge the base into the branch, resolve the conflicts, and push.",
+    "resolve_the_base_conflict_then_rerun_publish_and_monitor",
+    { failed_stage: "merge_state", merge_state: snapshot.merge_state, ...extra },
+  );
+}
+
+// While nothing changes, ask less often. The reads themselves are conditional and cost
+// ~nothing against the rate limit, but a slower cadence also spends less of the secondary
+// (burst) budget every agent on the host shares. Any observed change resets the cadence, so
+// reaction time after something actually happens is unchanged.
+const MONITOR_INTERVAL_BASE_MS = 15000;
+const MONITOR_INTERVAL_MAX_MS = 120000;
+
+export function nextMonitorInterval(currentMs, unchanged) {
+  if (!unchanged) return MONITOR_INTERVAL_BASE_MS;
+  return Math.min(Math.round(currentMs * 1.5), MONITOR_INTERVAL_MAX_MS);
+}
+
 // Child jobs survive an early failure response. Their handles let the driver
 // keep consuming diagnostics while repairing; a new SHA gets new child jobs.
 export async function runMonitor(args, deps) {
@@ -36,6 +64,9 @@ export async function runMonitor(args, deps) {
   const read = () => snapshot({ repoPath: args.repoPath, prNumber: args.prNumber });
   const initial = await read();
   if (!initial.ok) return initial;
+  // Refuse before starting any watcher: a conflicted pull request has nothing to watch.
+  const initialConflict = conflictFailure(initial);
+  if (initialConflict) return initialConflict;
   const head = initial.head_sha;
   const start = deps.startMonitorJob ?? startAsyncJob;
   const poll = deps.pollMonitorJob ?? pollAsyncJob;
@@ -58,16 +89,21 @@ export async function runMonitor(args, deps) {
   const evidence = () => ({ head_sha: head, monitor_jobs: jobs,
     resume: { action: "monitor", repo_path: args.repoPath, issue_number: args.issueNumber, pr_number: args.prNumber },
     time_to_actionable_ms: now() - started, wait_after_actionable_ms: 0 });
+  let intervalMs = MONITOR_INTERVAL_BASE_MS;
   while (now() - started < 2700000) {
     const current = await read();
     if (!current.ok) return { ...current, ...evidence() };
     if (current.head_sha !== head) return failure("monitor", "monitor_head_changed",
       "The PR head changed; previous results are diagnostic only", "monitor_the_current_pr_head", evidence());
+    // A conflict can also appear mid-watch, when the base moves under an open pull request.
+    const conflict = conflictFailure(current, evidence());
+    if (conflict) return conflict;
     const ci = poll(jobs.ci);
     const sonar = poll(jobs.sonar);
     const result = observedResult(current, ci, sonar, evidence());
     if (result) return result;
-    await sleep(15000);
+    intervalMs = nextMonitorInterval(intervalMs, current.unchanged === true);
+    await sleep(intervalMs);
   }
   return failure("monitor", "monitor_timed_out", "Hosted checks remain incomplete",
     "resume_monitoring_pending_checks", evidence());
