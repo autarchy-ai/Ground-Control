@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { parseGroundControlYaml } from "./ground-control-config.js";
 import { detectGithubRepo } from "./grndctl-detect.js";
 import { MCP_SERVER_ENTRY } from "./grndctl-init.js";
+import { PHASE_E_WORKFLOW_PATH } from "./phase-e-workflow.js";
 import { execFile } from "./runtime-primitives.js";
 import { parseEnvFileLine } from "./server-env.js";
 
@@ -56,6 +57,25 @@ function mcpCheck(cwd) {
   return check(".mcp.json runs grndctl mcp", ok, `${detail}; run grndctl init`);
 }
 
+// Without the merged-pull-request workflow, Phase E never runs on its own and every
+// delivered issue waits for someone to finish it by hand (issue #1671). A warning rather
+// than a failure: a repository may deliberately finalize from an agent session.
+function phaseEWorkflowCheck(cwd) {
+  const path = join(cwd, PHASE_E_WORKFLOW_PATH);
+  if (!existsSync(path)) {
+    return check("Phase E workflow installed", false, `run grndctl init to add ${PHASE_E_WORKFLOW_PATH}`, { warn: true });
+  }
+  const text = readFileSync(path, "utf8");
+  const pinned = /grndctl@\d+\.\d+\.\d+|bin\/grndctl\.js/.test(text);
+  const merged = text.includes("pull_request.merged == true");
+  return check(
+    "Phase E workflow installed",
+    pinned && merged,
+    `${PHASE_E_WORKFLOW_PATH} must run a pinned grndctl and guard on pull_request.merged == true`,
+    { warn: true },
+  );
+}
+
 async function envChecks(cwd, sonarConfigured) {
   const path = join(cwd, ".env");
   if (!existsSync(path)) return [check(".env present", false, "run grndctl init, then fill in the credentials this repo needs")];
@@ -81,6 +101,7 @@ export async function runDoctorChecks({ cwd = process.cwd(), version, works = co
     check("inside a git repository", await works("git", ["-C", cwd, "rev-parse", "--show-toplevel"]), "run grndctl doctor from a repository"),
     ...(await yamlChecks(cwd, config)),
     mcpCheck(cwd),
+    phaseEWorkflowCheck(cwd),
     ...(await envChecks(cwd, Boolean(config?.ok && config.value.sonarcloud))),
   ];
 }

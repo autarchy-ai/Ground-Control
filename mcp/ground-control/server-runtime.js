@@ -38,6 +38,7 @@
 //                                   gc_remediate_pull_request (maintainer /review lane, #1535)
 //   tools/station-observation.js — gc_reconcile_station_observation (stranded observation recovery, #1582)
 //   tools/release-identity.js    — gc_release_identity (versioned artifact-release reservations, #1579)
+//   tools/phase-e.js             — gc_finalize_merged_pr (automated post-merge finalization, #1671)
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -48,6 +49,7 @@ import { registerPrReview } from "./tools/pr-review.js";
 import { registerIntegrate } from "./tools/integrate.js";
 import { registerStationObservation } from "./tools/station-observation.js";
 import { registerReleaseIdentity } from "./tools/release-identity.js";
+import { registerPhaseE } from "./tools/phase-e.js";
 import pkg from "./package.json" with { type: "json" };
 
 // The version advertised to clients in the initialize handshake is sourced from
@@ -63,6 +65,7 @@ registerPrReview(server);
 registerIntegrate(server);
 registerStationObservation(server);
 registerReleaseIdentity(server);
+registerPhaseE(server);
 
 // ============================================================================
 // Startup

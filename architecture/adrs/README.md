@@ -121,9 +121,14 @@ We use [MADR](https://adr.github.io/madr/) (Markdown Any Decision Records). Each
 | [099](099-bounded-codex-review-and-test-quality-retirement.md) | Bounded Codex Review and Test-Quality Retirement | Accepted |
 | [100](100-thin-quickfix-shared-mechanical-lane.md) | Thin Quickfix Lane over Shared Mechanical Modules | Accepted |
 | [101](101-isolated-incus-coding-vms.md) | Isolated Incus VMs for Local Coding Sessions | Accepted |
+| [102](102-automated-post-merge-delivery-finalization.md) | Automated Post-Merge Delivery Finalization | Accepted |
 
 Prior ADRs from the old project frame are archived in `archive/architecture/adrs/`.
 
 Issue #1416 amends ADR-021, ADR-027, ADR-029, ADR-031, and ADR-036 to define
 `/implement` execution principles, same-checkout branch preparation, and
 durable execution-obligation completion gates.
+
+Issue #1671 amends ADR-021, ADR-029, and ADR-100 through ADR-102: Phase E is
+performed by a deterministic merged-pull-request executor bound to a trusted
+Phase D handoff record, so an agent may terminate once the pull request is ready.

@@ -8,8 +8,19 @@ tier: low
 
 On the normal path this step is already completed by
 `gc_implement_mechanical action="finalize"` immediately after the post-merge
-completion assertion. Use the standalone close primitive only to repair a
-bounded finalize failure.
+completion assertion, and since issue #1671 that finalize normally runs in
+`.github/workflows/ground-control-phase-e.yml` on the merged pull request, with no
+model or agent session at all (ADR-102). Use the standalone close primitive only to
+repair a bounded finalize failure.
+
+The close gate is unchanged by that automation, including its trust rule. It gains
+exactly one narrow author class: the repository's own Actions identity, which the
+collaborator endpoint reports as `permission: "none"`, is accepted for the
+`gc:final-report` marker only when the separate `gc:finalizer-run` marker beside it
+names a run that resolves through the Actions API to this repository's pinned
+finalizer workflow and is bound to this PR. That class unlocks nothing else: the
+merged-state override and execution-obligation `wontfix` authorization still require a
+repo-write human.
 
 This step runs in **Phase E**, AFTER the user merges the PR, as the **last** Phase E step - it follows Step 17 `phase="post_merge"` (the merge-revision-verified final report). Since issue #1541, Phase E is validation-only: the requirement transition (Step 15) and traceability reconciliation (Step 16) already merged with the delivery PR, so Phase E is just Step 17 `post_merge` → this close. The /implement orchestrator detects the post-merge state at Step 1 - the Phase D readiness marker (`ready_for_review`) is present, a linked PR is merged, and the post-merge validation has not yet run (no `gc:final-report` marker) - and short-circuits to **Step 17 `post_merge`**. For a requirement-backed run the PR body's non-closing `Refs #<n>` leaves the issue OPEN until this close runs; for a requirement-free run the `Closes #<n>` keyword auto-closes it only when the PR merged into the repository's default branch, which this step's idempotent `already_closed` path handles; a PR merged into the integration branch leaves the issue OPEN for this close (issue #1601). Detection keys on the `gc:final-report` marker being absent, not on the issue being open.
 

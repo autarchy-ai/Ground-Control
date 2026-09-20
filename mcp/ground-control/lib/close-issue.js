@@ -8,6 +8,7 @@ import { TO_CAMEL } from "./field-mapping.js";
 import { extractGhErrorMessage } from "./grc-legacy-compat-2.js";
 import { fetchPullRequest, listIssueCrossReferencedPullNumbers } from "./github-rest.js";
 import { readIssueCommentBodies, readIssueCommentsWithAuthors, resolveExecutionObligationTrust, validateSourceDevStartGate } from "./grc-legacy-compat-3.js";
+import { findTrustedFinalReportMarker } from "./final-report-marker.js";
 import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { devStartGateConfigFailure, devStartGateFailure, readDevStartPlanFields, readSourceBearingDecision, validateNonSourceDevStartGate } from "./grc-legacy-compat.js";
 import { buildCodexReviewCycleMarker, normalizeDevStartGateConfig, parseCodexReviewCycleMarkers } from "./repo-context-2.js";
@@ -230,23 +231,14 @@ export async function resolvePrForClose({ repoRoot, owner, name, issueNumber, pr
   return { pr: matched };
 }
 // A trusted `gc:final-report` marker is the proof that post-merge requirement-state
-// validation succeeded (runAssertCompletion posts the report only after validation;
-// buildFinalReportMarker in doc-coverage.js owns the marker's exact shape). The close
-// path requires it before closing an OPEN issue so the canonical close can never run
-// ahead of validation (issue #1541). The marker is bound to THIS PR, not just the
-// issue: a stale final-report from an earlier linked PR on the same issue must not
-// authorize a later close (issue #1541 review). Trust is repo write-permission on the
-// marker's author, so a forged marker from an unprivileged commenter does not satisfy
-// the gate.
+// validation succeeded (runAssertCompletion posts the report only after validation). The
+// close path requires it before closing an OPEN issue so the canonical close can never run
+// ahead of validation (issue #1541). Marker parsing and the trust decision live in
+// lib/final-report-marker.js, shared with publication so the two can never disagree about
+// what counts as a recorded validation (issue #1671).
 async function hasTrustedFinalReportMarker(repoRoot, owner, name, issueNumber, prNumber) {
-  const comments = await readIssueCommentsWithAuthors(repoRoot, owner, name, issueNumber);
-  const markerText = `gc:final-report issue="${issueNumber}" pr="${prNumber}"`;
-  const markerComments = comments.filter(
-    (c) => typeof c.body === "string" && c.body.includes(markerText),
-  );
-  if (markerComments.length === 0) return false;
-  const trust = await resolveExecutionObligationTrust(repoRoot, owner, name, comments);
-  return markerComments.some((c) => trust.isTrusted(c));
+  const marker = await findTrustedFinalReportMarker({ repoRoot, owner, name, issueNumber, prNumber });
+  return marker.found;
 }
 
 // The merged-requirement-state escape hatch. Authority is a TRUSTED issue-thread

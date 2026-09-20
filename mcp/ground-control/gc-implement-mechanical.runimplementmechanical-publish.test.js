@@ -53,6 +53,9 @@ function baseDeps(overrides = {}) {
     markPickedUp: async () => ({ ok: true, comment_url: "https://github.test/pickup" }),
     synchronize: async () => ({ ok: true, status: "complete", recordId: RECORD_ID }),
     remoteSnapshot: async () => ({ ok: true, head_sha: "a".repeat(40), branch: "1426-script-phases", failures: [], passed: true }),
+    // Readiness binds the delivery handoff to the head whose hosted checks it read (#1671).
+    readRemoteGates: async () => ({ ok: true, passed: true, state: "OPEN", head_sha: "a".repeat(40) }),
+    recordDeliveryReadiness: async () => ({ ok: true, record_comment_id: 4242 }),
     monitorSleep: async () => new Promise((resolve) => setImmediate(resolve)),
     watchCi: async () => ({ ok: true, conclusion: "success" }),
     watchSonar: async () => ({
@@ -464,7 +467,7 @@ describe("runImplementMechanical monitor and completion", () => {
       watchSonar: async () => { throw new Error("finalize must not wait for post-merge Sonar"); },
       assertCompletion: async ({ phase }) => {
         calls.push(phase);
-        return { ok: true, readiness_report: "ready" };
+        return { ok: true, readiness_report: "ready", head_sha: "a".repeat(40) };
       },
       closeIssue: async () => {
         calls.push("close");

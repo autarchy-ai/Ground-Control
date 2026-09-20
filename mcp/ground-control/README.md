@@ -51,6 +51,18 @@ grndctl init      # in each repository: confirm settings, review changes, then w
 grndctl doctor
 ```
 
+`grndctl init` also installs `.github/workflows/ground-control-phase-e.yml`, pinned to
+the exact installed version. That workflow finishes Phase E when a delivery pull request
+merges, so an agent can be terminated at a ready pull request and the merge alone closes
+out the issue (ADR-102). It never rewrites a copy the repository already has;
+`grndctl doctor` reports one that is missing or has drifted.
+
+One more verb runs there rather than from an agent session:
+
+```bash
+grndctl finalize-merged-pr --pr 1680   # what the merged-PR job runs; also a manual repair path
+```
+
 The server always runs from the installed package (`grndctl mcp`), never from a
 checkout. To run unreleased code deliberately, `npm link` from `mcp/ground-control`
 in a clone.
@@ -141,11 +153,17 @@ The complete keep/delete and placement record is in
 | `gc_post_implementation_plan` | Post the Step 4 plan to the issue thread; requires the preflight marker |
 | `gc_close_issue_after_merge` | Idempotent post-merge issue close, gated on the PR actually being merged |
 
+**Automated Phase E (`tools/phase-e.js`)**
+
+| Tool | Purpose |
+|---|---|
+| `gc_finalize_merged_pr` | Finish Phase E for an already-merged delivery PR from its number alone: resolve the issue through the trusted delivery pointer, verify the Phase D readiness record against the merged head, and replay its recorded payload through `finalize`. The merged-PR workflow is the normal caller; this registration is the repair path after a failed run |
+
 **Workflow mechanics (`tools/review-cap-disposition.js`)**
 
 | Tool | Purpose |
 |---|---|
-| `gc_implement_mechanical` | Run a shared deterministic phase - `bootstrap`, `publish`, `monitor`, `readiness`, or `finalize`; `lane: quickfix` reuses the compatible phases while rejecting requirement scope and implement-only readiness. The two long actions accept `async` + `idempotency_key` and return a job handle |
+| `gc_implement_mechanical` | Run a shared deterministic phase - `bootstrap`, `publish`, `monitor`, `readiness`, or `finalize`; `lane: quickfix` reuses the compatible phases while rejecting requirement scope. `readiness` is lane-discriminated: both lanes record the trusted delivery handoff, and only `implement` also posts a pre-merge report. The two long actions accept `async` + `idempotency_key` and return a job handle |
 | `gc_prepare_implement_branch` | Same-checkout branch preparation for an issue |
 | `gc_mark_implement_issue_picked_up` | Apply the in-progress label and post the pickup comment |
 | `gc_synchronize_implement_branch` | Fetch and really merge the integration branch, verify the graph, push, and post the synchronization attestation |
