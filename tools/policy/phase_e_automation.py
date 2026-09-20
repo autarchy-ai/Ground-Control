@@ -183,19 +183,20 @@ def _load_workflow(root: Path) -> tuple[str, dict[str, object] | None, Violation
             "Automated Phase E requires its merged-pull-request workflow.",
             [f"expected at {WORKFLOW_PATH.as_posix()}"],
         )
+    document: object = None
+    detail: str | None = None
     try:
         document = yaml.safe_load(text)
     except yaml.YAMLError as error:
+        detail = f"{WORKFLOW_PATH.as_posix()}: {error}"
+    else:
+        if not isinstance(document, dict):
+            detail = f"{WORKFLOW_PATH.as_posix()} is not a mapping"
+    if detail is not None:
         return text, None, _violation(
             "phase-e-workflow-unreadable",
             "The Phase E workflow could not be parsed.",
-            [f"{WORKFLOW_PATH.as_posix()}: {error}"],
-        )
-    if not isinstance(document, dict):
-        return text, None, _violation(
-            "phase-e-workflow-unreadable",
-            "The Phase E workflow could not be parsed.",
-            [f"{WORKFLOW_PATH.as_posix()} is not a mapping"],
+            [detail],
         )
     return text, document, None
 
