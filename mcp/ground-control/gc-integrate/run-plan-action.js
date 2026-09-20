@@ -135,7 +135,6 @@ async function pushRebasedHead(pr, tmpRef, worktreePath, execFile) {
       "origin",
       `${tmpRef}:${pr.head_ref}`,
     ]);
-    return null;
   } catch (e) {
     const errText = (e.stderr ?? e.stdout ?? e.message ?? "").toString();
     if (isLeaseMismatch(errText, e.message)) {
@@ -160,6 +159,22 @@ async function pushRebasedHead(pr, tmpRef, worktreePath, execFile) {
       summary: safeSummary(`git push --force-with-lease failed: ${errText.slice(0, 150)}`),
       next_action: "check_remote_access",
     };
+  }
+  return null;
+}
+
+// The commit this lane is about to publish, for the readiness watchers to bind
+// to. Best-effort on purpose: the watchers bind to the branch tip on their own
+// when this is null, which is the same guarantee against a stale run. Naming
+// the commit only closes the narrower window where someone else's push lands
+// between ours and the watcher's read.
+async function rebasedHeadSha(tmpRef, worktreePath, execFile) {
+  try {
+    const { stdout } = await execFile("git", ["-C", worktreePath, "rev-parse", tmpRef]);
+    const sha = stdout.trim();
+    return sha.length > 0 ? sha : null;
+  } catch {
+    return null;
   }
 }
 
@@ -377,11 +392,15 @@ async function preparePullRequestBranch(pr, ctx, deps) {
     if (gateFailure) return gateFailure;
 
     // Push BEFORE the CI/Sonar watchers so they observe the rebased commit.
+    const pushedHeadSha = await rebasedHeadSha(tmpRef, worktreePath, execFile);
     const pushFailure = await pushRebasedHead(pr, tmpRef, worktreePath, execFile);
     if (pushFailure) return pushFailure;
 
-    // Watchers run after the push so they observe the rebased commit.
-    const watcherFailure = await runReadinessWatchers(pr, ctx, deps, cfg);
+    // Watchers run after the push AND bound to the commit it published: a push
+    // and its workflow runs are seconds to minutes apart, so "after" alone
+    // still lets the pre-rebase run answer for the rebase (issue #1365).
+    const watcherFailure = await runReadinessWatchers(
+      { ...pr, pushed_head_sha: pushedHeadSha }, ctx, deps, cfg);
     if (watcherFailure) return watcherFailure;
 
 

@@ -434,13 +434,27 @@ GitHub check status and continue when it passes.
 are required and how to reproduce each locally. ADR-091 carries the rationale.
 `make ci-timings` reports current wall clock and time to first failing check.
 
-`gc_watch_ci_run` and `gc_implement_mechanical action=monitor` watch every
-workflow run triggered by the branch's newest commit, grouped by head SHA, and
-report success only when all of them succeed. Watching a single run reported an
-unrelated fast workflow as the CI gate: a push triggers both `ci.yml` and
-`pr-title.yml`, and the five-second title lint finishes first, so the gate could
-pass while the suite was still running. A failure in the set reports the run
-responsible rather than the newest one.
+`gc_watch_ci_run` and `gc_implement_mechanical action=monitor` bind the gate to
+one commit and watch every workflow run that commit triggered, reporting success
+only when all of them succeed. Watching a single run reported an unrelated fast
+workflow as the CI gate: a push triggers both `ci.yml` and `pr-title.yml`, and
+the five-second title lint finishes first, so the gate could pass while the
+suite was still running. A failure in the set reports the run responsible rather
+than the newest one.
+
+The commit is the caller's `expected_head_sha` when it supplies one - `monitor`
+always does, from the pull request head - and otherwise the branch tip read from
+GitHub. Neither is the newest listed run, which is what issue #1365 corrected:
+`gh run list` is ordered by creation and a push's own runs register seconds to
+minutes later, so during exactly the window the gate is consulted in, the newest
+run is the *previous* commit's, and its success passed as this one's. An empty
+run set for the bound commit is now a wait of up to five minutes, spent from the
+total cap, and then `ci_watch_no_run_for_head_sha` rather than a green. A branch
+tip that cannot be read is `ci_watch_head_sha_unresolved`, and a pinned `run_id`
+that ran on another commit is `ci_watch_run_head_mismatch`; the terminal
+envelope carries `head_sha` and `workflow` for the run it reports. The
+`/integrate` lane names the rebased commit it force-pushed, so its readiness
+watchers cannot read the pre-rebase run.
 
 `queued_too_long` means a run waited past the queued cap for its first runner:
 it is measured per run from the run's latest attempt start and applies only

@@ -25,7 +25,12 @@ Sonar polling remains server-side and raw logs remain there. (Issues #934 and
 1. Pass the absolute repository path, cached feature branch, and PR number to
    the mechanical `monitor` action. Its internal `gc_watch_ci_run` boundary
    applies the configured queued, total, and poll limits; the workflow does not
-   supply caller-selected timing controls.
+   supply caller-selected timing controls. `monitor` binds both watchers to the
+   pull request's current head SHA, so a green run from an earlier commit can
+   never stand in for this one (issue #1365). When the pushed commit's runs have
+   not registered yet, the CI watch waits for them and then reports
+   `ci_watch_no_run_for_head_sha`; treat that as CI evidence that is missing,
+   not as a pass.
 
 2. Read the CI result inside the completed mechanical envelope:
    - `conclusion: "success"` → CI passed. Advance to Step 11.

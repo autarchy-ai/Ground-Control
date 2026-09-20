@@ -110,10 +110,12 @@ quality-gate inputs. These run in `make policy` and in the CI `policy` job.
 **The CI gate watches every run for the head commit.** `gc_watch_ci_run`
 previously watched whichever workflow run was created most recently on the
 branch, which is not reliably the run carrying the required contexts. It now
-groups runs by head SHA and reports success only when all of them succeed. The
-contract lives in the ADR-027 2026-07-28 amendment. Without it, a readiness
-record could attest to a green CI gate on the strength of a five-second title
-lint.
+binds to one commit - the caller's expected head, or the branch tip read from
+GitHub - and reports success only when every run for that commit succeeded. The
+contract lives in the ADR-027 2026-07-28 amendment, extended by the 2026-09-20
+amendment that replaced the newest run as the source of the SHA. Without it, a
+readiness record could attest to a green CI gate on the strength of a
+five-second title lint, or of the previous commit's run.
 
 ## Consequences
 
