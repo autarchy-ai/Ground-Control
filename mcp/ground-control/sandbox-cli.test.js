@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { runSandboxCli, sandboxCommand, sandboxPayloadDirectory } from "./lib/sandbox-cli.js";
 
@@ -47,4 +51,13 @@ test("a spawn failure is reported rather than read as success", () => {
 
 test("the payload resolves to the programs this checkout ships", () => {
   assert.match(sandboxPayloadDirectory(), /tools\/incus_sandbox\/$/);
+});
+
+test("a packaged installation uses its own programs, and an incomplete one says so", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "grndctl-package-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const moduleUrl = pathToFileURL(join(root, "lib", "sandbox-cli.js")).href;
+  assert.throws(() => sandboxPayloadDirectory(moduleUrl), /ships no sandbox programs/);
+  mkdirSync(join(root, "sandbox"));
+  assert.equal(sandboxPayloadDirectory(moduleUrl), `${join(root, "sandbox")}/`);
 });

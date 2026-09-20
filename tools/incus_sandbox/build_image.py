@@ -141,17 +141,19 @@ def launch_reference(base: str, fingerprint: str, cached: bool = False) -> str:
 
 
 def cached_locally(config: SandboxConfig, fingerprint: str,
-                   runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run) -> bool:
+                   runner: Callable[..., subprocess.CompletedProcess[str]] | None = None) -> bool:
     """Report whether the resolved base already sits in this project's image store."""
-    result = runner([_INCUS, "image", "list", fingerprint, "--project", config.project, "--format", "json"],
+    result = (runner or subprocess.run)(
+                   [_INCUS, "image", "list", fingerprint, "--project", config.project, "--format", "json"],
                     check=True, capture_output=True, text=True, timeout=_QUERY_TIMEOUT_SECONDS)
     return bool(json.loads(result.stdout))
 
 
 def resolve_base(config: SandboxConfig, base: str,
-                 runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run) -> str:
+                 runner: Callable[..., subprocess.CompletedProcess[str]] | None = None) -> str:
     """Resolve the base reference to the immutable fingerprint the build starts from."""
-    result = runner([_INCUS, "image", "list", base, "--project", config.project, "--format", "json"],
+    result = (runner or subprocess.run)(
+                   [_INCUS, "image", "list", base, "--project", config.project, "--format", "json"],
                     check=True, capture_output=True, text=True, timeout=_QUERY_TIMEOUT_SECONDS)
     return virtual_machine_image(json.loads(result.stdout), platform.machine())
 
