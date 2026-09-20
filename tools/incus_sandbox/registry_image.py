@@ -16,7 +16,7 @@ import tarfile
 import tempfile
 import urllib.error
 import urllib.request
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 if __package__:
     from .config import SandboxConfig, load_config
@@ -47,6 +47,7 @@ _SOURCE_REPOSITORY = "https://github.com/autarchy-ai/Ground-Control"
 # distributed artifact records the architecture family its own import accepts.
 _ARCHITECTURES = {"x86_64_v2": "x86_64", "x86_64_v3": "x86_64", "x86_64_v4": "x86_64"}
 _METADATA_ENTRY = "metadata.yaml"
+_ENTRY = re.compile(r"^(?:(?P<root>metadata\.yaml|rootfs\.(?:img|squashfs)|templates)|templates/(?P<leaf>[A-Za-z0-9][A-Za-z0-9._-]{0,63}))$")
 
 
 def parse_reference(reference: str) -> tuple[str, str, str]:
@@ -162,13 +163,17 @@ def normalized_metadata(document: str) -> str:
     return document
 
 
-def safe_entry(member: tarfile.TarInfo) -> None:
-    """Refuse an archive entry that could escape its directory or is not image content."""
-    name = PurePosixPath(member.name)
-    if name.is_absolute() or ".." in name.parts or member.name.startswith("/"):
-        raise RegistryError("image archive entry escapes the image directory")
-    if not (member.isfile() or member.isdir()):
-        raise RegistryError("image archive entry is not a file or directory")
+def safe_entry(member: tarfile.TarInfo) -> str:
+    """Return the closed entry name an Incus image archive may carry.
+
+    The returned name is rebuilt from the matched grammar, so no name an archive
+    supplies reaches the copy: an entry outside the contract is refused instead.
+    """
+    match = _ENTRY.fullmatch(member.name)
+    if match is None or not (member.isfile() or member.isdir()):
+        raise RegistryError("image archive entry is outside the image contract")
+    leaf = match.group("leaf")
+    return f"templates/{leaf}" if leaf else match.group("root")
 
 
 def normalize_image(source: Path, target: Path) -> None:
@@ -180,7 +185,7 @@ def normalize_image(source: Path, target: Path) -> None:
     compressed = gzip.GzipFile(filename="", mode="wb", fileobj=target.open("wb"), mtime=0)
     with tarfile.open(source, "r:gz") as original, tarfile.open(fileobj=compressed, mode="w|") as rewritten:
         for member in original:
-            safe_entry(member)
+            member.name = safe_entry(member)
             if member.name != _METADATA_ENTRY:
                 rewritten.addfile(member, original.extractfile(member) if member.isfile() else None)
                 continue
