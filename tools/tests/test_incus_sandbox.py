@@ -299,6 +299,14 @@ class SetupContractTest(unittest.TestCase):
         helper = (root / "tools/incus_sandbox/helper.py").read_text(encoding="utf-8")
         self.assertTrue(helper.startswith("#!/usr/bin/python3\n"))
 
+    def test_setup_installs_the_closed_guest_transfer_programs(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        setup = (root / "tools/incus_sandbox/setup.sh").read_text(encoding="utf-8")
+        self.assertIn("guest_bootstrap.py", setup)
+        self.assertIn("transfer.py", setup)
+        self.assertIn("source.mjs", setup)
+        self.assertIn("transfer.py *", setup)
+
     def test_dry_run_is_explicit_about_owned_resources_and_never_flushes_firewalls(self) -> None:
         root = Path(__file__).resolve().parents[2]
         result = subprocess.run(["bash", str(root / "tools/incus_sandbox/setup.sh"), "--dry-run", "install"],

@@ -100,14 +100,17 @@ install_files() {
   run install -d -m 0750 "$INSTALL_ROOT" "$STATE_ROOT" /var/log/gc-incus-sandbox
   run install -m 0640 tools/incus_sandbox/config.py "$INSTALL_ROOT/config.py"
   run install -m 0640 tools/incus_sandbox/events.py "$INSTALL_ROOT/events.py"
+  run install -m 0644 tools/incus_sandbox/guest_bootstrap.py "$INSTALL_ROOT/guest-bootstrap.py"
   run install -m 0750 tools/incus_sandbox/helper.py "$INSTALL_ROOT/helper.py"
+  run install -m 0750 tools/incus_sandbox/transfer.py "$INSTALL_ROOT/transfer.py"
   run install -m 0755 tools/incus_sandbox/client.mjs /usr/local/bin/gc-incus-sandbox
+  run install -m 0644 tools/incus_sandbox/source.mjs /usr/local/bin/source.mjs
   run install -m 0640 tools/incus_sandbox/gc-incus-sandbox.nft "$RULES_PATH"
   if ! "$dry_run"; then
     [[ "${SUDO_UID:-}" =~ ^[1-9][0-9]*$ ]] || { echo "install through sudo from the intended operator" >&2; exit 64; }
     cat >"/etc/sudoers.d/gc-incus-sandbox" <<EOF
 # This helper validates the closed action and sandbox-name vocabulary itself.
-${SUDO_USER} ALL=(root) NOPASSWD: $INSTALL_ROOT/helper.py *
+${SUDO_USER} ALL=(root) NOPASSWD: $INSTALL_ROOT/helper.py *, $INSTALL_ROOT/transfer.py *
 EOF
     chmod 0440 /etc/sudoers.d/gc-incus-sandbox
     visudo -cf /etc/sudoers.d/gc-incus-sandbox
