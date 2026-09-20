@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 """Root-side fixed-command lifecycle helper for local Incus sandboxes."""
 
 from __future__ import annotations
@@ -85,6 +86,18 @@ def _guest_usage(info: object) -> tuple[int | None, int | None, int | None]:
     disks = state.get("disk") if isinstance(state.get("disk"), dict) else {}
     root = disks.get("root") if isinstance(disks.get("root"), dict) else {}
     return _positive_fact(cpu.get("usage")), _positive_fact(memory.get("usage")), _positive_fact(root.get("usage"))
+
+
+def _query_payload(stdout: str) -> dict[str, object] | None:
+    """Unwrap Incus' synchronous-query envelope without exposing raw JSON."""
+    try:
+        response = json.loads(stdout)
+    except ValueError:
+        return None
+    if not isinstance(response, dict):
+        return None
+    payload = response.get("metadata")
+    return payload if isinstance(payload, dict) else response
 
 
 def _status_state(info: object, observed: dict[str, int | bool]) -> tuple[bool, str]:
@@ -311,19 +324,15 @@ class LifecycleHelper(object):
         self._require_owner(name)
         started = time.monotonic()
         try:
-            completed = subprocess.run([_INCUS, "info", name, "--project", self.config.project, "--format", "json"],
+            instance_path = f"/1.0/instances/{name}?project={self.config.project}"
+            completed = subprocess.run([_INCUS, "query", instance_path, "--raw"],
                                        check=True, text=True, capture_output=True)
-            try:
-                info = json.loads(completed.stdout)
-            except ValueError:
-                info = None
+            info = _query_payload(completed.stdout)
             if isinstance(info, dict):
-                state = subprocess.run([_INCUS, "query", f"/1.0/instances/{name}/state", "--project",
-                                        self.config.project], check=True, text=True, capture_output=True)
-                try:
-                    info["state"] = json.loads(state.stdout)
-                except ValueError:
-                    info["state"] = None
+                state_path = f"/1.0/instances/{name}/state?project={self.config.project}"
+                state = subprocess.run([_INCUS, "query", state_path, "--raw"],
+                                       check=True, text=True, capture_output=True)
+                info["state"] = _query_payload(state.stdout)
             report = self.normalized_observation(name, info)
             print(json.dumps(report, separators=(",", ":")))
             self._emit(action, "success", name, started=started, observed=self.observer())
@@ -399,11 +408,11 @@ class LifecycleHelper(object):
         name = self._name(name)
         project = self.config.project
         commands = [
-            [_INCUS, "launch", self.config.image, name, "--project", project, "--profile", self.config.profile, "--vm"],
+            [_INCUS, "launch", self.config.image, name, "--project", project,
+             "--profile", self.config.profile, "--vm", "--device",
+             f"root,size={self.config.vm.disk_gib}GiB"],
             [_INCUS, "config", "set", name, "limits.cpu", str(self.config.vm.cpu), "--project", project],
             [_INCUS, "config", "set", name, "limits.memory", f"{self.config.vm.memory_mib}MiB", "--project", project],
-            [_INCUS, "config", "device", "set", name, "root", "size",
-             f"{self.config.vm.disk_gib}GiB", "--project", project],
         ]
         self._mutate("create", name, commands, reserve=True)
         self._emit("boot", "success", name)

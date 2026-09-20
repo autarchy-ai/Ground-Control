@@ -95,6 +95,12 @@ class ConfigBoundaryTest(SandboxTestCase):
         with self.assertRaises(ConfigError):
             load_config(self.config_path, expected_uid=os.getuid())
 
+    def test_accepts_a_pinned_images_remote_fingerprint(self) -> None:
+        doc = config_doc(self.root)
+        doc["image"] = "images:" + "b" * 64
+        self.config_path.write_text(json.dumps(doc), encoding="utf-8")
+        self.assertEqual(load_config(self.config_path, expected_uid=os.getuid()).image, doc["image"])
+
     def test_rejects_an_event_log_bound_too_small_for_one_schema_record(self) -> None:
         doc = config_doc(self.root)
         doc["event_max_bytes"] = 511
@@ -120,7 +126,7 @@ class LifecycleBoundaryTest(SandboxTestCase):
         self.helper.create("agent-1")
         self.assertEqual(self.commands[0], [
             "/usr/bin/incus", "launch", self.config.image, "agent-1", "--project", self.config.project,
-            "--profile", self.config.profile, "--vm",
+            "--profile", self.config.profile, "--vm", "--device", "root,size=16GiB",
         ])
         self.assertIn(["/usr/bin/incus", "config", "set", "agent-1", "limits.cpu", "2",
                        "--project", self.config.project], self.commands)
@@ -234,7 +240,7 @@ class LifecycleBoundaryTest(SandboxTestCase):
                                 network_checker=lambda config: True, caller_uid=os.getuid() + 1)
         with self.assertRaises(UsageError):
             other.attach("agent-1")
-        self.assertEqual(len(self.commands), 4)
+        self.assertEqual(len(self.commands), 3)
 
     def test_status_normalizes_missing_guest_observations_instead_of_raw_incus_json(self) -> None:
         report = self.helper.normalized_observation("agent-1", None)
@@ -288,13 +294,23 @@ class EventBoundaryTest(SandboxTestCase):
 
 
 class SetupContractTest(unittest.TestCase):
+    def test_root_helper_is_directly_executable_as_a_python_program(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        helper = (root / "tools/incus_sandbox/helper.py").read_text(encoding="utf-8")
+        self.assertTrue(helper.startswith("#!/usr/bin/python3\n"))
+
     def test_dry_run_is_explicit_about_owned_resources_and_never_flushes_firewalls(self) -> None:
         root = Path(__file__).resolve().parents[2]
         result = subprocess.run(["bash", str(root / "tools/incus_sandbox/setup.sh"), "--dry-run", "install"],
                                 capture_output=True, text=True, check=True)
         self.assertIn("incus project create gc-sandbox", result.stdout)
         self.assertIn("nft -f", result.stdout)
+        self.assertIn("btrfs size=64GiB", result.stdout)
         self.assertIn("quota write probe", result.stdout)
+        self.assertIn('profile device add gc-sandbox-default root disk path=/ pool=gc-sandbox-pool --project gc-sandbox', result.stdout)
+        self.assertIn('project set gc-sandbox restricted.devices.nic allow', result.stdout)
+        self.assertIn('profile device add gc-sandbox-default agent disk source=agent:config --project gc-sandbox', result.stdout)
+        self.assertIn("record network-addresses.sha256", result.stdout)
         self.assertNotIn("flush ruleset", result.stdout)
         self.assertNotIn("mkfs", result.stdout)
 

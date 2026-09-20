@@ -4,7 +4,7 @@
   "profile": "gc-sandbox-default",
   "pool": "gc-sandbox-pool",
   "bridge": "gcbr0",
-  "image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "image": "images:0000000000000000000000000000000000000000000000000000000000000000",
   "state_dir": "/var/lib/gc-incus-sandbox/state",
   "event_log": "/var/log/gc-incus-sandbox/lifecycle.jsonl",
   "event_max_bytes": 1048576,
