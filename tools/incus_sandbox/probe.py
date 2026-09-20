@@ -11,9 +11,9 @@ import sys
 _NAME = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
 METADATA_CANARY = str(ipaddress.IPv4Address(0xA9FEA9FE))
 PRIVATE_CANARY = str(ipaddress.IPv4Address(0x0A4A0002))
-# An address outside the host, so the verdict reflects the sandbox firewall
-# rather than the guest's own loopback stack.
-IPV6_CANARY = "2606:4700:4700::1111"
+# A public resolver address, outside the host, so the verdict reflects the sandbox
+# firewall rather than the guest's own loopback stack.
+IPV6_CANARY = str(ipaddress.IPv6Address(0x26064700470000000000000000001111))
 _PROJECT = "gc-sandbox"
 
 
