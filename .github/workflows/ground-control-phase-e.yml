@@ -1,4 +1,7 @@
 name: Ground Control Phase E
+# Carries the pull request into the run record, so a dispatch run — which has no
+# `pull_requests` association — is still bound to what it finalized (issue #1671).
+run-name: Ground Control Phase E for PR ${{ github.event.pull_request.number || inputs.pr }}
 
 # A merged Ground Control delivery pull request finishes Phase E here, with no model or
 # agent session (issue #1671). The agent records a trusted delivery-readiness handoff at

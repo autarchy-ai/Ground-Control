@@ -14,6 +14,9 @@ const VERSION_PLACEHOLDER = "__GRNDCTL_VERSION__";
 
 export const PHASE_E_WORKFLOW_TEMPLATE = [
   "name: Ground Control Phase E",
+  "# Carries the pull request into the run record, so a dispatch run \u2014 which has no",
+  "# `pull_requests` association \u2014 is still bound to what it finalized (issue #1671).",
+  "run-name: Ground Control Phase E for PR ${{ github.event.pull_request.number || inputs.pr }}",
   "",
   "# A merged Ground Control delivery pull request finishes Phase E here, with no model or",
   "# agent session. The agent records a trusted delivery-readiness handoff at Phase D and may",

@@ -155,12 +155,40 @@ describe("trusted final-report marker", () => {
 });
 
 describe("finalizer run provenance", () => {
-  it("accepts a maintainer-started dispatch run, which has no pull request attached", async () => {
+  const dispatch = (overrides = {}) => ({ ...GOOD_RUN, event: "workflow_dispatch", pull_requests: [], ...overrides });
+
+  it("accepts a maintainer-started dispatch run bound by the name the workflow gave it", async () => {
     const ok = await verifyFinalizerRunProvenance(
       { repoRoot: "/repo", owner: "autarchy-ai", name: "Ground-Control", prNumber: PR, runId: RUN },
-      { ghJson: runsApi({ ...GOOD_RUN, event: "workflow_dispatch", pull_requests: [] }) },
+      { ghJson: runsApi(dispatch({ display_title: `Ground Control Phase E for PR ${PR}` })) },
     );
     assert.equal(ok, true);
+  });
+
+  // Run ids are public. Accepting a dispatch run on its event alone would let one real run
+  // vouch for any issue and pull request a comment cared to name.
+  it("rejects a dispatch run whose name binds it to nothing", async () => {
+    const ok = await verifyFinalizerRunProvenance(
+      { repoRoot: "/repo", owner: "autarchy-ai", name: "Ground-Control", prNumber: PR, runId: RUN },
+      { ghJson: runsApi(dispatch({ display_title: "Ground Control Phase E" })) },
+    );
+    assert.equal(ok, false);
+  });
+
+  it("rejects a dispatch run that names a different pull request", async () => {
+    const ok = await verifyFinalizerRunProvenance(
+      { repoRoot: "/repo", owner: "autarchy-ai", name: "Ground-Control", prNumber: PR, runId: RUN },
+      { ghJson: runsApi(dispatch({ display_title: "Ground Control Phase E for PR 4242" })) },
+    );
+    assert.equal(ok, false);
+  });
+
+  it("does not let a longer number satisfy a shorter one", async () => {
+    const ok = await verifyFinalizerRunProvenance(
+      { repoRoot: "/repo", owner: "autarchy-ai", name: "Ground-Control", prNumber: 168, runId: RUN },
+      { ghJson: runsApi(dispatch({ display_title: "Ground Control Phase E for PR 1680" })) },
+    );
+    assert.equal(ok, false);
   });
 
   it("rejects a run recorded against another repository", async () => {

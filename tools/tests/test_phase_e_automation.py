@@ -115,6 +115,13 @@ class PhaseEAutomationContractTest(unittest.TestCase):
             self._codes_for(self.workflow_text, drifted_anchor),
         )
 
+    def test_dropping_the_run_name_binding_is_reported(self) -> None:
+        """A dispatch run is bound to its pull request only through the run name."""
+        drifted = "\n".join(
+            line for line in self.workflow_text.splitlines() if not line.startswith("run-name:")
+        )
+        self.assertIn("phase-e-workflow-run-name", self._codes_for(drifted))
+
     def test_unparseable_workflow_is_reported_distinctly(self) -> None:
         """A broken file is a different problem from a missing one."""
         self.assertIn("phase-e-workflow-unreadable", self._codes_for("name: [unclosed\n"))

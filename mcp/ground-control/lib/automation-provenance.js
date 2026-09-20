@@ -9,8 +9,10 @@
 // So provenance is verified rather than asserted. A record that claims to come from the
 // finalizer names its `GITHUB_RUN_ID`, and that run must resolve through the Actions API to
 // THIS repository's pinned finalizer workflow, bound to the pull request the record names.
-// A `workflow_dispatch` run has no pull request attached and is accepted on its own,
-// because only a user with repository write access can start one.
+// A `workflow_dispatch` run carries no `pull_requests` association, so it is bound through
+// the run name the workflow sets instead. Accepting a dispatch run on the strength of its
+// event alone would be no binding at all: run ids are public, so one real dispatch run would
+// vouch for any issue and pull request a comment cared to name.
 //
 // A forged run id fails the lookup. A workflow that merely echoes attacker-controlled text
 // cannot produce a finalizer run bound to the pull request that text names.
@@ -24,6 +26,13 @@ export const PHASE_E_WORKFLOW_PATH = ".github/workflows/ground-control-phase-e.y
 // The GitHub Actions service identity. Repository automation speaks as exactly this login;
 // a fork pull request receives a read-only token and cannot post as it at all.
 export const GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]";
+
+// The workflow's `run-name:` renders as the run's `display_title`. Matching the number with
+// a boundary on both sides keeps PR #16 from satisfying a record that names PR #1.
+function runNameBindsPr(displayTitle, prNumber) {
+  if (typeof displayTitle !== "string") return false;
+  return new RegExp(String.raw`(^|\D)#?${prNumber}(\D|$)`).test(displayTitle);
+}
 
 /** True when a comment was authored by this repository's own Actions identity. */
 export function isRepositoryAutomationAuthor(comment) {
@@ -45,6 +54,9 @@ export async function verifyFinalizerRunProvenance(
   if (run?.path !== PHASE_E_WORKFLOW_PATH) return false;
   const fullName = `${owner}/${name}`.toLowerCase();
   if ((run.repository?.full_name ?? "").toLowerCase() !== fullName) return false;
-  if (run.event === "workflow_dispatch") return true;
-  return (run.pull_requests ?? []).some((pr) => pr?.number === prNumber);
+  // A pull-request-triggered run is bound by its own association. A dispatch run has none,
+  // so it is bound by the name the workflow gave it.
+  if ((run.pull_requests ?? []).some((pr) => pr?.number === prNumber)) return true;
+  if (run.event !== "workflow_dispatch") return false;
+  return runNameBindsPr(run.display_title ?? run.name ?? null, prNumber);
 }

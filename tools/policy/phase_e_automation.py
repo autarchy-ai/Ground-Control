@@ -23,6 +23,7 @@ from .core import REPO_ROOT, Violation
 WORKFLOW_PATH = Path(".github/workflows/ground-control-phase-e.yml")
 TRUST_ANCHOR_PATH = Path("mcp/ground-control/lib/automation-provenance.js")
 MERGE_GUARD = "github.event.pull_request.merged == true"
+RUN_NAME_RE = re.compile(r"^run-name:.*inputs\.pr", re.MULTILINE)
 HEAD_REFERENCE_RE = re.compile(r"pull_request\.head\.(?:sha|ref)")
 WRITE_PERMISSION_RE = re.compile(r"^\s*([a-z-]+):\s*write\s*$", re.MULTILINE)
 
@@ -103,6 +104,24 @@ def _permission_violations(text: str, document: dict[str, object]) -> list[Viola
             "phase-e-workflow-permissions",
             "The Phase E job writes the final report and closes the issue, and nothing else.",
             [f"write permissions are {writes or 'none'}; expected exactly ['issues']"],
+        )
+    ]
+
+
+def _run_name_violations(text: str) -> list[Violation]:
+    """Require the run name to carry the pull request.
+
+    A `workflow_dispatch` run has no `pull_requests` association, so the close gate binds it
+    to a pull request through the run name this workflow sets. Dropping `run-name:` would
+    leave that branch accepting any dispatch run of this workflow for any pull request.
+    """
+    if RUN_NAME_RE.search(text):
+        return []
+    return [
+        _violation(
+            "phase-e-workflow-run-name",
+            "The Phase E workflow must name the pull request it finalizes.",
+            ["`run-name:` must include the dispatch input, or a dispatch run binds to nothing"],
         )
     ]
 
@@ -189,6 +208,7 @@ def run_phase_e_automation_contract(root: Path = REPO_ROOT) -> list[Violation]:
         *_trigger_violations(document),
         *_guard_violations(document),
         *_permission_violations(text, document),
+        *_run_name_violations(text),
         *_checkout_violations(text),
         *_trust_anchor_violations(root),
     ]

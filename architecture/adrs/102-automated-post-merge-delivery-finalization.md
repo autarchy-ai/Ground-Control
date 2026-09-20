@@ -58,7 +58,8 @@ transport: it holds no `gh` logic, no marker parser, and no completion reconstru
 passes the event's pull-request number to `grndctl finalize-merged-pr` and nothing else.
 
 Its shape is a security boundary, pinned two-sidedly by
-`tools/policy/phase_e_automation.py`: never `pull_request_target`; never the pull-request
+`tools/policy/phase_e_automation.py`, which also pins the `run-name:` the dispatch binding
+depends on: never `pull_request_target`; never the pull-request
 head, because the checkout is pinned to the event's immutable `merge_commit_sha` with
 `persist-credentials: false`; `issues: write` as its only write permission; and every
 external action pinned to a commit SHA. It runs no tests, no policy suite, and no review, and
@@ -85,10 +86,14 @@ deliberately not writable by automation, so the loop cannot close on itself.
 The class is verified. Alongside the unchanged `gc:final-report` marker, the finalizer writes
 a separate `gc:finalizer-run` marker naming its `GITHUB_RUN_ID`, and the gate accepts it only
 when that run resolves through the Actions API to this repository's pinned finalizer workflow
-and is bound to this pull request, or is a `workflow_dispatch` run, which only a repo-write
-user can start. A forged run id fails the lookup, and a workflow that merely echoes
-attacker-controlled text cannot produce a finalizer run bound to the pull request that text
-names. Fork pull requests receive a read-only token and cannot post as the identity at all.
+and is bound to this pull request. A pull-request-triggered run is bound by its own
+`pull_requests` association. A dispatch run has none, so the workflow's `run-name:` carries
+the pull request into the run record and the gate matches on that; accepting a dispatch run
+on the strength of its event alone would be no binding at all, because run ids are public and
+one real run would then vouch for any issue and pull request a comment cared to name. A
+forged run id fails the lookup, and a workflow that merely echoes attacker-controlled text
+cannot produce a finalizer run bound to the pull request that text names. Fork pull requests
+receive a read-only token and cannot post as the identity at all.
 
 ### Replay is safe, and failure is never a close path
 
