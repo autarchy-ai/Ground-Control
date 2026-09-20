@@ -12,7 +12,14 @@ import { fileURLToPath } from "node:url";
 import { dump as dumpYaml } from "js-yaml";
 import { parseGroundControlYaml } from "./ground-control-config.js";
 import { detectRepoFacts } from "./grndctl-detect.js";
+import { PHASE_E_WORKFLOW_PATH, renderPhaseEWorkflow } from "./phase-e-workflow.js";
 import { execFile } from "./runtime-primitives.js";
+
+// The version the installed package ships; the generated workflow pins it rather than
+// tracking a moving tag.
+function packageVersion() {
+  return JSON.parse(readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8")).version;
+}
 
 // The installed package carries the template under templates/; a repository checkout has it at the
 // repository root, which is where the pack step copies it from.
@@ -118,9 +125,27 @@ async function planEnvChanges(cwd) {
   return changes;
 }
 
+// Phase E finishes without an agent only if the repository carries the merged-pull-request
+// workflow, so setup installs it (issue #1671). An existing copy is never rewritten: a
+// repository may have pinned a different grndctl version or added its own branch filters,
+// and `grndctl doctor` reports drift rather than init silently resolving it.
+function planPhaseEWorkflowChange(cwd, version) {
+  const path = join(cwd, PHASE_E_WORKFLOW_PATH);
+  if (existsSync(path)) {
+    return { path, action: "keep", note: "already exists; not rewritten (run grndctl doctor to check it)" };
+  }
+  return {
+    path,
+    action: "create",
+    content: renderPhaseEWorkflow(version),
+    note: `finishes Phase E when a delivery PR merges, pinned to grndctl@${version}`,
+  };
+}
+
 /** Every change init would make, as `{ path, action, content?, note }`, without writing anything. */
-export async function planInit(cwd, values) {
+export async function planInit(cwd, values, { version = null } = {}) {
   const changes = [planYamlChange(cwd, values), planMcpChange(cwd), ...(await planEnvChanges(cwd))];
+  if (version) changes.push(planPhaseEWorkflowChange(cwd, version));
   const planRulesPath = join(cwd, ".gc", "plan-rules.md");
   if (values.plan_rules === "yes" && !existsSync(planRulesPath)) {
     changes.push({ path: planRulesPath, action: "create", content: "# Plan rules\n\nRepository-specific constraints every /implement plan must satisfy. One bullet per rule.\n" });
@@ -255,7 +280,7 @@ export function initUsage() {
   ].join("\n");
 }
 
-export async function runInit(args, { cwd = process.cwd(), ask, print = console.log, interactive }) {
+export async function runInit(args, { cwd = process.cwd(), ask, print = console.log, interactive, version = packageVersion() }) {
   if (args.includes("--help") || args.includes("-h")) {
     print(initUsage());
     return 0;
@@ -267,7 +292,7 @@ export async function runInit(args, { cwd = process.cwd(), ask, print = console.
   }
   const values = await collectValues(args, { cwd, ask, print, nonInteractive });
   if (values === null) return 2;
-  const changes = await planInit(cwd, values);
+  const changes = await planInit(cwd, values, { version });
   print(renderPlan(changes));
   if (args.includes("--dry-run")) return 0;
   if (!nonInteractive) {

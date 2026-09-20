@@ -350,3 +350,22 @@ same caps apply, the same durable records post to the issue thread, and a bounde
 wait's expiry returns the running envelope rather than any kind of pass. Only how
 the agent waits changes. See ADR-036 (2026-09-20) for the transport model and
 `skills/implement/SKILL.md` plus the step files for the operative prose.
+
+## 2026-09-20 amendment: Phase E finishes without an agent (issue #1671)
+
+Phase E has been deterministic since #1541 made it validation-only, but it still
+needed a model or agent session to re-enter the workflow after the merge and call
+the finalizer. A delivered issue therefore stayed open until somebody remembered
+to finish it.
+
+Phase D now records a trusted delivery handoff: the exact completion payload,
+digest-bound to the issue, the pull request, and the head whose hosted checks
+readiness verified. The agent may then terminate permanently at a ready pull
+request. A merged-pull-request GitHub Actions job replays that payload through
+the unchanged `gc_implement_mechanical action="finalize"`.
+
+The phase structure A–E and the single human touchpoint are unchanged; the
+touchpoint simply becomes the end of human and agent involvement rather than a
+pause in it. Re-invoking `/implement` after a merge remains supported as the
+fallback. `readiness` becomes lane-discriminated so `/quickfix` records the same
+neutral handoff without gaining implement-only gates. See ADR-102.

@@ -16,6 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 from .file_size import run_file_size_limit_check
+from .phase_e_automation import run_phase_e_automation_contract
 from .ci_strictness import (
     run_ci_required_context_contract,
     run_github_action_pin_contract,
@@ -88,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     violations.extend(run_ci_required_context_contract())
     violations.extend(run_pr_title_contract())
     violations.extend(run_github_action_pin_contract())
+    violations.extend(run_phase_e_automation_contract())
     violations.extend(run_file_size_limit_check())
     violations.extend(run_requirement_specs_frontmatter_check())
     violations.extend(run_repository_map_freshness_check())

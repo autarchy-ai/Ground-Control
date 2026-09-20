@@ -7,15 +7,24 @@ tier: medium
 # Step 17: Completion (Readiness pre-merge, Assertions + Final Report post-merge)
 
 Use `gc_implement_mechanical action="readiness"` for the pre-merge invocation.
-After Steps 15–16 have run post-merge, use
-`gc_implement_mechanical action="finalize"`; that action performs the
-post-merge completion assertion and the idempotent Step 20 issue close in one
-deterministic call.
+Besides the readiness record it writes the trusted **delivery handoff** (issue
+#1671, ADR-102): an issue-thread record carrying the exact tool-shaped completion
+payload, digest-bound to the issue, the PR, and the PR head OID whose required
+hosted checks it just verified, plus a pointer comment on the PR naming that
+record. That handoff is what lets the run end here: **the agent may terminate
+permanently once readiness returns**, and `.github/workflows/ground-control-phase-e.yml`
+replays the payload through `finalize` when the PR merges, with no model or agent
+session. Nothing in this workflow polls for or waits on the merge.
+
+`gc_implement_mechanical action="finalize"` performs the post-merge completion
+assertion and the idempotent Step 20 issue close in one deterministic call. The
+merged-PR workflow is its normal caller; an agent re-invoked on the issue after a
+merge is the fallback, and reaches the same tool with the same result.
 
 This step calls `gc_assert_completion`, and it is invoked **twice across the run** with a different `phase` (issue #963):
 
 - **Phase D terminal - `phase="pre_merge"`.** Runs after Step 11 (SonarCloud) once all automated gates are green. The requirement `status:` transition (Step 15) and `## Traceability` reconciliation (Step 16) have already been made in the delivery diff (issue #1541), so this record names that state as **proposed** — authoritative only after merge. It posts a **readiness record** (a "Ready for review" comment carrying a `ready_for_review` phase marker - *not* a `gc:final-report` marker) and does not verify against a merge revision (there is none yet). Then the run **STOPS** for the user to review and merge the PR. This is the single human touchpoint.
-- **Phase E completion - `phase="post_merge"` (default).** Runs after the user merges. Once the linked PR is observed as merged, enter Phase E immediately. Do not wait for post-merge GitHub Actions or other additional actions to complete; target-branch workflows, release jobs, security scans, and sibling-agent work are not Phase E prerequisites. It performs **no** requirement-file mutation. It is **merge-gated**: it refuses with `completion_pr_not_merged` unless the linked PR is merged, then re-derives the in-scope UID set from the issue and **verifies every requirement at the linked PR's immutable merge revision** (exact UID path, frontmatter id, expected lifecycle status, required traceability). It fails closed — `completion_requirement_state_unverified` (or `completion_scope_mismatch`) — before posting anything, and renders the **observed merged values**, not caller-supplied status. Only on success does it post the final report. Steps 17–19 from the original workflow are collapsed into this single tool call per issue #1103.
+- **Phase E completion - `phase="post_merge"` (default).** Runs after the user merges, normally inside the merged-PR workflow rather than in an agent session. Once the linked PR is observed as merged, enter Phase E immediately. Do not wait for post-merge GitHub Actions or other additional actions to complete; target-branch workflows, release jobs, security scans, and sibling-agent work are not Phase E prerequisites. It performs **no** requirement-file mutation. It is **merge-gated**: it refuses with `completion_pr_not_merged` unless the linked PR is merged, then re-derives the in-scope UID set from the issue and **verifies every requirement at the linked PR's immutable merge revision** (exact UID path, frontmatter id, expected lifecycle status, required traceability). It fails closed with `completion_requirement_state_unverified` (or `completion_scope_mismatch`) before posting anything, and renders the **observed merged values**, not caller-supplied status. Only on success does it post the final report. Steps 17–19 from the original workflow are collapsed into this single tool call per issue #1103.
 
 The pre-merge/post-merge split exists so requirement state and the durable final report never claim more than the merged target branch actually holds. Issue #1541 moves the transition and traceability edits into the delivery PR (superseding the #963 post-merge mutation ordering) and makes Phase E verify them at the immutable merge result rather than trusting caller-supplied status.
 
@@ -33,6 +42,10 @@ each entry with `gc_reconcile_station_observation` (its `obligation_id` and
 **Precondition (post_merge only)**: the requirement `status:` transition (Step 15) and `## Traceability` reconciliation (Step 16) must already be part of the merged delivery PR — they were committed pre-publish (issue #1541), not in Phase E. Phase E makes **no** requirement-file edits: do **not** manufacture a placeholder requirement-file edit, and do **not** run the completion command, the policy suite, the pre-push reviews, or any other implementation verification for Phase E — `finalize` runs no `verify` gate (issue #1543). The tool instead reads the merged requirement files at the immutable merge revision and refuses if their state does not match; the pre-merge readiness record names only proposed state.
 
 **You MUST NOT merge the PR. You MUST NOT run `gh pr merge`. The user reviews and merges.**
+
+**Do not wait for the merge.** Once the readiness call returns `ok: true`, Phase D is
+complete and the run ends. The delivery handoff carries everything Phase E needs, so
+there is nothing left for this session to do and nothing to poll.
 
 ## What gc_assert_completion does (`phase="post_merge"`)
 
@@ -92,4 +105,4 @@ If this fails, skip it - do not block on it. The label lifecycle is operational-
 }
 ```
 
-The `phase="pre_merge"` call is the **last step of Phase D**: do NOT proceed to merge; the user reviews and merges the PR. After the merge, the workflow re-enters at **Phase E** (re-invoke `/implement <issue>`) as a validation-only sequence — the transition and reconciliation already merged with the PR (issue #1541): this step with `phase="post_merge"` (the merge-gated, merge-revision-verified final report above) → **Step 20** (`gc_close_issue_after_merge`, which requires the merged PR AND the validated `gc:final-report` marker before closing). The `phase="post_merge"` call is the last step before the close.
+The `phase="pre_merge"` call is the **last step of Phase D**: do NOT proceed to merge; the user reviews and merges the PR, and this session ends. After the merge, Phase E runs as a validation-only sequence, normally in the merged-PR workflow with no agent session and otherwise by re-invoking `/implement <issue>`. The transition and reconciliation already merged with the PR (issue #1541): this step with `phase="post_merge"` (the merge-gated, merge-revision-verified final report above) → **Step 20** (`gc_close_issue_after_merge`, which requires the merged PR AND the validated `gc:final-report` marker before closing). The `phase="post_merge"` call is the last step before the close.

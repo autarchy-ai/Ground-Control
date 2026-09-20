@@ -7,6 +7,7 @@
 import { validateDevStartPlanGate } from "./close-issue.js";
 import { parseGroundControlYaml } from "./ground-control-config.js";
 import { buildFinalReportMarker, renderCiStatus, renderSonarStatus, validateDocumentationOutcome } from "./doc-coverage.js";
+import { buildFinalizerRunMarker } from "./final-report-marker.js";
 import { detectSensitiveBodyContent } from "./grc-legacy-compat-2.js";
 import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { postPhaseMarker } from "./grc-legacy-compat-3.js";
@@ -366,9 +367,12 @@ export function validateFinalReportInput(input) {
   if (errors.length) return { ok: false, errors };
   return { ok: true };
 }
-export function buildQuickfixCloseComment({ issueNumber, prNumber, files, reviews, ciStatus, sonarStatus, planCommentUrl, summary }) {
+export function buildQuickfixCloseComment({ issueNumber, prNumber, files, reviews, ciStatus, sonarStatus, planCommentUrl, summary, automationRunId = null }) {
   const lines = [];
-  lines.push(buildFinalReportMarker({ issueNumber, prNumber }));
+  lines.push(
+    buildFinalReportMarker({ issueNumber, prNumber }),
+    ...buildFinalizerRunMarker({ prNumber, runId: automationRunId }),
+  );
   lines.push("");
   lines.push(`## Quickfix close — issue #${issueNumber} complete`);
   lines.push("");

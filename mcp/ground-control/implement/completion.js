@@ -6,20 +6,66 @@
 import { failure, requireField } from "./gate-helpers.js";
 import { mapCompletion } from "./publish.js";
 
-export async function runReadiness(args, deps) {
-  const action = "readiness";
-  if (args.lane === "quickfix") {
+// Record the delivery handoff against the pull-request head whose required hosted checks
+// were verified, so Phase E can never replay a payload that describes a different tree.
+// The caller supplies that head rather than this function re-reading it: a second read
+// would both cost an extra GitHub round trip and open a window in which the head moves
+// between the check and the binding.
+async function recordHandoff(args, deps, action, { lane, headSha }) {
+  const recorded = await deps.recordDeliveryReadiness({
+    repoPath: args.repoPath,
+    issueNumber: args.issueNumber,
+    prNumber: args.prNumber,
+    lane,
+    headSha,
+    payload: args.completion,
+  });
+  if (!recorded.ok) {
     return failure(
       action,
-      "quickfix_readiness_not_applicable",
-      "The quickfix lane has no pre-merge final-report phase",
-      "wait_for_user_merge_then_run_finalize",
+      recorded.error,
+      recorded.message,
+      recorded.next_action ?? "repair_delivery_readiness_payload_and_retry",
+      { delivery_readiness: recorded },
     );
   }
+  return { ok: true, recorded };
+}
+
+// /quickfix has no pre-merge report, so it reads the hosted-gate snapshot itself. That
+// gives the lane the same eligibility bar /implement has without giving it /implement's
+// requirement and review gates.
+async function quickfixReadiness(args, deps, action) {
+  const hosted = await deps.readRemoteGates({ repoPath: args.repoPath, prNumber: args.prNumber });
+  if (!hosted.ok || !hosted.passed || hosted.state !== "OPEN") {
+    return failure(
+      action,
+      hosted.error ?? "readiness_hosted_checks_not_green",
+      hosted.message ?? `required hosted checks for PR #${args.prNumber} are not green on its current head`,
+      hosted.next_action ?? "repair_or_wait_for_current_head_hosted_checks",
+      { hosted },
+    );
+  }
+  const handoff = await recordHandoff(args, deps, action, { lane: "quickfix", headSha: hosted.head_sha });
+  if (!handoff.ok) return handoff;
+  return {
+    ok: true,
+    action,
+    lane: "quickfix",
+    phase: "ready_for_review",
+    delivery_readiness: handoff.recorded,
+    next_action: "wait_for_user_to_merge_the_pr",
+  };
+}
+
+export async function runReadiness(args, deps) {
+  const action = "readiness";
   for (const field of ["prNumber", "completion"]) {
     const invalid = requireField(args, field, action);
     if (invalid) return invalid;
   }
+  if (args.lane === "quickfix") return quickfixReadiness(args, deps, action);
+
   const result = await deps.assertCompletion(mapCompletion(args, "pre_merge"));
   if (!result.ok) {
     return failure(
@@ -30,11 +76,19 @@ export async function runReadiness(args, deps) {
       { completion: result },
     );
   }
+  // The handoff follows the readiness record and binds to the head that record's hosted
+  // gate just verified. A retry after a failed handoff post re-posts the readiness
+  // comment, which is cosmetic; binding to a head nobody checked would not be.
+  const handoff = await recordHandoff(args, deps, action, { lane: "implement", headSha: result.head_sha });
+  if (!handoff.ok) return handoff;
   return {
     ok: true,
     action,
+    lane: "implement",
     phase: "ready_for_review",
+    head_sha: result.head_sha,
     readiness_report: result.readiness_report,
+    delivery_readiness: handoff.recorded,
     next_action: "wait_for_user_to_merge_the_pr",
   };
 }

@@ -371,7 +371,11 @@ describe("buildFinalReport — phase-aware marker and heading", () => {
     assert.ok(pre.includes(`<!-- gc:phase phase="ready_for_review" issue="963" -->`), pre);
     assert.ok(pre.includes("## Ready for review — issue #963"), pre);
     assert.ok(!pre.includes("<!-- gc:final-report"), "pre_merge must NOT carry the final-report marker");
-    assert.ok(pre.includes("runs on merge (Phase E)"), pre);
+    // Phase E validates and reports; it does not reconcile. The readiness record claimed
+    // the #963 ordering until issue #1671 corrected it (#1541 moved both edits into the
+    // delivery diff), so the record must not promise post-merge requirement mutation.
+    assert.ok(pre.includes("Phase E validates the merged requirement state"), pre);
+    assert.ok(!/reconciliation run[s]? in Phase E/.test(pre), pre);
 
     const post = buildFinalReport({ ...base, phase: "post_merge" });
     assert.ok(post.includes(`<!-- gc:final-report issue="963" pr="42" -->`), post);

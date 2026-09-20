@@ -6,7 +6,7 @@ type: FUNCTIONAL
 priority: MUST
 wave: 2
 created_at: 2026-04-05T18:56:23.312401Z
-updated_at: 2026-09-18T00:00:00Z
+updated_at: 2026-09-20T00:00:00Z
 ---
 
 # GC-O007 — Gated Agentic Development Loop
@@ -21,9 +21,9 @@ The system's agentic development workflow shall enforce a gated loop with the fo
 
 (C) Review, Stage, Commit, Push, and Synchronize: Before the first push, the agent shall run the configured pre-push Codex review against the complete local diff. Review execution may retain a restart-durable local result without any GitHub write; verdict publication shall be a separate operation that verifies the exact reviewed revision and cycle slot, accepts only a sanitized complete mapping that preserves the reviewer verdict plus finding identity and classification, validates caller-supplied dispositions under the incumbent decision rules, and writes provenance-bound findings, cycle, and decision records idempotently. An exhausted non-verdict result shall be retained as a separate kind whose explicit publication writes only closed-code station-observation failure records, no decision record, and consumes no cycle. Only verdict publication consumes the cycle, and an unpublished local result shall never satisfy readiness or completion. The agent shall fix or explicitly disposition every finding with proportionate self-verification and re-stage as directed by the bounded review contract. The cap limits additional discovery passes; after the last in-cap findings are resolved, declining another cycle advances the workflow without requiring a clean terminal verdict. The agent shall then run the configured pre-commit command, commit and push the feature branch, synchronize it with the latest integration branch, and bind the synchronization record to the published tree before PR creation without running local completion or policy suites.
 
-(D) Ship Pipeline: The agent shall create a synchronized PR, monitor CI, validate the SonarCloud quality gate, and present the PR for human review and merge with a pre-merge readiness record (the Phase D terminal signal). The agent shall not merge PRs.
+(D) Ship Pipeline: The agent shall create a synchronized PR, monitor CI, validate the SonarCloud quality gate, and present the PR for human review and merge with a pre-merge readiness record (the Phase D terminal signal). The same terminal step shall record a trusted delivery handoff: a versioned, digest-bound issue-thread record carrying the completion payload Phase E replays, bound to the issue, the pull request, and the pull-request head whose required hosted checks readiness verified, together with a pointer on the pull request naming that record. Pull-request title, body, labels, branch name, and closing keywords shall confer no authority. Once that record is written the agent may terminate permanently; no agent shall wait on, or poll for, the merge. The agent shall not merge PRs.
 
-(E) Post-Merge Validation: After the user merges the PR, the agent — re-invoked on the issue — shall perform no requirement-file mutation. Once the linked PR is observed as merged, the agent shall enter Phase E immediately without waiting for target-branch workflows, release jobs, security scans, sibling-agent work, or other post-merge actions to complete. It shall resolve the linked pull request's immutable target-branch merge revision and verify every in-scope requirement at that revision (exact UID path, frontmatter id, expected lifecycle status, and required traceability), failing closed before the final report on any missing file, malformed record, UID mismatch, status mismatch, or missing required traceability. Only on success shall it post the reconciled final report and close the issue. Each step is gated on the linked PR being merged (merged_at non-null AND state MERGED); the merged tree, not caller-supplied status, is the authority, so a reviewed-but-abandoned PR leaves the requirement DRAFT and the issue open (issue #1541, superseding the #963 post-merge mutation ordering).
+(E) Post-Merge Validation: After the user merges the PR, a trusted deterministic executor bound to the Phase D delivery handoff — normally a merged-pull-request job requiring no model or agent invocation, and otherwise the agent re-invoked on the issue — shall perform no requirement-file mutation. The executor shall derive the issue and the completion payload only from the trusted handoff, shall refuse a record bound to a head other than the merged one, and shall reach Phase E's conclusions through the same finalizer either caller uses. Once the linked PR is observed as merged, the agent shall enter Phase E immediately without waiting for target-branch workflows, release jobs, security scans, sibling-agent work, or other post-merge actions to complete. It shall resolve the linked pull request's immutable target-branch merge revision and verify every in-scope requirement at that revision (exact UID path, frontmatter id, expected lifecycle status, and required traceability), failing closed before the final report on any missing file, malformed record, UID mismatch, status mismatch, or missing required traceability. Only on success shall it post the reconciled final report and close the issue. Publication and closure shall be idempotent, so a replayed delivery produces one record rather than a second report. A failed finalization shall leave a durable, bounded, scrubbed record naming the pull request, the readiness record, and a stable error code, and shall leave the issue open. A final report written by repository automation shall be trusted only when its provenance resolves to that repository's pinned finalizer workflow and binds to the pull request it reports on; that trust shall extend to no other authorization. Each step is gated on the linked PR being merged (merged_at non-null AND state MERGED); the merged tree, not caller-supplied status, is the authority, so a reviewed-but-abandoned PR leaves the requirement DRAFT and the issue open (issue #1541, superseding the #963 post-merge mutation ordering).
 
 Across every phase, the canonical checkout where the task begins is the
 starting worktree and the mutation boundary for the run and every delegated
@@ -51,7 +51,10 @@ shall continue after its findings are fixed without requiring a clean verdict or
 a second cycle. The lane shall run no test-quality review, permit at most one
 automatic Sonar repair and re-analysis round, report rather than recursively
 implement unrelated concerns, and combine its trusted final record and issue
-close in one merge-gated finalizer.
+close in one merge-gated finalizer. It shall record the same neutral delivery
+handoff as clause (D) so a merged quickfix pull request finalizes without an
+agent session, while gaining no requirement or review gate of the implement lane
+and no pre-merge report.
 
 ## Rationale
 
@@ -235,6 +238,27 @@ second workflow implementation.
 - TESTS → TEST `mcp/ground-control/gc-assert-completion.runassertcompletion-post-merge-refuses-when-pr.test.js` (Unpublished review readiness refusal regression (#1632))
 - DOCUMENTS → ADR `architecture/adrs/029-issue-thread-gate-model.md` (Deferred execution and provenance-bound publication amendment (#1632))
 - DOCUMENTS → DOCUMENTATION `architecture/notes/review-execution-publication-separation-preflight.md` (Issue #1632 binding preflight guidance)
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/delivery-readiness.js` (Trusted Phase D delivery handoff: the readiness record and its pull-request pointer (clause (D), #1671))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/implement/phase-e-automation.js` (Deterministic post-merge executor that replays the handoff through the finalizer (clause (E), #1671))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/final-report-marker.js` (Shared final-report marker + trust helper behind idempotent publication and the close gate (clause (E), #1671))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/automation-provenance.js` (Verified finalizer-run provenance for an automation-authored final report (clause (E), #1671))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/assert-completion-post-merge.js` (Phase E merge gate, merged-revision verification, and report publication (clause (E), #1671))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/completion-mapping.js` (The one completion-input mapping shared by the handoff record and the finalizer (clauses (D)/(E), #1671))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/phase-e-workflow.js` (The merged-pull-request workflow consumer repositories install, pinned by version (clause (E), #1671))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/grndctl-finalize.js` (`grndctl finalize-merged-pr`, the transport the merged-pull-request job runs (clause (E), #1671))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/tools/phase-e.js` (`gc_finalize_merged_pr` registration, the maintainer repair path (clause (E), #1671))
+- IMPLEMENTS → CONFIG `.github/workflows/ground-control-phase-e.yml` (Merged-pull-request executor for this repository (clause (E), #1671))
+- IMPLEMENTS → CODE_FILE `tools/policy/phase_e_automation.py` (Two-sided shape contract tying the finalizer workflow to the close gate's trust anchor (clause (E), #1671))
+- TESTS → TEST `mcp/ground-control/delivery-readiness.test.js` (Handoff record round-trip, digest, trust, head binding, and conflict refusals (#1671))
+- TESTS → TEST `mcp/ground-control/phase-e-automation.test.js` (Merged, unmerged, duplicate-delivery, invalid-readiness, and failed-finalizer paths (#1671))
+- TESTS → TEST `mcp/ground-control/final-report-marker.test.js` (Verified automation trust class and what it must not unlock (#1671))
+- TESTS → TEST `mcp/ground-control/phase-e-workflow.test.js` (Installed workflow shape, version pinning, and the init/doctor surfaces (#1671))
+- TESTS → TEST `mcp/ground-control/grndctl-finalize.test.js` (CLI argument contract and exit codes for the merged-pull-request job (#1671))
+- TESTS → TEST `tools/tests/test_phase_e_automation.py` (Workflow-shape contract, both sides (#1671))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/github-conditional.js` (Conditional GitHub reads so an unchanged watch tick costs no primary rate limit (clause (D), #1671))
+- TESTS → TEST `mcp/ground-control/github-conditional.test.js` (Revalidation, changed-response, pagination, and cache-bound regressions (#1671))
+- TESTS → TEST `mcp/ground-control/monitor-conditional.test.js` (Unchanged-tick reuse, backoff bound, and conflicted-pull-request refusal (#1671))
+- DOCUMENTS → ADR `architecture/adrs/102-automated-post-merge-delivery-finalization.md` (Automated post-merge delivery finalization (#1671))
 
 ## Historical traceability
 
