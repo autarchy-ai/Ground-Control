@@ -255,6 +255,9 @@ second workflow implementation.
 - TESTS → TEST `mcp/ground-control/phase-e-workflow.test.js` (Installed workflow shape, version pinning, and the init/doctor surfaces (#1671))
 - TESTS → TEST `mcp/ground-control/grndctl-finalize.test.js` (CLI argument contract and exit codes for the merged-pull-request job (#1671))
 - TESTS → TEST `tools/tests/test_phase_e_automation.py` (Workflow-shape contract, both sides (#1671))
+- IMPLEMENTS → CODE_FILE `mcp/ground-control/lib/github-conditional.js` (Conditional GitHub reads so an unchanged watch tick costs no primary rate limit (clause (D), #1671))
+- TESTS → TEST `mcp/ground-control/github-conditional.test.js` (Revalidation, changed-response, pagination, and cache-bound regressions (#1671))
+- TESTS → TEST `mcp/ground-control/monitor-conditional.test.js` (Unchanged-tick reuse, backoff bound, and conflicted-pull-request refusal (#1671))
 - DOCUMENTS → ADR `architecture/adrs/102-automated-post-merge-delivery-finalization.md` (Automated post-merge delivery finalization (#1671))
 
 ## Historical traceability

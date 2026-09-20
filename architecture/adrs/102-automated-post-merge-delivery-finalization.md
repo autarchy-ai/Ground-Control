@@ -109,6 +109,40 @@ installs the workflow pinned to the exact installed version, never a moving tag,
 `grndctl doctor` reports it missing or drifted. Ground Control's own copy runs the checkout's
 server instead, so a change to the finalizer is exercised by the delivery that makes it.
 
+### Waiting on a pull request costs requests, not just turns
+
+Issue #1669 removed the per-tick model turn from waiting. The GitHub half remained: the
+monitor loop re-read the remote-gate snapshot every fifteen seconds, and that snapshot is
+five REST calls, so one watched head could spend several hundred requests against a
+5,000/hour token every agent and tool on the host shares. Exhausting it fails unrelated
+work outright.
+
+Those reads are now conditional. The snapshot's four endpoints are revalidated with
+`If-None-Match`, and GitHub answers `304 Not Modified` when nothing changed, which does not
+count against the primary rate limit; measured on this repository, ten conditional requests
+cost approximately none of the quota that ten unconditional ones cost ten of. An
+all-unchanged probe reuses the previous snapshot and reports `unchanged: true`, and the
+monitor loop then backs its cadence off from fifteen seconds toward two minutes while a head
+stays quiet, resetting the moment anything moves. A probe that cannot answer, or a response
+that declared a next page, is never read as stability: both fall through to the ordinary
+full read.
+
+The CI run watcher deliberately keeps its fixed cadence. Its queued and timeout reasoning is
+built on regular sampling, so a longer interval can step over a short-lived state, which is
+exactly the between-jobs `queued` gap issue #1581 exists to handle. Making its samples cheap
+means converting `gh run view` onto conditional `gh api` reads and remapping every timing
+field; that is worth doing and is deliberately not bundled here.
+
+### A pull request that cannot produce checks says so immediately
+
+When a delivery pull request conflicts with its base, GitHub never builds the merge ref, so
+its checks never run. The watch had no way to distinguish that from a run that had simply not finished, so
+it polled out its full forty-five-minute cap, spent the API budget doing it, and reported a
+timeout naming nothing actionable. The monitor now reads the pull request's merge state and
+refuses on `DIRTY` with `monitor_pr_conflicted`, both before starting a watcher and on each
+tick, because the base can move under an open pull request. The repair it names is the one
+the agent can act on: merge the base in, resolve the conflicts, push.
+
 ## Consequences
 
 - An agent may be terminated permanently once Phase D readiness is recorded. Re-invoking
@@ -124,6 +158,12 @@ server instead, so a change to the finalizer is exercised by the delivery that m
 - A workflow only processes events once it exists on the branch the event resolves its
   definition from, so the first delivery after this lands may still need a manual finalizer
   run. That is a deployment bootstrap, not a standing fallback.
+- Waiting on a quiet head now costs roughly nothing in rate limit, and a conflicted pull
+  request costs seconds rather than forty-five minutes. The CI run watcher's share of the
+  per-tick cost is unchanged and is the obvious next reduction.
+- Conditional reads mean the server holds a bounded per-endpoint ETag cache and a bounded
+  per-pull-request snapshot cache. Both are in-process and evict oldest-first; neither is
+  durable state, and a restart simply makes the next read unconditional.
 
 ## Non-Goals
 
