@@ -25,6 +25,7 @@ export * from "./lib/command-failure-diagnostics.js";
 export * from "./lib/runtime-primitives.js";
 export * from "./lib/grc-legacy-compat-3.js";
 export * from "./lib/grc-legacy-compat-4.js";
+export * from "./lib/issue-dependency.js";
 export * from "./lib/issue-requirements-scope.js";
 export * from "./lib/issue-requirements-writer.js";
 export * from "./lib/codex-workflow-2.js";

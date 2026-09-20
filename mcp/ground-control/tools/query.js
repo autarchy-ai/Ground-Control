@@ -7,6 +7,7 @@ import {
   CODEX_REVIEW_PREPUSH_HARD_CAP,
   EXACT_REQUIREMENT_UID_RE,
   GITHUB_REPO_RE,
+  ISSUE_DEPENDENCY_ACTIONS,
   KNOWLEDGE_SOURCE_TYPES,
   REQUIREMENT_SCOPE_OPERATIONS,
   buildCodexReviewOverrideCapDescription,
@@ -17,6 +18,7 @@ import {
   runCloseIssueAfterMerge,
   runCodexArchitecturePreflight,
   runCodexReviewWithPublication,
+  runIssueDependency,
   runPostImplementationPlan,
   runUpdateIssueRequirements,
   startAsyncJob,
@@ -104,6 +106,47 @@ export function registerQuery(server, ctx) {
           issueNumber: issue_number,
           operation,
           requirementUids: requirement_uids,
+          repo,
+        }), null, 2));
+      } catch (e) { return err(e); }
+    },
+  );
+
+  server.tool(
+    "gc_issue_dependency",
+    "Read, add, or remove a GitHub issue dependency - the 'blocked by' relationship - for an issue in the authorized checkout. " +
+    "Always pass action, repo_path, and blocked_issue_number; action='add' and action='remove' also require blocking_issue_number, " +
+    "which action='read' refuses because a read has no second operand. Callers stay in issue-number vocabulary: " +
+    "GitHub's dependency endpoints key on the blocking issue's numeric REST id, and this tool resolves number -> id itself " +
+    "and never returns it. action='read' returns the issue's blocked_by and blocking lists, each normalized to repository, " +
+    "number, title, state, url, and in_authorized_repository; an issue with no dependencies returns two empty arrays, not an error. " +
+    "A relationship created elsewhere can name an issue in another repository the host credential happens to read, so such an entry " +
+    "keeps only its repository and number and has its title, state, and url redacted to null with in_authorized_repository false - " +
+    "the edge stays visible without this tool serving content from a repository the call is not authorized for. A mutation returns " +
+    "the resulting blocked_by plus an outcome of 'changed', 'already_satisfied' (the state already held, so nothing was written), " +
+    "or 'reconciled' (the write failed but the requested state now holds, established by a writer this process cannot identify). " +
+    "Replay is safe because idempotency is decided from the current relationship set, never from an HTTP status. " +
+    "The repository comes from the checkout, never GH_REPO; the optional repo is an 'owner/name' assertion validated against it " +
+    "and refused on mismatch, which is also how a cross-repository reference is refused - there is no alternate destination. " +
+    "Expected failures return a named reason: issue_dependency_self_dependency, _blocked_issue_not_found, _blocking_issue_not_found, " +
+    "_not_an_issue, _repo_mismatch, _repo_not_authorized, _forbidden, _rejected, _malformed_response, or _transport_unavailable. " +
+    "It posts no comment, writes no marker, edits no issue body, and gates no workflow phase.",
+    {
+      repo_path: z.string().describe("Absolute path to the target Git repository; must be the MCP launch workspace"),
+      action: z.enum(ISSUE_DEPENDENCY_ACTIONS),
+      blocked_issue_number: z.number().int().positive().describe("The issue whose blockers are read or changed"),
+      blocking_issue_number: z.number().int().positive().optional()
+        .describe("The issue that blocks it; required for add and remove, refused for read"),
+      repo: z.string().regex(GITHUB_REPO_RE).optional()
+        .describe("Optional owner/repo assertion; validated against the authorized checkout and rejected on mismatch, never used as an alternate destination"),
+    },
+    async ({ repo_path, action, blocked_issue_number, blocking_issue_number, repo }) => {
+      try {
+        return ok(JSON.stringify(await runIssueDependency({
+          repoPath: repo_path,
+          action,
+          blockedIssueNumber: blocked_issue_number,
+          blockingIssueNumber: blocking_issue_number ?? null,
           repo,
         }), null, 2));
       } catch (e) { return err(e); }

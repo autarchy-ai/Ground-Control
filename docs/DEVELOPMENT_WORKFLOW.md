@@ -1098,7 +1098,8 @@ state. The pinned tools are `gc_post_decision_record`,
 `gc_codex_review`, `gc_codex_review_cycle`, `gc_get_review_result`,
 `gc_publish_review_result`, `gc_codex_verify_finding`,
 `gc_review_cap_disposition` (plus the auto-grant check the cycle tools run),
-`gc_create_github_issue`, `gc_get_issue_thread`, and
+`gc_create_github_issue`, `gc_get_issue_thread`,
+`gc_issue_dependency`, and
 `gc_reconcile_station_observation`. Each one refuses another
 checkout with a structured `<tool>_repo_not_authorized` error before any GitHub
 read or write, and before any review engine starts. The message carries the
