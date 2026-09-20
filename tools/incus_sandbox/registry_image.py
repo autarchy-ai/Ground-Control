@@ -16,7 +16,7 @@ import tarfile
 import tempfile
 import urllib.error
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 if __package__:
     from .config import SandboxConfig, load_config
@@ -46,6 +46,7 @@ _SOURCE_REPOSITORY = "https://github.com/autarchy-ai/Ground-Control"
 # Incus publishes these microarchitecture names but refuses to import them, so a
 # distributed artifact records the architecture family its own import accepts.
 _ARCHITECTURES = {"x86_64_v2": "x86_64", "x86_64_v3": "x86_64", "x86_64_v4": "x86_64"}
+_METADATA_ENTRY = "metadata.yaml"
 
 
 def parse_reference(reference: str) -> tuple[str, str, str]:
@@ -56,20 +57,13 @@ def parse_reference(reference: str) -> tuple[str, str, str]:
     return match.group(1), match.group(2), match.group(3)
 
 
-def _request(url: str, *, token: str | None = None, method: str = "GET", accept: str | None = None,
-             data: object = None, content_type: str | None = None, length: int | None = None,
-             extra: dict[str, str] | None = None) -> tuple[bytes, dict[str, str]]:
+def _request(url: str, *, token: str | None = None, method: str = "GET", data: object = None,
+             headers: dict[str, str] | None = None) -> tuple[bytes, dict[str, str]]:
     """Perform one bounded registry request and return its body and headers."""
     request = urllib.request.Request(url, method=method, data=data)
     if token:
         request.add_header("Authorization", f"Bearer {token}")
-    if accept:
-        request.add_header("Accept", accept)
-    if content_type:
-        request.add_header("Content-Type", content_type)
-    if length is not None:
-        request.add_header("Content-Length", str(length))
-    for name, value in (extra or {}).items():
+    for name, value in (headers or {}).items():
         request.add_header(name, value)
     with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
         return response.read(), dict(response.headers)
@@ -78,11 +72,11 @@ def _request(url: str, *, token: str | None = None, method: str = "GET", accept:
 def registry_token(registry: str, repository: str, actions: str, credential: str | None) -> str:
     """Exchange an optional credential for a scoped registry token."""
     url = f"https://{registry}/token?service={registry}&scope=repository:{repository}:{actions}"
-    extra = {}
+    headers = {}
     if credential:
         basic = base64.b64encode(f"x-access-token:{credential}".encode("utf-8")).decode("ascii")
-        extra["Authorization"] = f"Basic {basic}"
-    body, _ = _request(url, extra=extra)
+        headers["Authorization"] = f"Basic {basic}"
+    body, _ = _request(url, headers=headers)
     token = json.loads(body).get("token")
     if not isinstance(token, str) or not token:
         raise RegistryError("registry did not issue a token")
@@ -140,7 +134,7 @@ def _upload_blob(registry: str, repository: str, token: str, path: Path, digest:
         if error.code != 404:
             raise
     _, headers = _request(f"https://{registry}/v2/{repository}/blobs/uploads/", token=token, method="POST",
-                          length=0)
+                          headers={"Content-Length": "0"})
     location = headers.get("Location")
     if not location:
         raise RegistryError("registry did not open a blob upload")
@@ -149,7 +143,7 @@ def _upload_blob(registry: str, repository: str, token: str, path: Path, digest:
     separator = "&" if "?" in location else "?"
     with path.open("rb") as handle:
         _request(f"{location}{separator}digest={digest}", token=token, method="PUT", data=handle,
-                 content_type="application/octet-stream", length=size)
+                 headers={"Content-Type": "application/octet-stream", "Content-Length": str(size)})
 
 
 def _download_blob(registry: str, repository: str, token: str, digest: str, target: Path) -> None:
@@ -168,6 +162,15 @@ def normalized_metadata(document: str) -> str:
     return document
 
 
+def safe_entry(member: tarfile.TarInfo) -> None:
+    """Refuse an archive entry that could escape its directory or is not image content."""
+    name = PurePosixPath(member.name)
+    if name.is_absolute() or ".." in name.parts or member.name.startswith("/"):
+        raise RegistryError("image archive entry escapes the image directory")
+    if not (member.isfile() or member.isdir()):
+        raise RegistryError("image archive entry is not a file or directory")
+
+
 def normalize_image(source: Path, target: Path) -> None:
     """Copy an exported image, rewriting only its metadata architecture.
 
@@ -177,7 +180,8 @@ def normalize_image(source: Path, target: Path) -> None:
     compressed = gzip.GzipFile(filename="", mode="wb", fileobj=target.open("wb"), mtime=0)
     with tarfile.open(source, "r:gz") as original, tarfile.open(fileobj=compressed, mode="w|") as rewritten:
         for member in original:
-            if member.name != "metadata.yaml":
+            safe_entry(member)
+            if member.name != _METADATA_ENTRY:
                 rewritten.addfile(member, original.extractfile(member) if member.isfile() else None)
                 continue
             handle = original.extractfile(member)
@@ -217,7 +221,7 @@ def push(config: SandboxConfig, reference: str, fingerprint: str, credential: st
                                       "incus.image.fingerprint": fingerprint})
         body = json.dumps(manifest).encode("utf-8")
         _request(f"https://{registry}/v2/{repository}/manifests/{tag}", token=token, method="PUT",
-                 data=body, content_type=_MANIFEST_TYPE, length=len(body))
+                 data=body, headers={"Content-Type": _MANIFEST_TYPE, "Content-Length": str(len(body))})
     return {"schema": "gc.incus-sandbox.template/v1", "reference": reference,
             "fingerprint": fingerprint, "layer": layer_digest}
 
@@ -235,7 +239,7 @@ def pull(config: SandboxConfig, reference: str, credential: str | None = None) -
     registry, repository, tag = parse_reference(reference)
     token = registry_token(registry, repository, "pull", credential)
     manifest_body, _ = _request(f"https://{registry}/v2/{repository}/manifests/{tag}", token=token,
-                                accept=_MANIFEST_TYPE)
+                                headers={"Accept": _MANIFEST_TYPE})
     digest, size = layer_descriptor(json.loads(manifest_body))
     with tempfile.TemporaryDirectory(prefix="gc-incus-registry-") as directory:
         tarball = Path(directory) / "image.tar.gz"

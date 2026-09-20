@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const SUDO = "/usr/bin/sudo";
+const PYTHON = "/usr/bin/python3";
 const SETUP_VERBS = new Set(["install", "refresh", "rollback"]);
 const USAGE = `usage: grndctl sandbox <command>
 
@@ -35,15 +36,15 @@ export function sandboxCommand(args, directory) {
   }
   if (command === "image") {
     if (rest.length > 1) throw new Error("usage: grndctl sandbox image [REFERENCE]");
-    return [SUDO, "--", "/usr/bin/python3", `${directory}registry_image.py`, "pull", ...rest];
+    return [SUDO, "--", PYTHON, `${directory}registry_image.py`, "pull", ...rest];
   }
   if (command === "build-image") {
     if (rest.length < 1 || rest.length > 2) throw new Error("usage: grndctl sandbox build-image <BASE> [ALIAS]");
-    return [SUDO, "--", "/usr/bin/python3", `${directory}build_image.py`, ...rest];
+    return [SUDO, "--", PYTHON, `${directory}build_image.py`, ...rest];
   }
   if (command === "push-image") {
     if (rest.length !== 2) throw new Error("usage: grndctl sandbox push-image <REFERENCE> <FINGERPRINT>");
-    return [SUDO, "--", "/usr/bin/python3", `${directory}registry_image.py`, "push", ...rest];
+    return [SUDO, "--", PYTHON, `${directory}registry_image.py`, "push", ...rest];
   }
   throw new Error(USAGE);
 }

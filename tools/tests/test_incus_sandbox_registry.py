@@ -58,13 +58,13 @@ class ReferenceBoundaryTest(unittest.TestCase):
 
         def request(url: str, **kwargs: object) -> tuple[bytes, dict[str, str]]:
             seen["url"] = url
-            seen["extra"] = kwargs.get("extra")
+            seen["headers"] = kwargs.get("headers")
             return json.dumps({"token": "scoped"}).encode("utf-8"), {}
 
         with patch("tools.incus_sandbox.registry_image._request", side_effect=request):
             self.assertEqual(registry_token("ghcr.io", "owner/name", "pull,push", "secret-canary"), "scoped")
         self.assertNotIn("secret-canary", str(seen["url"]))
-        self.assertIn("Basic ", seen["extra"]["Authorization"])
+        self.assertIn("Basic ", seen["headers"]["Authorization"])
         self.assertIn("repository:owner/name:pull,push", str(seen["url"]))
 
     def test_a_registry_without_a_token_is_refused(self) -> None:
@@ -182,6 +182,26 @@ class ArtifactNormalizationTest(unittest.TestCase):
                 digests.append(hashlib.sha256((root / name).read_bytes()).hexdigest())
         # A republished template keeps the digest hosts already pinned.
         self.assertEqual(digests[0], digests[1])
+
+    def test_an_archive_entry_that_escapes_its_directory_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("../outside.yaml", "/etc/passwd"):
+                source = root / "hostile.tar.gz"
+                with tarfile.open(source, "w:gz") as archive:
+                    entry = tarfile.TarInfo(name)
+                    entry.size = 0
+                    archive.addfile(entry, io.BytesIO(b""))
+                with self.assertRaises(RegistryError):
+                    registry_image.normalize_image(source, root / "normalized.tar.gz")
+            link = root / "linked.tar.gz"
+            with tarfile.open(link, "w:gz") as archive:
+                entry = tarfile.TarInfo("rootfs.img")
+                entry.type = tarfile.SYMTYPE
+                entry.linkname = "/etc/shadow"
+                archive.addfile(entry)
+            with self.assertRaises(RegistryError):
+                registry_image.normalize_image(link, root / "normalized.tar.gz")
 
     def test_an_import_refusal_keeps_the_reason_incus_gave(self) -> None:
         payload = b"incus image tarball"
