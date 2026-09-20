@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 from tools.incus_sandbox.config import ConfigError, load_config
 from tools.incus_sandbox.events import EventWriter
-from tools.incus_sandbox.helper import AdmissionError, LifecycleHelper, UsageError
+from tools.incus_sandbox.helper import AdmissionError, LifecycleHelper, UsageError, _observation
 from tools.incus_sandbox.probe import boundary_probe_commands, main as probe_main
 
 
@@ -98,6 +98,18 @@ class ConfigBoundaryTest(SandboxTestCase):
     def test_rejects_an_event_log_bound_too_small_for_one_schema_record(self) -> None:
         doc = config_doc(self.root)
         doc["event_max_bytes"] = 511
+        self.config_path.write_text(json.dumps(doc), encoding="utf-8")
+        with self.assertRaises(ConfigError):
+            load_config(self.config_path, expected_uid=os.getuid())
+
+    def test_rejects_malformed_image_and_nonabsolute_host_paths(self) -> None:
+        doc = config_doc(self.root)
+        doc["image"] = "not-a-digest"
+        self.config_path.write_text(json.dumps(doc), encoding="utf-8")
+        with self.assertRaises(ConfigError):
+            load_config(self.config_path, expected_uid=os.getuid())
+        doc = config_doc(self.root)
+        doc["state_dir"] = "relative-state"
         self.config_path.write_text(json.dumps(doc), encoding="utf-8")
         with self.assertRaises(ConfigError):
             load_config(self.config_path, expected_uid=os.getuid())
@@ -193,6 +205,20 @@ class LifecycleBoundaryTest(SandboxTestCase):
         allocations = json.loads((self.config.state_dir / "allocations.json").read_text(encoding="utf-8"))
         self.assertNotIn("agent-1", allocations)
 
+    def test_stop_start_delete_and_list_use_the_closed_lifecycle(self) -> None:
+        self.helper.create("agent-1")
+        self.helper.stop("agent-1")
+        self.helper.start("agent-1")
+        self.helper.delete("agent-1")
+        self.helper.dispatch("list")
+        self.assertIn(["/usr/bin/incus", "list", "--project", self.config.project, "--format", "json"], self.commands)
+
+    def test_local_observer_reports_named_nonnegative_host_facts(self) -> None:
+        observed = _observation()
+        self.assertIn("fresh", observed)
+        self.assertGreaterEqual(int(observed["memory_mib"]), 0)
+        self.assertGreaterEqual(int(observed["disk_gib"]), 0)
+
     def test_network_address_drift_denies_new_vm_admission(self) -> None:
         helper = LifecycleHelper(self.config, runner=lambda argv: self.commands.append(argv), event_writer=self.writer,
                                  observer=lambda: {"memory_mib": 16000, "disk_gib": 256, "fresh": True},
@@ -256,6 +282,10 @@ class EventBoundaryTest(SandboxTestCase):
         with self.assertRaises(RuntimeError):
             self.writer.write({"action": "start", "outcome": "success"})
 
+    def test_event_writer_rejects_invalid_resource_facts(self) -> None:
+        with self.assertRaises(ValueError):
+            self.writer.write({"action": "start", "outcome": "success", "assigned": {"bad": "fact"}})
+
 
 class SetupContractTest(unittest.TestCase):
     def test_dry_run_is_explicit_about_owned_resources_and_never_flushes_firewalls(self) -> None:
@@ -303,6 +333,12 @@ class BoundaryProbeTest(unittest.TestCase):
     def test_probe_main_rejects_an_incomplete_argument_vector(self) -> None:
         with self.assertRaises(ValueError):
             probe_main(["agent-1"])
+
+    def test_probe_rejects_invalid_names_and_non_ipv4_host_addresses(self) -> None:
+        with self.assertRaises(ValueError):
+            boundary_probe_commands("agent;1", "10.74.0.1", "agent-2")
+        with self.assertRaises(ValueError):
+            boundary_probe_commands("agent-1", "::1", "agent-2")
 
 
 if __name__ == "__main__":
