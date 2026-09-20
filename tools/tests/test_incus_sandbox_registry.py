@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import tarfile
 from contextlib import nullcontext
 import json
 import runpy
@@ -90,7 +91,8 @@ class RegistryTransferTest(unittest.TestCase):
                    return_value=(json.dumps(manifest(digest, len(payload))).encode("utf-8"), {})), \
              patch("tools.incus_sandbox.registry_image._download_blob", side_effect=download), \
              patch("tools.incus_sandbox.registry_image.subprocess.run",
-                   return_value=SimpleNamespace(stdout=f"fingerprint: {'c' * 64}")) as run:
+                   return_value=SimpleNamespace(returncode=0, stderr="",
+                                                stdout=f"fingerprint: {'c' * 64}")) as run:
             result = registry_image.pull(config(), "ghcr.io/autarchy-ai/gc-sandbox-template:latest")
         self.assertEqual(result["image"], f"local:{'c' * 64}")
         self.assertEqual(run.call_args.args[0][:3], ["/usr/bin/incus", "image", "import"])
@@ -113,7 +115,14 @@ class RegistryTransferTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             def export(argv: list[str], **_: object) -> SimpleNamespace:
-                Path(f"{argv[4]}.tar.gz").write_bytes(b"exported image")
+                metadata = b"architecture: x86_64_v2\nproperties:\n  os: almalinux\n"
+                with tarfile.open(f"{argv[4]}.tar.gz", "w:gz") as archive:
+                    entry = tarfile.TarInfo("metadata.yaml")
+                    entry.size = len(metadata)
+                    archive.addfile(entry, io.BytesIO(metadata))
+                    rootfs = tarfile.TarInfo("rootfs.img")
+                    rootfs.size = len(b"disk")
+                    archive.addfile(rootfs, io.BytesIO(b"disk"))
                 return SimpleNamespace(returncode=0)
 
             def request(url: str, **kwargs: object) -> tuple[bytes, dict[str, str]]:
@@ -139,6 +148,58 @@ class RegistryTransferTest(unittest.TestCase):
             with self.assertRaises(RegistryError):
                 registry_image.push(config(), "ghcr.io/autarchy-ai/gc-sandbox-template:latest",
                                     "not-a-fingerprint", "secret-canary")
+
+
+class ArtifactNormalizationTest(unittest.TestCase):
+    def _image(self, directory: Path, architecture: str) -> Path:
+        source = directory / "exported.tar.gz"
+        metadata = f"architecture: {architecture}\nproperties:\n  architecture: {architecture}\n"
+        with tarfile.open(source, "w:gz") as archive:
+            for name, payload in (("metadata.yaml", metadata.encode("utf-8")), ("rootfs.img", b"disk")):
+                entry = tarfile.TarInfo(name)
+                entry.size = len(payload)
+                archive.addfile(entry, io.BytesIO(payload))
+        return source
+
+    def test_an_architecture_incus_cannot_import_is_rewritten_to_the_family(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "normalized.tar.gz"
+            registry_image.normalize_image(self._image(root, "x86_64_v2"), target)
+            with tarfile.open(target, "r:gz") as archive:
+                document = archive.extractfile("metadata.yaml").read().decode("utf-8")
+                self.assertEqual(sorted(archive.getnames()), ["metadata.yaml", "rootfs.img"])
+            self.assertIn("architecture: x86_64\n", document)
+            self.assertNotIn("x86_64_v2", document)
+
+    def test_the_published_artifact_is_reproducible(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._image(root, "x86_64_v2")
+            digests = []
+            for name in ("first.tar.gz", "second.tar.gz"):
+                registry_image.normalize_image(source, root / name)
+                digests.append(hashlib.sha256((root / name).read_bytes()).hexdigest())
+        # A republished template keeps the digest hosts already pinned.
+        self.assertEqual(digests[0], digests[1])
+
+    def test_an_import_refusal_keeps_the_reason_incus_gave(self) -> None:
+        payload = b"incus image tarball"
+        digest = f"sha256:{hashlib.sha256(payload).hexdigest()}"
+
+        def download(_registry: str, _repository: str, _token: str, _digest: str, target: Path) -> None:
+            target.write_bytes(payload)
+
+        with patch("tools.incus_sandbox.registry_image.registry_token", return_value="scoped"), \
+             patch("tools.incus_sandbox.registry_image._request",
+                   return_value=(json.dumps(manifest(digest, len(payload))).encode("utf-8"), {})), \
+             patch("tools.incus_sandbox.registry_image._download_blob", side_effect=download), \
+             patch("tools.incus_sandbox.registry_image.subprocess.run",
+                   return_value=SimpleNamespace(returncode=1, stdout="",
+                                                stderr="Error: Architecture isn't supported: x86_64_v2")):
+            with self.assertRaises(RegistryError) as result:
+                registry_image.pull(config(), "ghcr.io/autarchy-ai/gc-sandbox-template:latest")
+        self.assertIn("Architecture isn't supported", str(result.exception))
 
 
 class RegistryEntryPointTest(unittest.TestCase):

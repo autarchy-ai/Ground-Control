@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
+import io
 import json
 import os
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.error
 import urllib.request
@@ -39,6 +42,10 @@ _ARTIFACT_TYPE = "application/vnd.incus.image.v1"
 _CHUNK_BYTES = 8 * 1024 * 1024
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024 * 1024
 _TIMEOUT_SECONDS = 900
+_SOURCE_REPOSITORY = "https://github.com/autarchy-ai/Ground-Control"
+# Incus publishes these microarchitecture names but refuses to import them, so a
+# distributed artifact records the architecture family its own import accepts.
+_ARCHITECTURES = {"x86_64_v2": "x86_64", "x86_64_v3": "x86_64", "x86_64_v4": "x86_64"}
 
 
 def parse_reference(reference: str) -> tuple[str, str, str]:
@@ -154,6 +161,32 @@ def _download_blob(registry: str, repository: str, token: str, digest: str, targ
             handle.write(chunk)
 
 
+def normalized_metadata(document: str) -> str:
+    """Rewrite an image architecture Incus publishes but will not import."""
+    for published, accepted in _ARCHITECTURES.items():
+        document = document.replace(f"architecture: {published}", f"architecture: {accepted}")
+    return document
+
+
+def normalize_image(source: Path, target: Path) -> None:
+    """Copy an exported image, rewriting only its metadata architecture.
+
+    The copy is reproducible: the same template always produces the same artifact
+    bytes, so a republished template keeps the digest hosts already pinned.
+    """
+    compressed = gzip.GzipFile(filename="", mode="wb", fileobj=target.open("wb"), mtime=0)
+    with tarfile.open(source, "r:gz") as original, tarfile.open(fileobj=compressed, mode="w|") as rewritten:
+        for member in original:
+            if member.name != "metadata.yaml":
+                rewritten.addfile(member, original.extractfile(member) if member.isfile() else None)
+                continue
+            handle = original.extractfile(member)
+            document = normalized_metadata(handle.read().decode("utf-8")).encode("utf-8")
+            member.size = len(document)
+            rewritten.addfile(member, io.BytesIO(document))
+    compressed.close()
+
+
 def push(config: SandboxConfig, reference: str, fingerprint: str, credential: str) -> dict[str, str]:
     """Export the published template and store it in the registry as one artifact."""
     registry, repository, tag = parse_reference(reference)
@@ -164,9 +197,12 @@ def push(config: SandboxConfig, reference: str, fingerprint: str, credential: st
         export = Path(directory) / "image"
         subprocess.run([_INCUS, "image", "export", fingerprint, str(export), "--project", config.project],
                        check=True, timeout=_TIMEOUT_SECONDS)
-        tarball = Path(f"{export}.tar.gz")
-        if not tarball.exists():
+        exported = Path(f"{export}.tar.gz")
+        if not exported.exists():
             raise RegistryError("Incus did not export a unified image tarball")
+        tarball = Path(directory) / "normalized.tar.gz"
+        normalize_image(exported, tarball)
+        exported.unlink()
         layer_digest, layer_size = _digest(tarball)
         settings = json.dumps({"fingerprint": fingerprint, "alias": _ALIAS}).encode("utf-8")
         config_path = Path(directory) / "config.json"
@@ -174,8 +210,10 @@ def push(config: SandboxConfig, reference: str, fingerprint: str, credential: st
         config_digest, config_size = _digest(config_path)
         _upload_blob(registry, repository, token, tarball, layer_digest, layer_size)
         _upload_blob(registry, repository, token, config_path, config_digest, config_size)
+        # The source annotation links the package to the repository that builds it,
+        # which is what gives the package its repository-inherited visibility.
         manifest = manifest_document(layer_digest, layer_size, config_digest, config_size,
-                                     {"org.opencontainers.image.source": f"https://github.com/{repository}",
+                                     {"org.opencontainers.image.source": _SOURCE_REPOSITORY,
                                       "incus.image.fingerprint": fingerprint})
         body = json.dumps(manifest).encode("utf-8")
         _request(f"https://{registry}/v2/{repository}/manifests/{tag}", token=token, method="PUT",
@@ -206,8 +244,11 @@ def pull(config: SandboxConfig, reference: str, credential: str | None = None) -
         if _digest(tarball) != (digest, size):
             raise RegistryError("downloaded image does not match its digest")
         imported = subprocess.run([_INCUS, "image", "import", str(tarball), "--project", config.project,
-                                   "--alias", _ALIAS], check=True, capture_output=True, text=True,
+                                   "--alias", _ALIAS], check=False, capture_output=True, text=True,
                                   timeout=_TIMEOUT_SECONDS)
+    if imported.returncode != 0:
+        # Incus' own reason is the only actionable detail; keep it, bounded.
+        raise RegistryError(f"Incus refused the image: {imported.stderr.strip()[:200]}")
     fingerprint = imported_fingerprint(imported.stdout)
     return {"schema": "gc.incus-sandbox.template/v1", "reference": reference, "layer": digest,
             "fingerprint": fingerprint, "image": f"local:{fingerprint}"}
