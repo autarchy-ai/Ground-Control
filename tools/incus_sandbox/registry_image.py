@@ -47,7 +47,10 @@ _SOURCE_REPOSITORY = "https://github.com/autarchy-ai/Ground-Control"
 # distributed artifact records the architecture family its own import accepts.
 _ARCHITECTURES = {"x86_64_v2": "x86_64", "x86_64_v3": "x86_64", "x86_64_v4": "x86_64"}
 _METADATA_ENTRY = "metadata.yaml"
-_ENTRY = re.compile(r"^(?:(?P<root>metadata\.yaml|rootfs\.(?:img|squashfs)|templates)|templates/(?P<leaf>[A-Za-z0-9][A-Za-z0-9._-]{0,63}))$")
+_ENTRY = re.compile(
+    r"^(?:(?P<root>metadata\.yaml|rootfs\.(?:img|squashfs)|templates)"
+    r"|templates/(?P<leaf>[A-Za-z0-9][A-Za-z0-9._-]{0,63}))$",
+)
 
 
 def parse_reference(reference: str) -> tuple[str, str, str]:
@@ -176,6 +179,20 @@ def safe_entry(member: tarfile.TarInfo) -> str:
     return f"templates/{leaf}" if leaf else match.group("root")
 
 
+def copied_entry(name: str, directory: bool, size: int) -> tarfile.TarInfo:
+    """Build the archive entry this copy writes, from the validated name alone.
+
+    Nothing the source archive supplies reaches the copy's own entry, and its
+    ownership and timestamps are fixed so the artifact stays reproducible.
+    """
+    entry = tarfile.TarInfo(name)
+    entry.type = tarfile.DIRTYPE if directory else tarfile.REGTYPE
+    entry.size = 0 if directory else size
+    entry.mode = 0o755 if directory else 0o644
+    entry.mtime = 0
+    return entry
+
+
 def normalize_image(source: Path, target: Path) -> None:
     """Copy an exported image, rewriting only its metadata architecture.
 
@@ -185,14 +202,14 @@ def normalize_image(source: Path, target: Path) -> None:
     compressed = gzip.GzipFile(filename="", mode="wb", fileobj=target.open("wb"), mtime=0)
     with tarfile.open(source, "r:gz") as original, tarfile.open(fileobj=compressed, mode="w|") as rewritten:
         for member in original:
-            member.name = safe_entry(member)
-            if member.name != _METADATA_ENTRY:
-                rewritten.addfile(member, original.extractfile(member) if member.isfile() else None)
+            name = safe_entry(member)
+            if name != _METADATA_ENTRY:
+                rewritten.addfile(copied_entry(name, member.isdir(), member.size),
+                                  original.extractfile(member) if member.isfile() else None)
                 continue
             handle = original.extractfile(member)
             document = normalized_metadata(handle.read().decode("utf-8")).encode("utf-8")
-            member.size = len(document)
-            rewritten.addfile(member, io.BytesIO(document))
+            rewritten.addfile(copied_entry(name, False, len(document)), io.BytesIO(document))
     compressed.close()
 
 
