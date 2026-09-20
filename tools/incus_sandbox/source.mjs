@@ -1,5 +1,5 @@
 import { isAbsolute, join } from "node:path";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const NAME = /^[a-z][a-z0-9-]{0,47}$/;
@@ -10,6 +10,7 @@ const GIT = "/usr/bin/git";
 const SUDO = "/usr/bin/sudo";
 const TRANSFER = "/usr/local/lib/gc-incus-sandbox/transfer.py";
 const MAX_BUNDLE_BYTES = 1024 * 1024 * 1024;
+const BUNDLE_REF = "refs/heads/gc-incus-sandbox-source";
 
 export function parsePrepareArguments(argv) {
   if (argv.length !== 4) throw new Error("usage: prepare SANDBOX {clone|bundle} REPOSITORY REVISION");
@@ -78,24 +79,39 @@ function output(result) {
   return typeof result.stdout === "string" ? result.stdout.trim() : "";
 }
 
-function publishedSource({ repository, revision }, run, environment) {
-  const commit = output(runChecked(run, GIT, ["-C", repository, "rev-parse", "--verify", `${revision}^{commit}`], {
+function resolveCommit({ repository, revision }, run, environment) {
+  return output(runChecked(run, GIT, ["-C", repository, "rev-parse", "--verify", `${revision}^{commit}`], {
     env: environment, encoding: "utf8",
   }));
-  const remote = output(runChecked(run, GIT, ["-C", repository, "remote", "get-url", "origin"], {
+}
+
+function publishedSource(source, run, environment) {
+  const commit = resolveCommit(source, run, environment);
+  const remote = output(runChecked(run, GIT, ["-C", source.repository, "remote", "get-url", "origin"], {
     env: environment, encoding: "utf8",
   }));
   return buildSourcePacket({ kind: "clone", commit, repository: remote });
 }
 
-function unpublishedSource({ repository, revision }, run, environment) {
-  const commit = output(runChecked(run, GIT, ["-C", repository, "rev-parse", "--verify", `${revision}^{commit}`], {
-    env: environment, encoding: "utf8",
-  }));
+export function createSourceBundle({ objects, commit, scratch, bundlePath }, run, environment) {
+  // Git bundles only carry refs they can name and guest clones only fetch refs/heads,
+  // so the commit is named as a branch in a throwaway repository that borrows the source
+  // objects. Nothing runs inside the source repository and no ref there is changed.
+  runChecked(run, GIT, ["init", "--bare", "--quiet", scratch], { env: environment });
+  writeFileSync(join(scratch, "objects/info/alternates"), `${objects}\n`, { mode: 0o600 });
+  runChecked(run, GIT, ["-C", scratch, "update-ref", BUNDLE_REF, commit], { env: environment });
+  runChecked(run, GIT, ["-C", scratch, "bundle", "create", bundlePath, BUNDLE_REF], { env: environment });
+}
+
+function unpublishedSource(source, run, environment) {
+  const commit = resolveCommit(source, run, environment);
+  const objects = output(runChecked(run, GIT,
+    ["-C", source.repository, "rev-parse", "--path-format=absolute", "--git-path", "objects"],
+    { env: environment, encoding: "utf8" }));
   const temporary = mkdtempSync(join(tmpdir(), "gc-incus-source-"));
   const bundlePath = join(temporary, "source.bundle");
   try {
-    runChecked(run, GIT, ["-C", repository, "bundle", "create", bundlePath, commit], { env: environment });
+    createSourceBundle({ objects, commit, scratch: join(temporary, "objects"), bundlePath }, run, environment);
     if (statSync(bundlePath).size > MAX_BUNDLE_BYTES) throw new Error("source bundle exceeds the transfer limit");
     return buildSourcePacket({ kind: "bundle", commit, bundle: readFileSync(bundlePath) });
   } finally {
@@ -109,5 +125,9 @@ export function prepareSource(argv, run, baseEnvironment = process.env) {
   const packet = source.kind === "clone"
     ? publishedSource(source, run, environment)
     : unpublishedSource(source, run, environment);
-  runChecked(run, SUDO, ["--", TRANSFER, source.sandbox, source.kind], { input: packet, stdio: "inherit" });
+  // The packet is the transfer endpoint's only input, so stdin must be a pipe; an
+  // inherited stdin silently discards it and leaves the endpoint reading the terminal.
+  runChecked(run, SUDO, ["--", TRANSFER, source.sandbox, source.kind], {
+    input: packet, stdio: ["pipe", "inherit", "inherit"],
+  });
 }

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import time
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TypedDict
 
@@ -116,12 +119,24 @@ class EventWriter(object):
             os.close(descriptor)
         os.chmod(self.path, 0o640)
 
+    @contextlib.contextmanager
+    def _exclusive(self) -> Iterator[None]:
+        """Serialize the read-retain-replace sequence across lifecycle processes."""
+        self.path.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
+        descriptor = os.open(self.path.with_suffix(".lock"), os.O_WRONLY | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(descriptor)
+
     def write(self, event: EventInput) -> None:
         """Append an approved event while enforcing the configured byte bound."""
-        self._validate_path()
         rendered = self._record(event)
-        retained = self._read_retained(self.max_bytes - len(rendered.encode("utf-8")))
-        self._replace_log(retained + rendered)
+        with self._exclusive():
+            self._validate_path()
+            retained = self._read_retained(self.max_bytes - len(rendered.encode("utf-8")))
+            self._replace_log(retained + rendered)
 
     def ensure_available(self) -> None:
         """Prove the audit destination is safe before a lifecycle mutation."""

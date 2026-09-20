@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -25,6 +26,10 @@ _GUEST_HOME = Path("/home/sandbox")
 _PACKET_PATH = _GUEST_HOME / ".gc-transfer/source.gcs"
 _WORKSPACE_PATH = _GUEST_HOME / "workspace"
 _BUNDLE_PATH = _GUEST_HOME / ".gc-transfer/source.bundle"
+_LOG_PATH = _GUEST_HOME / ".gc-transfer/bootstrap.log"
+_NPMRC_PATH = _GUEST_HOME / ".npmrc"
+_GIT = "/usr/bin/git"
+_REQUIRED_TOOLS = (_GIT, "/usr/bin/npm")
 
 
 def _packet_metadata(packet: bytes) -> tuple[dict[str, object], int]:
@@ -84,10 +89,8 @@ def _validated_source(metadata: dict[str, object], payload: bytes) -> dict[str, 
 
 def _copy_bundle_payload(offset: int) -> None:
     """Copy bundle bytes from the fixed packet file into a fixed guest-only path."""
-    try:
-        bundle = _BUNDLE_PATH.open("xb")
-    except FileExistsError as exc:
-        raise PacketError("guest bundle path already exists") from exc
+    _BUNDLE_PATH.unlink(missing_ok=True)
+    bundle = _BUNDLE_PATH.open("xb")
     try:
         with bundle, _PACKET_PATH.open("rb") as source:
             source.seek(offset)
@@ -112,11 +115,17 @@ def parse_packet(packet: bytes) -> dict[str, str]:
 
 def checkout_commands(metadata: dict[str, str], workspace: Path, bundle_path: Path) -> list[list[str]]:
     """Construct guest-only Git argv for the validated immutable source identity."""
-    clone = ["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]
+    clone = [_GIT, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]
     clone += ["clone", "--no-checkout", "--"]
-    source = metadata["repository"] if metadata["kind"] == "clone" else str(bundle_path)
-    checkout = ["/usr/bin/git", "-C", str(workspace), "checkout", "--detach", metadata["commit"]]
-    return [clone + [source, str(workspace)], checkout]
+    bundle = metadata["kind"] == "bundle"
+    source = str(bundle_path) if bundle else metadata["repository"]
+    commands = [clone + [source, str(workspace)],
+                [_GIT, "-C", str(workspace), "checkout", "--detach", metadata["commit"]]]
+    if bundle:
+        # The bundle is removed once its objects are in the workspace, so keeping its
+        # remote would leave the guest with an origin that cannot fetch or push.
+        commands.append([_GIT, "-C", str(workspace), "remote", "remove", "origin"])
+    return commands
 
 
 def guest_environment(base: dict[str, str] | None = None) -> dict[str, str]:
@@ -124,34 +133,73 @@ def guest_environment(base: dict[str, str] | None = None) -> dict[str, str]:
     environment = dict(os.environ if base is None else base)
     for forbidden in ("DOCKER_HOST", "OPENAI_API_KEY", "CODEX_HOME", "GH_TOKEN", "GITHUB_TOKEN"):
         environment.pop(forbidden, None)
+    environment["GIT_TERMINAL_PROMPT"] = "0"
     return environment
 
 
-def materialize() -> None:
-    """Create a guest checkout and install guest-local CLI dependencies."""
-    packet = _PACKET_PATH.read_bytes()
-    metadata, bundle_offset = _validated_packet(packet)
-    environment = guest_environment()
-    local_prefix = Path.home() / ".local"
-    environment["NPM_CONFIG_PREFIX"] = str(local_prefix)
-    environment["PATH"] = f"{local_prefix / 'bin'}:{environment.get('PATH', '')}"
-    _WORKSPACE_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if _WORKSPACE_PATH.exists():
-        raise PacketError("guest workspace already exists")
-    bundle_copied = False
+def log(message: str) -> None:
+    """Record one bootstrap step in the guest, where the private source already lives."""
+    with _LOG_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(f"{message}\n")
+
+
+def run_guest_command(command: list[str], environment: dict[str, str], cwd: Path | None = None) -> None:
+    """Run one fixed guest command, keeping its output in the guest-local log."""
+    log(f"$ {' '.join(command)}")
+    with _LOG_PATH.open("a", encoding="utf-8") as handle:
+        subprocess.run(command, check=True, env=environment, cwd=cwd, stdout=handle, stderr=handle)
+
+
+def require_guest_tools() -> None:
+    """Name a missing template prerequisite instead of failing inside a fixed command."""
+    missing = [tool for tool in _REQUIRED_TOOLS if not os.access(tool, os.X_OK)]
+    if missing:
+        raise PacketError(f"guest image is missing {', '.join(missing)}")
+
+
+def guest_tool_prefix(local_prefix: Path) -> None:
+    """Point the guest session's global installs at the sandbox user's own prefix."""
+    if _NPMRC_PATH.exists():
+        return
+    local_prefix.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _NPMRC_PATH.write_text(f"prefix={local_prefix}\n", encoding="utf-8")
+    _NPMRC_PATH.chmod(0o600)
+
+
+def prepared_workspace(commit: str) -> bool:
+    """Report whether an earlier run already checked out this exact immutable source."""
+    if not _WORKSPACE_PATH.exists():
+        return False
+    head = subprocess.run([_GIT, "-C", str(_WORKSPACE_PATH), "rev-parse", "--verify", "HEAD"],
+                          check=False, capture_output=True, text=True)
+    if head.stdout.strip() != commit:
+        raise PacketError("guest workspace holds a different source; remove ~/workspace in the guest")
+    return True
+
+
+def _checkout(metadata: dict[str, str], bundle_offset: int, environment: dict[str, str]) -> None:
+    """Materialize the validated source into the fixed guest workspace exactly once."""
+    bundle = metadata["kind"] == "bundle"
     try:
-        if metadata["kind"] == "bundle":
+        if bundle:
             _copy_bundle_payload(bundle_offset)
-            bundle_copied = True
         for command in checkout_commands(metadata, _WORKSPACE_PATH, _BUNDLE_PATH):
-            subprocess.run(command, check=True, env=environment)
-        install = ["/usr/bin/npm", "install", "--global", "@openai/codex", "grndctl"]
-        subprocess.run(install, check=True, env=environment)
-        skills = [str(local_prefix / "bin/grndctl"), "install-skills"]
-        subprocess.run(skills, check=True, cwd=_WORKSPACE_PATH, env=environment)
+            run_guest_command(command, environment)
     finally:
-        if bundle_copied:
+        if bundle:
             _BUNDLE_PATH.unlink(missing_ok=True)
+
+
+def materialize() -> None:
+    """Create a guest checkout and prepare the sandbox user's local tool prefix."""
+    metadata, bundle_offset = _validated_packet(_PACKET_PATH.read_bytes())
+    require_guest_tools()
+    if not prepared_workspace(metadata["commit"]):
+        _checkout(metadata, bundle_offset, guest_environment())
+    # Tools and credentials are installed by the operator in the guest session. A
+    # transfer does not fetch and run a moving network package beside private source.
+    guest_tool_prefix(Path.home() / ".local")
+    _PACKET_PATH.unlink(missing_ok=True)
 
 
 def main(argv: list[str]) -> int:
@@ -166,6 +214,10 @@ def main(argv: list[str]) -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main(sys.argv[1:]))
-    except PacketError as exc:
+    except (PacketError, subprocess.CalledProcessError) as exc:
+        # The host deliberately discards guest output, so the operator reads the reason
+        # from the guest-local log after attaching.
+        with contextlib.suppress(OSError):
+            log(f"bootstrap failed: {exc}")
         print(str(exc), file=sys.stderr)
         raise SystemExit(64)

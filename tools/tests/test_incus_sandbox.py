@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
 import stat
 import subprocess
@@ -15,8 +16,14 @@ from unittest.mock import patch
 
 from tools.incus_sandbox.config import ConfigError, load_config
 from tools.incus_sandbox.events import EventWriter
-from tools.incus_sandbox.helper import AdmissionError, LifecycleHelper, UsageError, _observation
-from tools.incus_sandbox.probe import boundary_probe_commands, main as probe_main
+from tools.incus_sandbox.helper import AdmissionError, LifecycleHelper, UsageError
+from tools.incus_sandbox.observations import observation
+from tools.incus_sandbox.probe import (
+    IPV6_CANARY,
+    boundary_probe_commands,
+    main as probe_main,
+    sibling_address,
+)
 
 
 def config_doc(tmp: Path) -> dict[str, object]:
@@ -220,7 +227,7 @@ class LifecycleBoundaryTest(SandboxTestCase):
         self.assertIn(["/usr/bin/incus", "list", "--project", self.config.project, "--format", "json"], self.commands)
 
     def test_local_observer_reports_named_nonnegative_host_facts(self) -> None:
-        observed = _observation()
+        observed = observation()
         self.assertIn("fresh", observed)
         self.assertGreaterEqual(int(observed["memory_mib"]), 0)
         self.assertGreaterEqual(int(observed["disk_gib"]), 0)
@@ -338,21 +345,94 @@ class SetupContractTest(unittest.TestCase):
         self.assertIn("setup-owned", setup)
 
 
+def write_lifecycle_event(path: str, max_bytes: int, sandbox: str) -> None:
+    """Write one event from an independent process, as the helper and transfer do."""
+    EventWriter(Path(path), max_bytes, expected_uid=os.getuid()).write(
+        {"action": "transfer", "outcome": "success", "sandbox_id": sandbox},
+    )
+
+
+class EventConcurrencyTest(SandboxTestCase):
+    def test_concurrent_lifecycle_processes_keep_every_event(self) -> None:
+        names = [f"agent-{index}" for index in range(8)]
+        arguments = [(str(self.config.event_log), 1024 * 1024, name) for name in names]
+        with multiprocessing.get_context("fork").Pool(4) as pool:
+            pool.starmap(write_lifecycle_event, arguments)
+        recorded = [json.loads(line)["sandbox_id"]
+                    for line in self.config.event_log.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(sorted(recorded), sorted(names))
+
+
+class LifecycleTransitionTest(SandboxTestCase):
+    def _failing_runner(self, failing: str):
+        """Return a runner that fails the first command containing the given verb."""
+        def runner(argv: list[str]) -> dict[str, int]:
+            self.commands.append(argv)
+            if failing in argv:
+                raise subprocess.CalledProcessError(1, argv)
+            return {"returncode": 0}
+        return runner
+
+    def test_create_refuses_a_sandbox_that_is_already_allocated(self) -> None:
+        self.helper.create("agent-1")
+        self.helper.stop("agent-1")
+        self.commands.clear()
+        with self.assertRaises(AdmissionError):
+            self.helper.create("agent-1")
+        # A stopped sandbox keeps its VM and its allocation; nothing is deleted.
+        self.assertEqual(self.commands, [])
+        records = json.loads((self.root / "state" / "allocations.json").read_text(encoding="utf-8"))
+        self.assertIn("agent-1", records)
+
+    def test_a_failed_launch_deletes_nothing(self) -> None:
+        self.helper.runner = self._failing_runner("launch")
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.helper.create("agent-1")
+        self.assertEqual([argv for argv in self.commands if "delete" in argv], [])
+        records = json.loads((self.root / "state" / "allocations.json").read_text(encoding="utf-8"))
+        self.assertNotIn("agent-1", records)
+
+    def test_a_failed_configuration_step_deletes_the_instance_this_call_created(self) -> None:
+        self.helper.runner = self._failing_runner("limits.cpu")
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.helper.create("agent-1")
+        self.assertEqual([argv[1] for argv in self.commands if "delete" in argv], ["delete"])
+
+    def test_a_failed_start_restores_the_stopped_allocation(self) -> None:
+        self.helper.create("agent-1")
+        self.helper.stop("agent-1")
+        self.helper.runner = self._failing_runner("start")
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.helper.start("agent-1")
+        records = json.loads((self.root / "state" / "allocations.json").read_text(encoding="utf-8"))
+        self.assertFalse(records["agent-1"]["active"])
+        self.helper.runner = lambda argv: self.commands.append(argv) or {"returncode": 0}
+        self.helper.start("agent-1")
+
+    def test_start_refuses_a_sandbox_this_operator_never_created(self) -> None:
+        with self.assertRaises(UsageError):
+            self.helper.start("agent-9")
+
+
 class BoundaryProbeTest(unittest.TestCase):
     def test_canary_probes_cover_sibling_host_private_metadata_and_ipv6_without_user_command_input(self) -> None:
-        commands = boundary_probe_commands("agent-1", "10.74.0.1", "agent-2")
+        commands = boundary_probe_commands("agent-1", "10.74.0.1", "10.74.0.129")
         rendered = json.dumps(commands)
         self.assertIn("169.254.169.254", rendered)
         self.assertIn("10.74.0.1", rendered)
-        self.assertIn("agent-2", rendered)
-        self.assertIn("::1", rendered)
+        self.assertIn("10.74.0.129", rendered)
+        # The guest's own loopback proves nothing about the sandbox firewall.
+        self.assertNotIn("::1\"", rendered)
+        self.assertIn(IPV6_CANARY, rendered)
         self.assertTrue(all(command[0:2] == ["incus", "exec"] for command in commands))
 
-    def test_probe_main_returns_a_boundary_verdict_after_the_sibling_check(self) -> None:
-        responses = [SimpleNamespace(returncode=1), SimpleNamespace(returncode=0)]
-        with patch("tools.incus_sandbox.probe.subprocess.run", side_effect=responses) as run:
-            self.assertEqual(probe_main(["agent-1", "10.74.0.1", "agent-2"]), 0)
-        self.assertEqual(run.call_count, 2)
+    def test_probe_main_fails_when_a_prohibited_target_answers(self) -> None:
+        listed = SimpleNamespace(returncode=0, stdout='"10.74.0.129 (enp5s0)"\n')
+        for guest_status, expected in ((0, 0), (1, 1)):
+            responses = [listed, SimpleNamespace(returncode=guest_status)]
+            with patch("tools.incus_sandbox.probe.subprocess.run", side_effect=responses) as run:
+                self.assertEqual(probe_main(["agent-1", "10.74.0.1", "agent-2"]), expected)
+            self.assertEqual(run.call_count, 2)
 
     def test_probe_main_rejects_an_incomplete_argument_vector(self) -> None:
         with self.assertRaises(ValueError):
@@ -360,9 +440,11 @@ class BoundaryProbeTest(unittest.TestCase):
 
     def test_probe_rejects_invalid_names_and_non_ipv4_host_addresses(self) -> None:
         with self.assertRaises(ValueError):
-            boundary_probe_commands("agent;1", "10.74.0.1", "agent-2")
+            boundary_probe_commands("agent;1", "10.74.0.1", "10.74.0.129")
         with self.assertRaises(ValueError):
-            boundary_probe_commands("agent-1", "::1", "agent-2")
+            boundary_probe_commands("agent-1", "::1", "10.74.0.129")
+        with self.assertRaises(ValueError):
+            sibling_address("\n")
 
 
 if __name__ == "__main__":
