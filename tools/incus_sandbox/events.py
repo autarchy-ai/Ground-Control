@@ -57,8 +57,9 @@ class EventWriter(object):
             raise ValueError("event resource facts are invalid")
         return value
 
-    def _record(self, event: EventInput) -> str:
-        """Build one schema-constrained JSONL record from approved facts."""
+    @staticmethod
+    def _identity(event: EventInput) -> tuple[str, str, str, str | None]:
+        """Validate and return the lifecycle identity fields for one record."""
         if set(event) - _INPUT_FIELDS:
             raise ValueError("event contains an unallowlisted field")
         action, outcome = event.get("action"), event.get("outcome")
@@ -70,6 +71,11 @@ class EventWriter(object):
         sandbox_id = event.get("sandbox_id")
         if sandbox_id is not None and (not isinstance(sandbox_id, str) or len(sandbox_id) > 63):
             raise ValueError("event sandbox id is invalid")
+        return action, outcome, error_code, sandbox_id
+
+    def _record(self, event: EventInput) -> str:
+        """Build one schema-constrained JSONL record from approved facts."""
+        action, outcome, error_code, sandbox_id = self._identity(event)
         record: dict[str, object] = {
             "schema": "gc.incus-sandbox.event/v1",
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -78,13 +84,18 @@ class EventWriter(object):
             "sandbox_id": sandbox_id, "action": action, "outcome": outcome,
             "error_code": error_code,
         }
-        for field in ("assigned", "observed"):
-            if (value := event.get(field)) is not None:
-                record[field] = self._resource_facts(value)
+        self._add_resource_facts(record, event)
         rendered = json.dumps(record, separators=(",", ":")) + "\n"
         if len(rendered.encode("utf-8")) > self.max_bytes:
             raise RuntimeError("one event exceeds the configured log bound")
         return rendered
+
+    def _add_resource_facts(self, record: dict[str, object], event: EventInput) -> None:
+        """Copy the two optional resource-fact groups after schema validation."""
+        for field in ("assigned", "observed"):
+            value = event.get(field)
+            if value is not None:
+                record[field] = self._resource_facts(value)
 
     def _read_retained(self, remaining: int) -> str:
         """Keep only complete newest events that fit beside the next record."""

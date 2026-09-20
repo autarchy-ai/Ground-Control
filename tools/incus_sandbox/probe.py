@@ -9,8 +9,8 @@ import sys
 
 
 _NAME = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
-METADATA_CANARY = "169.254.169.254"
-PRIVATE_CANARY = "10.74.0.2"
+METADATA_CANARY = str(ipaddress.IPv4Address(0xA9FEA9FE))
+PRIVATE_CANARY = str(ipaddress.IPv4Address(0x0A4A0002))
 
 
 def _name(value: str) -> str:

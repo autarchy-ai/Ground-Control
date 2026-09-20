@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Callable
+from collections.abc import Callable
 
 if __package__:
     from .config import SandboxConfig, load_config
@@ -34,6 +34,7 @@ _NAME = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
 _ACTIONS = {"create", "list", "attach", "stop", "start", "delete", "status", "diagnose"}
 _INCUS = "/usr/bin/incus"
 _IP = "/usr/sbin/ip"
+_INVALID_ALLOCATION = "allocation state is invalid"
 
 
 def _run(argv: list[str]) -> dict[str, int]:
@@ -86,6 +87,29 @@ def _guest_usage(info: object) -> tuple[int | None, int | None, int | None]:
     return _positive_fact(cpu.get("usage")), _positive_fact(memory.get("usage")), _positive_fact(root.get("usage"))
 
 
+def _status_state(info: object, observed: dict[str, int | bool]) -> tuple[bool, str]:
+    """Normalize daemon status only when the independent host facts are fresh."""
+    if not isinstance(info, dict) or observed.get("fresh") is not True:
+        return False, "unavailable"
+    status = info.get("status", "unavailable")
+    if not isinstance(status, str) or len(status) > 32:
+        return False, "unavailable"
+    return True, status.lower()
+
+
+def _observed_facts(observed: dict[str, int | bool], info: object, available: bool) -> dict[str, object]:
+    """Return the stable observed-facts subdocument without raw daemon JSON."""
+    cpu_usage, memory_usage, disk_usage = _guest_usage(info if available else None)
+    memory = _positive_fact(observed.get("memory_mib")) if available else None
+    disk = _positive_fact(observed.get("disk_gib")) if available else None
+    return {
+        "availability": "fresh" if available else "unavailable", "memory_mib": memory,
+        "disk_gib": disk, "cpu_usage_ns": cpu_usage,
+        "guest_memory_mib": memory_usage // (1024 * 1024) if memory_usage is not None else None,
+        "guest_disk_gib": disk_usage // (1024 ** 3) if disk_usage is not None else None,
+    }
+
+
 class LifecycleHelper(object):
     """Validates caller intent, reserves capacity, then emits only fixed Incus argv."""
 
@@ -128,18 +152,18 @@ class LifecycleHelper(object):
             raw = os.read(fd, 1024 * 1024).decode("utf-8")
             doc = json.loads(raw) if raw else {}
             if not isinstance(doc, dict):
-                raise AdmissionError("allocation state is invalid")
+                raise AdmissionError(_INVALID_ALLOCATION)
             records: dict[str, dict[str, int]] = {}
             for name, value in doc.items():
                 if not _NAME.fullmatch(name) or not isinstance(value, dict):
-                    raise AdmissionError("allocation state is invalid")
+                    raise AdmissionError(_INVALID_ALLOCATION)
                 fields = ("cpu", "memory_mib", "disk_gib", "owner_uid")
                 valid_fields = set(value) == {*fields, "active"}
                 if not valid_fields:
-                    raise AdmissionError("allocation state is invalid")
+                    raise AdmissionError(_INVALID_ALLOCATION)
                 valid_numbers = all(isinstance(value[key], int) and value[key] > 0 for key in fields)
                 if not valid_numbers or not isinstance(value["active"], bool):
-                    raise AdmissionError("allocation state is invalid")
+                    raise AdmissionError(_INVALID_ALLOCATION)
                 records[name] = value
             return fd, records
         except Exception:
@@ -260,25 +284,15 @@ class LifecycleHelper(object):
     def normalized_observation(self, name: str, incus_info: dict[str, object] | None) -> dict[str, object]:
         """Render the closed status shape; malformed daemon JSON remains unavailable."""
         observed = self.observer()
-        available = isinstance(incus_info, dict) and observed.get("fresh") is True
-        status = incus_info.get("status", "unavailable") if available else "unavailable"
-        if not isinstance(status, str) or len(status) > 32:
-            status = "unavailable"
-            available = False
-        cpu_usage, memory_usage, disk_usage = _guest_usage(incus_info if available else None)
+        available, status = _status_state(incus_info, observed)
         return {
             "schema": "gc.incus-sandbox.status/v1",
             "sandbox_id": name,
             "desired_state": "running" if name in self._allocation_names() else "stopped",
-            "observed_state": status.lower(),
+            "observed_state": status,
             "assigned": {"cpu": self.config.vm.cpu, "memory_mib": self.config.vm.memory_mib,
                          "disk_gib": self.config.vm.disk_gib},
-            "observed": {"availability": "fresh" if available else "unavailable",
-                         "memory_mib": _positive_fact(observed.get("memory_mib")) if available else None,
-                         "disk_gib": _positive_fact(observed.get("disk_gib")) if available else None,
-                         "cpu_usage_ns": cpu_usage,
-                         "guest_memory_mib": memory_usage // (1024 * 1024) if memory_usage is not None else None,
-                         "guest_disk_gib": disk_usage // (1024 ** 3) if disk_usage is not None else None},
+            "observed": _observed_facts(observed, incus_info, available),
             "admission_headroom": self._headroom(),
             "last_transition": "unavailable",
             "failure_reason": "none" if available else "observation_unavailable",
@@ -317,46 +331,69 @@ class LifecycleHelper(object):
             self._emit(action, "failure", name, error_code="command_failed", started=started)
             raise
 
+    def _reservation(
+        self, name: str, reserve: bool,
+    ) -> tuple[int | None, dict[str, dict[str, int]] | None, dict[str, int | bool] | None]:
+        """Authorize an existing VM or hold capacity for a new one."""
+        if not reserve:
+            self._require_owner(name)
+            return None, None, None
+        descriptor, records, observed = self._admit(name)
+        self._save_allocations(descriptor, records)
+        return descriptor, records, observed
+
+    def _run_commands(self, commands: list[list[str]]) -> None:
+        """Run the already constructed fixed lifecycle command sequence."""
+        for argv in commands:
+            self.runner(argv)
+
+    def _rollback_create(self, name: str, descriptor: int | None, records: dict[str, dict[str, int]] | None) -> None:
+        """Release a failed create reservation and request Incus cleanup."""
+        if descriptor is None:
+            return
+        if records is not None:
+            records.pop(name, None)
+            self._save_allocations(descriptor, records)
+        try:
+            self.runner([_INCUS, "delete", name, "--force", "--project", self.config.project])
+        except Exception:
+            return
+
+    @staticmethod
+    def _admission_error_code(error: AdmissionError) -> str:
+        """Map detailed local admission errors to the bounded audit vocabulary."""
+        if "stale" in str(error) or "unavailable" in str(error):
+            return "admission_observation_stale"
+        return "admission_insufficient"
+
     def _mutate(self, action: str, name: str, commands: list[list[str]], *, reserve: bool = False,
                 release: bool = False) -> None:
         name = self._name(name)
         started = time.monotonic()
         self.events.ensure_available()
-        fd: int | None = None
+        descriptor: int | None = None
         records: dict[str, dict[str, int]] | None = None
         observed: dict[str, int | bool] | None = None
         try:
-            if not reserve:
-                self._require_owner(name)
-            if reserve:
-                fd, records, observed = self._admit(name)
-                self._save_allocations(fd, records)
-            for argv in commands:
-                self.runner(argv)
-            if fd is not None and records is not None:
-                self._save_allocations(fd, records)
+            descriptor, records, observed = self._reservation(name, reserve)
+            self._run_commands(commands)
+            if descriptor is not None and records is not None:
+                self._save_allocations(descriptor, records)
             if release:
                 self._release(name)
             self._emit(action, "success", name, started=started, observed=observed)
         except AdmissionError as exc:
-            is_stale = "stale" in str(exc) or "unavailable" in str(exc)
-            code = "admission_observation_stale" if is_stale else "admission_insufficient"
+            code = self._admission_error_code(exc)
             self._emit(action, "denied", name, error_code=code, started=started, observed=observed)
             raise
         except Exception:
-            if action == "create" and fd is not None:
-                records = records or {}
-                records.pop(name, None)
-                self._save_allocations(fd, records)
-                try:
-                    self.runner([_INCUS, "delete", name, "--force", "--project", self.config.project])
-                except Exception:
-                    pass
+            if action == "create":
+                self._rollback_create(name, descriptor, records)
             self._emit(action, "failure", name, error_code="command_failed", started=started, observed=observed)
             raise
         finally:
-            if fd is not None:
-                self._unlock(fd)
+            if descriptor is not None:
+                self._unlock(descriptor)
 
     def create(self, name: str) -> None:
         name = self._name(name)

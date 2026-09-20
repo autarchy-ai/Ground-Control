@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeAlias
 
 
 class ConfigError(RuntimeError):
@@ -51,7 +50,6 @@ class SandboxConfig(object):
     host: HostLimits
 
 
-JsonObject: TypeAlias = dict[str, object]
 _TOP_LEVEL = {
     "schema", "project", "profile", "pool", "bridge", "image", "state_dir",
     "event_log", "event_max_bytes", "observation_max_age_seconds", "operator_uid",
@@ -72,7 +70,7 @@ def _positive(value: object, field: str) -> int:
     return value
 
 
-def _name(doc: JsonObject, field: str) -> str:
+def _name(doc: dict[str, object], field: str) -> str:
     """Read one bounded lower-case Incus resource name."""
     value = doc.get(field)
     if not isinstance(value, str) or not value or len(value) > 63:
@@ -96,7 +94,7 @@ def _owned_regular(path: Path, expected_uid: int) -> None:
         raise ConfigError("configuration must not be writable by group or other")
 
 
-def _path(doc: JsonObject, field: str) -> Path:
+def _path(doc: dict[str, object], field: str) -> Path:
     """Read an absolute host-controlled filesystem path."""
     value = doc.get(field)
     if not isinstance(value, str) or not value.startswith("/"):
@@ -104,7 +102,7 @@ def _path(doc: JsonObject, field: str) -> Path:
     return Path(value)
 
 
-def _read_document(path: Path) -> JsonObject:
+def _read_document(path: Path) -> dict[str, object]:
     """Decode the previously ownership-checked JSON policy document."""
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
@@ -115,7 +113,7 @@ def _read_document(path: Path) -> JsonObject:
     return document
 
 
-def _check_top_level(doc: JsonObject) -> None:
+def _check_top_level(doc: dict[str, object]) -> None:
     """Verify the closed versioned configuration vocabulary."""
     if set(doc) != _TOP_LEVEL:
         raise ConfigError("configuration keys do not match gc.incus-sandbox/v1")
@@ -123,7 +121,7 @@ def _check_top_level(doc: JsonObject) -> None:
         raise ConfigError("unsupported configuration schema")
 
 
-def _image(doc: JsonObject) -> str:
+def _image(doc: dict[str, object]) -> str:
     """Return a non-placeholder pinned image digest."""
     image = doc["image"]
     if not isinstance(image, str) or len(image) != 71 or not image.startswith("sha256:"):
@@ -134,7 +132,7 @@ def _image(doc: JsonObject) -> str:
     return image
 
 
-def _limits(doc: JsonObject, fields: tuple[str, ...], label: str) -> tuple[int, ...]:
+def _limits(doc: dict[str, object], fields: tuple[str, ...], label: str) -> tuple[int, ...]:
     """Validate a closed resource-limit subsection and return its values."""
     section = doc.get(label)
     if not isinstance(section, dict) or set(section) != set(fields):
@@ -142,7 +140,7 @@ def _limits(doc: JsonObject, fields: tuple[str, ...], label: str) -> tuple[int, 
     return tuple(_positive(section[field], f"{label}.{field}") for field in fields)
 
 
-def _build_config(doc: JsonObject) -> SandboxConfig:
+def _build_config(doc: dict[str, object]) -> SandboxConfig:
     """Build the typed policy object after individual fields are validated."""
     vm = VmLimits(*_limits(doc, _VM_FIELDS, "vm"))
     host = HostLimits(*_limits(doc, _HOST_FIELDS, "host"))
