@@ -93,8 +93,11 @@ named condition and retry the same action.
 Render the body with `gc_render_pr_body`, passing `lane: "quickfix"`, no
 requirement UIDs, and `pre_push_reviews: "completed"` only when `--review` ran;
 otherwise pass `"not_run"`. Create the PR with
-`gc_create_synchronized_implement_pr` and the synchronization record returned by
-`publish`. The body links the issue with `Closes #<issue>`; on an integration
+`gc_create_synchronized_implement_pr`, passing `lane: "quickfix"` and the
+synchronization record returned by `publish`. That lane input waives the
+review-publication tuple and nothing else; the waiver is refused for a
+requirement-backed issue, so omitting it on the default lane refuses with
+`implement_pr_review_publication_missing`. The body links the issue with `Closes #<issue>`; on an integration
 branch that is a cross-reference, not the close mechanism.
 
 ### Q6. Monitor once per published head

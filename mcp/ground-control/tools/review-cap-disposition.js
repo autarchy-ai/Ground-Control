@@ -271,7 +271,10 @@ function _registerGcCreateSynchronizedImplementPr(server) {
     "the trusted issue-thread record, verified tree, local feature SHA, remote feature SHA, fetched base SHA, ancestry, " +
     "repository identity, a complete trusted review-publication tuple, repository-scoped existing PR identity/content, " +
     "and configured Conventional Commit title policy. Any stale or missing evidence refuses with a next_action returning " +
-    "the workflow to the named repair or synchronization boundary; callers must not fall back to direct gh pr create.",
+    "the workflow to the named repair or synchronization boundary; callers must not fall back to direct gh pr create. " +
+    "lane='quickfix' waives only the review-publication tuple, because that lane runs AI review under --review alone " +
+    "(ADR-029); the waiver is refused for a requirement-backed issue, which is not a legal quickfix, and no other " +
+    "evidence is relaxed.",
     {
       repo_path: z.string(),
       issue_number: z.number().int().positive(),
@@ -279,8 +282,9 @@ function _registerGcCreateSynchronizedImplementPr(server) {
       record_id: z.string().regex(/^[0-9a-f]{32}$/),
       title: z.string().min(1).max(256),
       body: z.string().min(1).max(65535),
+      lane: z.enum(["implement", "quickfix"]).optional(),
     },
-    async ({ repo_path, issue_number, branch_name, record_id, title, body }) => {
+    async ({ repo_path, issue_number, branch_name, record_id, title, body, lane }) => {
       try {
         return ok(JSON.stringify(await runCreateSynchronizedImplementPr({
           repoPath: repo_path,
@@ -289,6 +293,7 @@ function _registerGcCreateSynchronizedImplementPr(server) {
           recordId: record_id,
           title,
           body,
+          lane: lane ?? "implement",
         }), null, 2));
       } catch (e) { return err(e); }
     },
