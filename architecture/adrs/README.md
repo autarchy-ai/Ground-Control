@@ -127,3 +127,7 @@ Prior ADRs from the old project frame are archived in `archive/architecture/adrs
 Issue #1416 amends ADR-021, ADR-027, ADR-029, ADR-031, and ADR-036 to define
 `/implement` execution principles, same-checkout branch preparation, and
 durable execution-obligation completion gates.
+
+Issue #1669 amends ADR-021 and ADR-036 to add a bounded terminal wait
+(`gc_codex_job action="await"`) to the shared async job transport, so waiting on
+a background job costs one call rather than one model turn per poll tick.

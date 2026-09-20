@@ -34,7 +34,10 @@ import { ok, err } from "./respond.js";
 
 const ASYNC_REVIEW_CYCLE_PARAM_DESC =
   "Review-cycle tools are async-only. Omit this field or pass true to return a gc_codex_job " +
-  "handle immediately. Passing false returns review_cycle_async_required and never runs synchronously.";
+  "handle immediately, then await it with gc_codex_job (action='await'), which holds one call " +
+  "until the cycle is terminal instead of costing a model turn per tick; a bounded expiry returns " +
+  "the running envelope, so await again. Passing false returns review_cycle_async_required and " +
+  "never runs synchronously.";
 
 export function registerPostDecisionRecord(server, ctx) {
   _registerGcPostDecisionRecord(server);
@@ -412,7 +415,7 @@ function _registerGcWatchCiRun(server) {
 function _registerGcCodexReviewCycle(server) {
   server.tool(
     "gc_codex_review_cycle",
-    "Async-only pre-push codex-review cycle wrapper. Requires one bounded idempotency_key per logical attempt, returns a gc_codex_job handle immediately, and runs gc_codex_review (uncommitted=true). publication_mode=automatic preserves canonical per-cycle posting. publication_mode=deferred performs zero GitHub writes, consumes no cycle, and returns a restart-durable review_handle for gc_get_review_result and gc_publish_review_result. Reuse the same key when the start response is lost; changed input conflicts and concurrent distinct starts for the same repository, issue, and reviewer are refused. Poll gc_codex_job for the terminal result. Original review prose remains protected local state until a validated sanitized rendering is published.",
+    "Async-only pre-push codex-review cycle wrapper. Requires one bounded idempotency_key per logical attempt, returns a gc_codex_job handle immediately, and runs gc_codex_review (uncommitted=true). publication_mode=automatic preserves canonical per-cycle posting. publication_mode=deferred performs zero GitHub writes, consumes no cycle, and returns a restart-durable review_handle for gc_get_review_result and gc_publish_review_result. Reuse the same key when the start response is lost; changed input conflicts and concurrent distinct starts for the same repository, issue, and reviewer are refused. Await gc_codex_job (action='await') for the terminal result rather than polling it on a cadence; a bounded expiry returns the running envelope. Original review prose remains protected local state until a validated sanitized rendering is published.",
     {
       repo_path: z.string(),
       issue_number: z.number().int().positive(),

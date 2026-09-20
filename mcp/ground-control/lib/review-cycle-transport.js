@@ -22,7 +22,7 @@ export async function runReviewCycleTransport(input, overrides = {}) {
   if (input?.asyncMode === false) {
     return transportFailure(
       "review_cycle_async_required",
-      "Review-cycle tools are async-only; omit async or pass async=true and poll gc_codex_job.",
+      "Review-cycle tools are async-only; omit async or pass async=true and await gc_codex_job.",
     );
   }
   const kind = REVIEW_CYCLE_KINDS[input?.reviewer];
