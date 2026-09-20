@@ -12,7 +12,9 @@ const USAGE = `usage: grndctl sandbox <command>
 
 commands:
   setup <install|refresh|rollback>   run the privileged sandbox setup shipped with this package
-  build-image <BASE> [ALIAS]         build and publish the guest template from a pinned base image
+  image [REFERENCE]                  fetch the published guest template from the registry (default)
+  build-image <BASE> [ALIAS]         build the guest template locally from a pinned base image
+  push-image <REFERENCE> <FINGERPRINT>  publish a built template; reads a registry token on stdin
   path                               print the directory holding the sandbox programs
 `;
 
@@ -31,9 +33,17 @@ export function sandboxCommand(args, directory) {
     if (rest.length !== 1 || !SETUP_VERBS.has(rest[0])) throw new Error("usage: grndctl sandbox setup <install|refresh|rollback>");
     return [SUDO, "--", "/usr/bin/bash", `${directory}setup.sh`, rest[0]];
   }
+  if (command === "image") {
+    if (rest.length > 1) throw new Error("usage: grndctl sandbox image [REFERENCE]");
+    return [SUDO, "--", "/usr/bin/python3", `${directory}registry_image.py`, "pull", ...rest];
+  }
   if (command === "build-image") {
     if (rest.length < 1 || rest.length > 2) throw new Error("usage: grndctl sandbox build-image <BASE> [ALIAS]");
     return [SUDO, "--", "/usr/bin/python3", `${directory}build_image.py`, ...rest];
+  }
+  if (command === "push-image") {
+    if (rest.length !== 2) throw new Error("usage: grndctl sandbox push-image <REFERENCE> <FINGERPRINT>");
+    return [SUDO, "--", "/usr/bin/python3", `${directory}registry_image.py`, "push", ...rest];
   }
   throw new Error(USAGE);
 }

@@ -54,10 +54,26 @@ its nftables table; run `setup.sh refresh` after an address change so new starts
 are not rejected as stale. Traffic to a host address is dropped whether or not
 that address is in the recorded set.
 
-## Build the guest template
+## Get the guest template
 
-Setup only needs a launchable base image, so install with a pinned upstream
-fingerprint first, then build the template the workflow actually needs:
+The published template lives in the GitHub Container Registry, and fetching it
+is the ordinary path:
+
+```sh
+grndctl sandbox image
+```
+
+That pulls `ghcr.io/autarchy-ai/gc-sandbox-template:latest`, checks the
+downloaded artifact against the digest its manifest names, imports it for the
+`gc-sandbox` project as `gc-sandbox-template`, and prints the fingerprint to
+pin. Pass a reference to fetch a different tag. The template contains Git,
+Node.js with npm, `python3`, `tmux`, the GitHub CLI and the `sandbox` user, and
+no credential.
+
+### Build one instead
+
+Build locally when you need another base, another architecture, or a template
+you compiled yourself:
 
 ```sh
 grndctl sandbox build-image images:almalinux/10/cloud
@@ -80,9 +96,24 @@ replace the existing alias, so remove it first with
 `sudo incus image alias delete gc-sandbox-template --project gc-sandbox`.
 
 Only reference forms Incus can launch are accepted: `images:<fingerprint>` for
-an upstream image and `local:<fingerprint>` for a published template. The build
-pins its own tooling, so a rebuild produces the same guest surface until
-`build_image.py` changes.
+an upstream image and `local:<fingerprint>` for a template that was pulled or
+built here. The build pins its own tooling, so a rebuild produces the same guest
+surface until `build_image.py` changes.
+
+### Publish a template
+
+Publishing is a maintainer step. It exports the local template and stores it in
+the registry as one OCI artifact; the credential is read from standard input, so
+it never reaches argv, the environment, or a file:
+
+```sh
+gh auth token | grndctl sandbox push-image \
+  ghcr.io/autarchy-ai/gc-sandbox-template:latest <template-fingerprint>
+```
+
+The token needs the `write:packages` scope
+(`gh auth refresh -h github.com -s write:packages`). A public package needs no
+credential to pull.
 
 ## Ordinary use
 

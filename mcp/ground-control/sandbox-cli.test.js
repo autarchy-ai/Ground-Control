@@ -17,6 +17,17 @@ test("the sandbox front end delegates only its closed verbs through sudo", () =>
     "/usr/bin/sudo", "--", "/usr/bin/python3", `${DIRECTORY}build_image.py`, "images:almalinux/10/cloud",
   ]);
   assert.deepEqual(sandboxCommand(["build-image", "images:almalinux/10/cloud", "other"], DIRECTORY).at(-1), "other");
+  // Fetching the published template is the default path; it needs no argument.
+  assert.deepEqual(sandboxCommand(["image"], DIRECTORY), [
+    "/usr/bin/sudo", "--", "/usr/bin/python3", `${DIRECTORY}registry_image.py`, "pull",
+  ]);
+  assert.deepEqual(sandboxCommand(["image", "ghcr.io/owner/name:tag"], DIRECTORY).at(-1), "ghcr.io/owner/name:tag");
+  assert.deepEqual(sandboxCommand(["push-image", "ghcr.io/owner/name:tag", "a".repeat(64)], DIRECTORY), [
+    "/usr/bin/sudo", "--", "/usr/bin/python3", `${DIRECTORY}registry_image.py`, "push",
+    "ghcr.io/owner/name:tag", "a".repeat(64),
+  ]);
+  assert.throws(() => sandboxCommand(["image", "a", "b"], DIRECTORY), /image \[REFERENCE\]/);
+  assert.throws(() => sandboxCommand(["push-image", "ghcr.io/owner/name:tag"], DIRECTORY), /push-image/);
   assert.throws(() => sandboxCommand(["setup", "reinstall"], DIRECTORY), /install\|refresh\|rollback/);
   assert.throws(() => sandboxCommand(["setup"], DIRECTORY), /install\|refresh\|rollback/);
   assert.throws(() => sandboxCommand(["build-image"], DIRECTORY), /BASE/);
