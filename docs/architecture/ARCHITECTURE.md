@@ -103,7 +103,8 @@ the `/implement` workflow needs, each operating over `gh` / `git` / files:
 
 - **Orchestration.** `gc_implement_mechanical` drives the mechanical bands (bootstrap,
   verify, publish, monitor, readiness, finalize); `gc_codex_job` carries the long async
-  actions; `gc_get_repo_ground_control_context` reads `.ground-control.yaml`.
+  actions and holds one request until a job is terminal;
+  `gc_get_repo_ground_control_context` reads `.ground-control.yaml`.
 - **Git / GitHub mechanics.** Branch prep, issue pickup, issue-thread reads, base sync,
   synchronized PR creation, PR-body rendering, issue close, and issue creation from a
   requirement file.

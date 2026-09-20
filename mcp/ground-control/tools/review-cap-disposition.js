@@ -5,6 +5,8 @@ import { z } from "zod";
 import {
   ASYNC_JOB_ID_MAX,
   ASYNC_JOB_ID_RE,
+  ASYNC_JOB_WAIT_SECONDS_DEFAULT,
+  ASYNC_JOB_WAIT_SECONDS_MAX,
   EXACT_REQUIREMENT_UID_RE,
   EXECUTION_OBLIGATION_CATEGORIES,
   EXECUTION_OBLIGATION_DISPOSITIONS,
@@ -14,6 +16,7 @@ import {
   IMPLEMENT_BASE_SYNC_OUTCOMES,
   IMPLEMENT_CHECKOUT_MODES,
   TELEMETRY_TIERS,
+  awaitAsyncJob,
   cancelAsyncJob,
   pollAsyncJob,
   runAuthorizeExecutionObligationWontfix,
@@ -118,10 +121,15 @@ function _registerGcReviewCapDisposition(server) {
 function _registerGcCodexJob(server) {
   server.tool(
     "gc_codex_job",
-    "Poll or cancel a shared async job started by gc_codex_review, gc_codex_review_cycle, " +
+    "Await, poll, or cancel a shared async job started by gc_codex_review, gc_codex_review_cycle, " +
       "gc_codex_architecture_preflight, or " +
       "gc_implement_mechanical with async=true. action='poll' returns {ok:true,status:'running'} while " +
       "work continues, and {ok:true,status:'done',result:<original tool envelope>} once it finishes. " +
+      "action='await' is the same observation held open server-side until the job is terminal, so waiting " +
+      "costs one call instead of one model turn per tick; prefer it over repeated polling. Its optional " +
+      "wait_seconds bounds only that request (default 1500, max 1800) and expiry returns the ordinary " +
+      "running envelope while the job continues — never a cancellation, retry, or result. Awaiting grants " +
+      "no cancellation and changes no job deadline, retention, or idempotency behavior. " +
       "A running poll may carry a bounded `progress` snapshot (current gate phase plus last child-output " +
       "activity and byte counts) so a slow-but-healthy verification sweep is distinguishable from a dead job; " +
       "it is observability only, never a liveness or cancellation guarantee. " +
@@ -135,11 +143,21 @@ function _registerGcCodexJob(server) {
       "error='job_not_found'. For a review-cycle job, refresh and reconcile the authoritative issue thread before " +
       "another attempt; for other jobs, follow the originating tool's retry contract.",
     {
-      action: z.enum(["poll", "cancel"]),
+      action: z.enum(["poll", "await", "cancel"]),
       job_id: z.string().min(1).max(ASYNC_JOB_ID_MAX).regex(ASYNC_JOB_ID_RE),
+      wait_seconds: z.number().int().min(1).max(ASYNC_JOB_WAIT_SECONDS_MAX).optional()
+        .describe("action='await' only: bounds this request, not the job. Defaults to "
+          + `${ASYNC_JOB_WAIT_SECONDS_DEFAULT}; expiry returns the running envelope.`),
     },
-    async ({ action, job_id }) => {
+    async ({ action, job_id, wait_seconds }) => {
       try {
+        if (action === "await") {
+          const awaited = await awaitAsyncJob(
+            job_id,
+            wait_seconds === undefined ? undefined : wait_seconds * 1000,
+          );
+          return ok(JSON.stringify(awaited, null, 2));
+        }
         const result = action === "cancel" ? cancelAsyncJob(job_id) : pollAsyncJob(job_id);
         return ok(JSON.stringify(result, null, 2));
       } catch (e) { return err(e); }

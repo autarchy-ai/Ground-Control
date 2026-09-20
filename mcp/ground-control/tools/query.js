@@ -27,9 +27,12 @@ import { ok, err } from "./respond.js";
 export const ASYNC_REVIEW_PARAM_DESC =
   "When true, start the review/preflight as a background job and return " +
   "{ok,status:'running',job_id} immediately instead of blocking the MCP call. " +
-  "Poll the job with gc_codex_job (action='poll') until status='done', then dispatch " +
-  "on result.next_action exactly as for the synchronous call. Use this in the /implement " +
-  "workflow so a multi-minute review never trips the MCP client's tool-call timeout (issue #937).";
+  "Await the job with gc_codex_job (action='await'), which holds one call until status='done' " +
+  "instead of costing a model turn per poll tick; a bounded expiry returns the running envelope, " +
+  "so await again (issue #1669). action='poll' remains available for an immediate non-blocking " +
+  "snapshot. Either way, dispatch on result.next_action exactly as for the synchronous call. Use " +
+  "this in the /implement workflow so a multi-minute review never trips the MCP client's " +
+  "tool-call timeout (issue #937).";
 
 export const CODEX_REVIEW_CAPS = { postPushCap: CODEX_REVIEW_HARD_CAP, prepushCap: CODEX_REVIEW_PREPUSH_HARD_CAP };
 

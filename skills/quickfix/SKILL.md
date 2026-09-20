@@ -62,7 +62,7 @@ Do not run `pre-commit` here, commit, or push by hand; Q4 owns that boundary.
 ### Q3. Optional Codex review
 
 The default lane skips AI review. With `--review`, run exactly one pre-push Codex
-cycle through `gc_codex_review_cycle`, using its async start-and-poll contract.
+cycle through `gc_codex_review_cycle`, using its async start-and-await contract.
 Fix or explicitly disposition every finding and run proportionate targeted
 tests. Then continue as `accepted_at_cap`; quickfix does not request or run a
 second review cycle, and a clean terminal verdict is not required.
@@ -71,7 +71,9 @@ second review cycle, and a clean terminal verdict is not required.
 
 Call `gc_implement_mechanical` once with `action: "publish"`,
 `lane: "quickfix"`, `async: true`, one idempotency key for the attempt, and the
-commit message. Poll the returned job through `gc_codex_job`.
+commit message. Await the returned job through `gc_codex_job`
+(`action="await"`), which holds one call until the job is terminal instead of
+costing a model turn per poll tick.
 
 This one action stages the change, refuses protected sensitive paths, runs the
 repository's configured pre-commit boundary, commits, pushes, fetches the

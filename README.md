@@ -30,7 +30,8 @@ backend:
 
 - **Orchestration**, `gc_implement_mechanical` drives the mechanical bands
   (bootstrap, verify, publish, monitor, readiness, finalize); `gc_codex_job`
-  carries the long async actions; `gc_get_repo_ground_control_context` reads
+  carries the long async actions and can hold one request until a job is
+  terminal; `gc_get_repo_ground_control_context` reads
   `.ground-control.yaml`.
 - **Git / GitHub mechanics**, branch prep, issue pickup, issue-thread reads,
   base sync, synchronized PR creation, PR-body rendering, issue close, and

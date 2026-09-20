@@ -1035,3 +1035,37 @@ worktree's `config.worktree`, which let a checkout with
 required signature with an unsigned commit. When the signature cannot be
 produced, publish, base-sync completion, and remediation return
 `implement_commit_signing_failed`, no commit is created, and nothing is pushed.
+
+**2026-09-20 (issue #1669, bounded terminal wait on the async job transport).**
+The #937 async job model above traded a client-timeout failure for a cost that
+scales with job duration. `gc_codex_job` exposed only an immediate `poll`, so
+the agent had no way to ask the server to hold, and every tick of a multi-minute
+preflight, review cycle, or CI/Sonar monitor was a full-context model turn that
+read back `status: "running"`. The saving `gc_watch_ci_run` and
+`gc_watch_sonar_analysis` make by holding server-side was given back at the
+generic transport in front of them.
+
+`gc_codex_job` gains a third action, `await`. It observes the same bounded
+`job_id` and returns the same envelope `poll` returns, including a completed job
+whose `result.ok` is `false`. A red gate stays a completed originating action,
+never a transport failure. The registry owns the wait and releases it from the
+job's own terminal transition, so no status loop runs server-side either. One
+optional `wait_seconds` is the only public timing seam: it bounds the request
+and nothing else, with a server-owned default of 1500 s (covering a
+default-capped codex child) and a maximum of 1800 s (the hold
+`gc_watch_sonar_analysis` already performs, well under the 3,600,000 ms
+`MCP_TOOL_TIMEOUT` this repository configures). No `.ground-control.yaml` key
+and no environment variable are added, so no caller or repository can set a job
+execution deadline.
+
+Expiry returns the ordinary running envelope while the job continues; it is not
+a cancellation, a retry, a TTL extension, or a result. `poll` remains the
+immediate observability operation and `cancel` keeps its truthful
+`job_not_cancellable` answer for mechanical and review-cycle jobs, so awaiting
+grants no cancellation. Jobs stay process-local: restart and the 30-minute
+terminal retention still yield `job_not_found` under each originating tool's
+existing recovery contract, and a waiter never makes a job restart-durable.
+Authorization, idempotency, single-flight, requirement binding, and action
+dispatch all happen at job start and are untouched. The `/implement` and
+`/quickfix` prose retires its fixed polling cadences in favor of `await`; the
+async start, idempotency-key, and `job_not_found` recovery rules are unchanged.

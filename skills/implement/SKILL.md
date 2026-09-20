@@ -84,9 +84,9 @@ rendering. The primary consumes compact structured envelopes.
 | 1–2 | script/agent | Resolve issue/branch naming inputs, then `gc_implement_mechanical action=bootstrap`; interpret the returned discussion in the next semantic band |
 | 2.5–5 | agent | Architecture preflight, code assessment, plan, TDD implementation, clause mapping, and proportionate targeted tests |
 | 6.5 | script/agent | The bounded Codex review-cycle tool runs; the primary acts only on returned findings or the cap decision |
-| 7–8.5 | script | Start `gc_implement_mechanical action=publish` with `async=true`, then poll; an agent enters only for a returned merge conflict or failed hook |
+| 7–8.5 | script | Start `gc_implement_mechanical action=publish` with `async=true`, then await the job; an agent enters only for a returned merge conflict or failed hook |
 | 9 | script/agent | The primary supplies semantic PR inputs; existing render and synchronized-create tools enforce and publish them |
-| 10–11 | script | Start `gc_implement_mechanical action=monitor` with `async=true`, then poll; an agent enters only when CI or Sonar returns an actionable failure |
+| 10–11 | script | Start `gc_implement_mechanical action=monitor` with `async=true`, then await the job; an agent enters only when CI or Sonar returns an actionable failure |
 | 15–16 | agent | Pre-publish requirement `DRAFT→ACTIVE` transition and semantic traceability reconciliation, committed in the delivery diff (run after implementation, before publish) |
 | 17 pre-merge | script | `gc_implement_mechanical action=readiness` (posts the trusted delivery handoff, then the readiness record; the run may end here) |
 | 17 post-merge and 20 | script | `gc_implement_mechanical action=finalize` (verifies merged requirement state at the immutable merge revision, then the merge-gated report + close). **Normally run by the merged-PR workflow with no agent session (ADR-102)**; re-invoking `/implement` after a merge is the fallback |
@@ -101,8 +101,12 @@ mechanical gate with an agent assertion.
 
 The two long actions (`publish` and `monitor`) use the shared
 background-job transport. Create one bounded `idempotency_key` for each logical
-attempt, call `gc_implement_mechanical` with `async=true`, and poll the returned
-`job_id` through `gc_codex_job` until `status="done"`. Consume `result` exactly
+attempt, call `gc_implement_mechanical` with `async=true`, and await the returned
+`job_id` through `gc_codex_job` (`action="await"`) until `status="done"`. The
+server holds that one call until the job is terminal, so waiting costs one call
+rather than a model turn per tick; a bounded wait that expires returns the
+ordinary running envelope, and you simply await again. Use `action="poll"` only
+when you want an immediate non-blocking snapshot. Consume `result` exactly
 as the synchronous mechanical envelope; a completed job may correctly contain
 `result.ok=false` for an actionable gate failure. Reuse the same key only when
 retrying the start because the transport response was lost. After repairing the

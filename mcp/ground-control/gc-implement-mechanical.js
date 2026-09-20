@@ -69,7 +69,9 @@ export const gcImplementMechanicalZodShape = {
   completion: completionShape.optional(),
   async: z.boolean().optional().describe(
     "When true for publish or monitor, start a background job and return a compact handle. " +
-    "Poll gc_codex_job until status='done', then consume its result as the original mechanical envelope.",
+    "Await it with gc_codex_job (action='await') until status='done', then consume its result as the " +
+    "original mechanical envelope. Awaiting holds one call rather than costing a model turn per poll tick; " +
+    "a bounded expiry returns the running envelope, so await again.",
   ),
   idempotency_key: z
     .string()
@@ -91,7 +93,8 @@ export const GC_IMPLEMENT_MECHANICAL_DESCRIPTION =
   "bootstrap requires branch_name; for publish and monitor branch_name is OPTIONAL and defaults to the checkout's current " +
   "branch when it is this issue's branch (`<issue>-<slug>`), refusing a base/unrelated branch rather than acting on it. " +
   "Long actions publish and monitor accept async=true plus a required bounded idempotency_key; " +
-  "poll the returned job_id through gc_codex_job and consume the terminal result as this tool's unchanged envelope. " +
+  "await the returned job_id through gc_codex_job (action='await', bounded expiry returns the running envelope) " +
+  "and consume the terminal result as this tool's unchanged envelope. " +
   "Bootstrap, readiness, and finalize remain synchronous. Once the linked PR is merged, run finalize immediately; " +
   "do not wait for post-merge hosted actions to complete. lane defaults to implement; lane=quickfix makes bootstrap " +
   "reject requirement-backed issues before branch mutation and makes finalize post the slim quickfix outcome before close. " +
