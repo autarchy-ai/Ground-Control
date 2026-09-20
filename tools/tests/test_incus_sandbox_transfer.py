@@ -7,11 +7,13 @@ import json
 import runpy
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from tools.incus_sandbox import guest_bootstrap
+from tools.incus_sandbox import transfer as incus_transfer
 from tools.incus_sandbox.guest_bootstrap import PacketError, guest_environment, main, parse_packet
 from tools.incus_sandbox.transfer import TransferError, read_packet, transfer, transfer_commands
 
@@ -150,6 +152,11 @@ class GuestMaterializationTest(unittest.TestCase):
 
 
 class TransferCommandTest(unittest.TestCase):
+    def test_read_packet_rejects_empty_and_nonbinary_streams(self) -> None:
+        for stream in (io.BytesIO(), io.StringIO("text")):
+            with self.assertRaises(TransferError):
+                read_packet(stream)
+
     def test_transfer_uses_only_fixed_incus_push_and_guest_bootstrap_argv(self) -> None:
         commands = transfer_commands("gc-sandbox", "agent-1", "/var/lib/gc/source.gcs")
         rendered = json.dumps(commands)
@@ -177,6 +184,49 @@ class TransferCommandTest(unittest.TestCase):
             call.kwargs["stdout"] is not None and call.kwargs["stderr"] is not None
             for call in run.call_args_list
         ))
+
+    def test_audited_transfer_records_success_and_failure_without_packet_contents(self) -> None:
+        records: list[dict[str, str]] = []
+
+        class EventWriter:
+            def __init__(self, *_: object) -> None:
+                pass
+
+            def ensure_available(self) -> None:
+                pass
+
+            def write(self, record: dict[str, str]) -> None:
+                records.append(record)
+
+        config = types.SimpleNamespace(event_log=Path("/tmp/events"), event_max_bytes=32,
+                                       project="gc-sandbox", state_dir=Path("/tmp/state"))
+        events = types.SimpleNamespace(EventWriter=EventWriter)
+        with patch.dict(sys.modules, {"events": events}):
+            with patch("tools.incus_sandbox.transfer.transfer"):
+                incus_transfer.audited_transfer(config, "agent-1", io.BytesIO(b"packet"), "clone")
+            with patch("tools.incus_sandbox.transfer.transfer", side_effect=RuntimeError("failed")):
+                with self.assertRaises(RuntimeError):
+                    incus_transfer.audited_transfer(config, "agent-1", io.BytesIO(b"packet"), "bundle")
+        self.assertEqual([record["outcome"] for record in records], ["success", "failure"])
+        with self.assertRaises(TransferError):
+            incus_transfer.audited_transfer(config, "agent-1", io.BytesIO(b"packet"), "invalid")
+
+    def test_transfer_entrypoint_checks_operator_identity_and_dispatches(self) -> None:
+        config = types.SimpleNamespace(operator_uid=1000)
+        config_module = types.SimpleNamespace(load_config=lambda _: config)
+        with patch("tools.incus_sandbox.transfer.os.geteuid", return_value=0), \
+             patch.dict("tools.incus_sandbox.transfer.os.environ", {"SUDO_UID": "1000"}, clear=True), \
+             patch.dict(sys.modules, {"config": config_module}), \
+             patch("tools.incus_sandbox.transfer.audited_transfer") as audited:
+            self.assertEqual(incus_transfer.main(["agent-1", "clone"]), 0)
+        audited.assert_called_once()
+        with patch("tools.incus_sandbox.transfer.os.geteuid", return_value=1):
+            with self.assertRaises(TransferError):
+                incus_transfer.main(["agent-1", "clone"])
+        with patch("tools.incus_sandbox.transfer.os.geteuid", return_value=0), \
+             patch.dict("tools.incus_sandbox.transfer.os.environ", {}, clear=True):
+            with self.assertRaises(TransferError):
+                incus_transfer.main(["agent-1", "clone"])
 
 
 if __name__ == "__main__":
