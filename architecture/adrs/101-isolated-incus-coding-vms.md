@@ -55,6 +55,32 @@ changes. Guest templates contain no host mounts, host-home or checkout mounts,
 SSH-agent or runtime sockets, credentials, or session histories. The guest
 must not receive the Incus socket or guest API authority.
 
+### Private-repository guest handoff
+
+The supported private-repository path adds a closed preparation command beside
+the lifecycle client. Its unprivileged side resolves an immutable commit using
+fixed Git argv with system/global configuration, hooks, fsmonitor, prompts, and
+credential helpers disabled. It sends a bounded source packet through a
+separate root-owned endpoint. That endpoint takes no host path, arbitrary guest
+command, mount, credential, or Docker endpoint: it pushes only the packet and
+a host-owned guest bootstrap program through fixed Incus argv.
+
+Published commits use a guest-side HTTPS clone and then detached checkout of
+the resolved commit. An unpublished committed revision uses a Git object bundle
+and the same detached checkout. Dirty worktrees remain unsupported. Checkout,
+tool installation, hooks, tests, reviewers, builds, Docker use, and publication
+run in the guest. Every guest owns its checkout, Git metadata, home, runtime
+state, credentials, and Docker daemon; host homes, checkouts, credential stores,
+runtime sockets, and Docker contexts are never copied or forwarded.
+
+Codex authentication happens directly in the guest with an explicit device
+login and no inherited API-key or credential cache. GitHub access is an
+operator-supplied, guest-local, fine-grained token for the selected repository.
+The guest may read the credential it uses, and repository scope does not limit
+access by branch. A token that cannot publish produces a guest-local handoff;
+the host never retries with broader credentials or executes guest-supplied
+commands.
+
 The image is selected by a pinned immutable identifier and verified manifest,
 not a moving alias. A normal interactive coding command must be exercised in a
 fresh VM before the image is accepted. Setup records only the exact resources it
@@ -173,6 +199,9 @@ synthetic secret/argv canaries proving the event stream carries none of either.
   capacity claim from the inspected host observations.
 - No reuse of historical dashboard, console, GRC, or workflow telemetry as a VM
   control plane or source of VM health.
+- No dirty-worktree migration, copied Codex credential cache, host GitHub
+  credential, host Docker socket, arbitrary transfer path at the root boundary,
+  or host-side fallback for a denied guest publication.
 
 ## Design Vocabulary That Applies
 
