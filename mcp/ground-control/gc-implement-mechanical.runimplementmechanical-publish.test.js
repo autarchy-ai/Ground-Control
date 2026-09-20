@@ -362,7 +362,7 @@ describe("runImplementMechanical publish", () => {
     }, baseDeps({
       execFile: git.execFile,
       preCommit: async () => {
-        throw Object.assign(new Error("detect-secrets: AKIAIOSFODNN7EXAMPLE"), { code: 1 });
+        throw Object.assign(new Error("secret scan: high-entropy literal in the staged module"), { code: 1 });
       },
     }));
 
