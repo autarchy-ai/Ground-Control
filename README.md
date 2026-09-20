@@ -1,5 +1,8 @@
 # Ground Control
 
+For the local disposable Incus coding-VM operator workflow, see
+[Local Incus coding sandbox](docs/operations/incus-sandbox.md).
+
 [![CI](https://github.com/autarchy-ai/Ground-Control/actions/workflows/ci.yml/badge.svg)](https://github.com/autarchy-ai/Ground-Control/actions/workflows/ci.yml)
 
 Ground Control is an **MCP server for the `/implement` workflow**, a gated,
