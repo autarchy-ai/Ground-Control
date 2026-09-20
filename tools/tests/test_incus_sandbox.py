@@ -10,11 +10,13 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from tools.incus_sandbox.config import ConfigError, load_config
 from tools.incus_sandbox.events import EventWriter
 from tools.incus_sandbox.helper import AdmissionError, LifecycleHelper, UsageError
-from tools.incus_sandbox.probe import boundary_probe_commands
+from tools.incus_sandbox.probe import boundary_probe_commands, main as probe_main
 
 
 def config_doc(tmp: Path) -> dict[str, object]:
@@ -226,6 +228,18 @@ class LifecycleBoundaryTest(SandboxTestCase):
         self.assertEqual(report["observed"]["guest_memory_mib"], 8)
         self.assertEqual(report["observed"]["guest_disk_gib"], 2)
 
+    def test_status_query_emits_only_the_normalized_document(self) -> None:
+        self.helper.create("agent-1")
+        responses = iter([
+            SimpleNamespace(stdout=json.dumps({"status": "Running"})),
+            SimpleNamespace(stdout=json.dumps({"cpu": {"usage": 7}})),
+        ])
+        with patch("tools.incus_sandbox.helper.subprocess.run", side_effect=lambda *args, **kwargs: next(responses)):
+            self.helper.status("agent-1")
+        record = json.loads(self.config.event_log.read_text(encoding="utf-8").splitlines()[-1])
+        self.assertEqual(record["action"], "status")
+        self.assertEqual(record["outcome"], "success")
+
 
 class EventBoundaryTest(SandboxTestCase):
     def test_event_rotation_is_bounded_and_rejects_unallowlisted_fields(self) -> None:
@@ -279,6 +293,16 @@ class BoundaryProbeTest(unittest.TestCase):
         self.assertIn("agent-2", rendered)
         self.assertIn("::1", rendered)
         self.assertTrue(all(command[0:2] == ["incus", "exec"] for command in commands))
+
+    def test_probe_main_returns_a_boundary_verdict_after_the_sibling_check(self) -> None:
+        responses = [SimpleNamespace(returncode=1), SimpleNamespace(returncode=0)]
+        with patch("tools.incus_sandbox.probe.subprocess.run", side_effect=responses) as run:
+            self.assertEqual(probe_main(["agent-1", "10.74.0.1", "agent-2"]), 0)
+        self.assertEqual(run.call_count, 2)
+
+    def test_probe_main_rejects_an_incomplete_argument_vector(self) -> None:
+        with self.assertRaises(ValueError):
+            probe_main(["agent-1"])
 
 
 if __name__ == "__main__":
