@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.incus_sandbox.guest_bootstrap import PacketError, guest_environment, materialize, parse_packet
+from tools.incus_sandbox.guest_bootstrap import PacketError, guest_environment, main, parse_packet
 from tools.incus_sandbox.transfer import TransferError, read_packet, transfer, transfer_commands
 
 
@@ -50,7 +50,7 @@ class PacketBoundaryTest(unittest.TestCase):
 
     def test_guest_bootstrap_rejects_caller_controlled_paths_before_reading(self) -> None:
         with self.assertRaises(PacketError):
-            materialize(Path("/tmp/source.gcs"), Path("/tmp/workspace"))
+            main(["/tmp/source.gcs", "/tmp/workspace"])
 
 
 class TransferCommandTest(unittest.TestCase):
@@ -77,7 +77,10 @@ class TransferCommandTest(unittest.TestCase):
         })
         with tempfile.TemporaryDirectory() as directory, patch("tools.incus_sandbox.transfer.subprocess.run") as run:
             transfer("gc-sandbox", Path(directory), "agent-1", io.BytesIO(source))
-        self.assertTrue(all(call.kwargs["stdout"] is not None and call.kwargs["stderr"] is not None for call in run.call_args_list))
+        self.assertTrue(all(
+            call.kwargs["stdout"] is not None and call.kwargs["stderr"] is not None
+            for call in run.call_args_list
+        ))
 
 
 if __name__ == "__main__":
