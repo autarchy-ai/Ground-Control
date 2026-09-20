@@ -324,36 +324,50 @@ describe("runImplementMechanical publish", () => {
     assert.ok(git.calls.some(([file, ...argv]) => file === "git" && argv.includes("push")));
   });
 
-  it("refuses a sensitive path before staging it", async () => {
-    const git = publishExec({ paths: [".env.local"] });
+  // A credential basename is sensitive as an artifact, not as source code (#1649).
+  for (const [path, refused] of [
+    [".env.local", true],
+    ["config/credentials.json", true],
+    ["app/credentials/credentials.py", true],
+    [".env.example", false],
+    ["app/auth/credentials.py", false],
+  ]) {
+    it(`${refused ? "refuses" : "allows"} '${path}' before staging it`, async () => {
+      const git = publishExec({ paths: [path] });
+      const result = await runImplementMechanical({
+        action: "publish",
+        repoPath: "/repo",
+        issueNumber: 1426,
+        branchName: "1426-script-phases",
+        commitMessage: "fix: safe change",
+      }, baseDeps({ execFile: git.execFile }));
+
+      assert.equal(result.ok, !refused);
+      if (refused) assert.equal(result.error, "implement_mechanical_sensitive_path_present");
+      assert.equal(
+        git.calls.some(([file, ...argv]) => file === "git" && argv.includes("add")),
+        !refused,
+      );
+    });
+  }
+
+  it("still refuses a secret-bearing source module at the scanner boundary (#1649)", async () => {
+    const git = publishExec({ paths: ["app/auth/credentials.py"] });
     const result = await runImplementMechanical({
       action: "publish",
       repoPath: "/repo",
       issueNumber: 1426,
       branchName: "1426-script-phases",
       commitMessage: "fix: safe change",
-    }, baseDeps({ execFile: git.execFile }));
+    }, baseDeps({
+      execFile: git.execFile,
+      preCommit: async () => {
+        throw Object.assign(new Error("detect-secrets: AKIAIOSFODNN7EXAMPLE"), { code: 1 });
+      },
+    }));
 
     assert.equal(result.ok, false);
-    assert.equal(result.error, "implement_mechanical_sensitive_path_present");
-    assert.equal(
-      git.calls.some(([file, ...argv]) => file === "git" && argv.includes("add")),
-      false,
-    );
-  });
-
-  it("allows a non-secret environment template to publish", async () => {
-    const git = publishExec({ paths: [".env.example"] });
-    const result = await runImplementMechanical({
-      action: "publish",
-      repoPath: "/repo",
-      issueNumber: 1426,
-      branchName: "1426-script-phases",
-      commitMessage: "test: cover environment templates",
-    }, baseDeps({ execFile: git.execFile }));
-
-    assert.equal(result.ok, true);
-    assert.ok(git.calls.some(([file, ...argv]) => file === "git" && argv.includes("add")));
+    assert.ok(git.calls.every(([file, ...argv]) => !(file === "git" && argv.includes("push"))));
   });
 
   it("returns durable retry input on conflict and completes from it after resolution", async () => {

@@ -16,12 +16,33 @@ export function validateCommitMessage(message) {
 // the regex-complexity limit (S5843). Matching is unchanged.
 export const SENSITIVE_STAGED_PATH_RE =
   /(?:^|\/)(?:\.secrets?(?:\/|$)|credentials?(?:[./]|$)|[^/]+\.(?:pem|key|p12|pfx)$)/i;
+// A module named `credential(s).<source-ext>` is ordinary application code, not
+// a credential artifact (issue #1649). Only source extensions are listed, so
+// `credentials.json`, `credentials.yaml` and a bare `credentials` entry stay
+// sensitive; secrets *inside* a source file remain the secret scanner's job.
+const SOURCE_MODULE_EXTENSIONS = new Set([
+  "js", "jsx", "mjs", "cjs", "ts", "tsx", "py", "pyi", "rb", "go",
+  "rs", "java", "kt", "kts", "cs", "php", "swift", "scala", "c", "cc",
+  "cpp", "h", "hpp", "sh", "bash",
+]);
+function isCredentialSourceModule(basename) {
+  const [stem, extension, ...rest] = basename.toLowerCase().split(".");
+  return rest.length === 0
+    && (stem === "credential" || stem === "credentials")
+    && SOURCE_MODULE_EXTENSIONS.has(extension);
+}
 export function isSensitivePublishPath(path) {
   const basename = path.split("/").at(-1);
   const sensitiveEnv =
     /^\.env(?:\.|$)/i.test(basename)
     && !/^\.env\.(?:example|sample|template)$/i.test(basename);
-  return sensitiveEnv || SENSITIVE_STAGED_PATH_RE.test(path);
+  if (sensitiveEnv) return true;
+  // Exempting the basename must not exempt its location: a source module inside
+  // a secret-bearing directory is still sensitive by where it sits.
+  const subject = isCredentialSourceModule(basename)
+    ? path.slice(0, path.length - basename.length)
+    : path;
+  return SENSITIVE_STAGED_PATH_RE.test(subject);
 }
 export function splitNullPaths(stdout) {
   return stdout.split("\0").filter(Boolean);
