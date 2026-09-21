@@ -333,7 +333,7 @@ describe("synchronized PR gate", () => {
     assert.equal(result.pr_number, 200);
   });
 
-  it("finds an existing same-repository PR with the branch syntax gh actually accepts", async () => {
+  it("updates a same-repository PR body through the synchronized writer", async () => {
     const calls = [];
     let createCalled = false;
     const runner = async (command, args) => {
@@ -344,9 +344,10 @@ describe("synchronized PR gate", () => {
           createCalled = true;
           throw new Error("duplicate PR creation attempted");
         }
+        if (method === "PATCH") return { stdout: JSON.stringify(restPr({ number: 201 })) };
         const head = new URL(`https://api.github.com${path}`).searchParams.get("head");
         if (head !== `autarchy-ai:${BRANCH}`) return { stdout: "[]\n" };
-        return { stdout: JSON.stringify([restPr({ number: 201 })]) };
+        return { stdout: JSON.stringify([restPr({ number: 201, body: "outdated canonical body" })]) };
       }
       const op = gitOperation(args);
       if (op[0] === "symbolic-ref") return { stdout: `${BRANCH}\n` };
@@ -394,8 +395,10 @@ describe("synchronized PR gate", () => {
     });
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.already_exists, true);
+    assert.equal(result.updated_existing, true);
     assert.equal(result.pr_number, 201);
     assert.equal(createCalled, false);
+    assert.ok(calls.some(([command, args]) => command === "gh" && ghRestCall(args).method === "PATCH"));
     const listCall = calls.find(([command, args]) => command === "gh" && ghRestCall(args).method === "GET");
     // The REST head filter is owner-qualified; a bare branch name would match nothing.
     assert.equal(new URL(`https://api.github.com${ghRestCall(listCall[1]).path}`).searchParams.get("head"), `autarchy-ai:${BRANCH}`);
