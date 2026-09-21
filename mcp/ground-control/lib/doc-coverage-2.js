@@ -157,7 +157,7 @@ export async function runPostFinalReport(input, { workspaceAuthorizationResolver
   // The traceability-reconciliation prerequisite (former issue #1058) is retired
   // with the backend (issue #1500): reconciliation is no longer a workflow phase,
   // so there is no `traceability_reconciled` marker to require. The report's real
-  // gates — CI green, Sonar pass-or-legit-skipped, mandatory Codex review, and the
+  // gates — CI green, Sonar pass-or-legit-skipped, and the
   // sensitive/defer/reserved-marker scrubs above — remain the bar for a "PR ready"
   // record. The agent records requirement status and traceability directly in the
   // requirement files, reviewed in the PR.

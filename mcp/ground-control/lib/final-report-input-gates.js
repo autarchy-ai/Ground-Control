@@ -46,38 +46,18 @@ function refuseNonGreenGates(rest) {
   return null;
 }
 
-// The pre-push Codex review is mandatory for /implement (codex cycle-3 F4, cycle-4 F3). The
-// `lane: "quickfix"` carve-out (issue #906) relaxes only that, and is itself bounded by the lane's
-// requirement-free invariant so a caller cannot relabel an /implement payload to skip review
-// evidence (codex cycle-3 F1 + security F1).
-function refuseReviewEvidence(rest) {
+// /quickfix remains requirement-free. Reviews are workflow observability and
+// never authorize or block a delivery (issue #1693).
+function refuseQuickfixRequirements(rest) {
   const isQuickfixLane = rest.lane === "quickfix";
   if (isQuickfixLane && Array.isArray(rest.requirements) && rest.requirements.length > 0) {
     return refusal(
       rest.issueNumber,
       "final_report_quickfix_with_requirements",
-      "lane='quickfix' is incompatible with requirements.length > 0; /quickfix runs are " +
-        "requirement-free by precondition. If the run actually has requirements in scope, drop " +
-        "lane='quickfix' and provide the mandatory codex review entry; if it does not, pass " +
-        "requirements: [].",
+        "lane='quickfix' is incompatible with requirements.length > 0; /quickfix runs are " +
+        "requirement-free by precondition. If the run has requirements in scope, drop " +
+        "lane='quickfix'; otherwise pass requirements: [].",
       "drop_lane_quickfix_or_drop_requirements_and_retry",
-    );
-  }
-  if (isQuickfixLane) return null;
-  if (!Array.isArray(rest.reviews) || rest.reviews.length === 0) {
-    return refusal(
-      rest.issueNumber,
-      "final_report_no_reviews",
-      "reviews[] is empty — Step 19 requires at least the pre-push Codex review summary; pass a reviews entry like { reviewer: 'codex', summary: '<cycle history + outcome>' } (or pass lane='quickfix' for the /quickfix slim path where AI reviews are opt-in)",
-      "collect_review_summaries_and_retry",
-    );
-  }
-  if (!rest.reviews.some((r) => r && typeof r === "object" && r.reviewer === "codex")) {
-    return refusal(
-      rest.issueNumber,
-      "final_report_codex_review_missing",
-      "reviews[] does not include a 'codex' entry — the pre-push Codex review is mandatory per ADR-029; add a reviews entry with reviewer:'codex' (or pass lane='quickfix' for the /quickfix slim path)",
-      "add_codex_review_entry_and_retry",
     );
   }
   return null;
@@ -125,7 +105,7 @@ export async function refuseFinalReportInput(rest, repoPath) {
     return refusal(rest.issueNumber ?? null, "final_report_input_invalid", validation.errors.join("; "));
   }
   return refuseNonGreenGates(rest)
-    ?? refuseReviewEvidence(rest)
+    ?? refuseQuickfixRequirements(rest)
     ?? refuseUnjustifiedSonarSkip(rest, repoPath);
 }
 

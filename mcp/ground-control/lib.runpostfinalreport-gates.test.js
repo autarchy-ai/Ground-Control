@@ -215,7 +215,7 @@ describe("runPostFinalReport gate boundaries", () => {
     }
   });
 
-  it("final-report refuses with no_reviews when reviews[] is empty (codex cycle-3 F4)", async () => {
+  it("final-report does not gate an empty observational reviews[] array", async () => {
     const dir = makeTempRepo();
     try {
       const r = await import("./lib.js").then(({ runPostFinalReport }) =>
@@ -228,14 +228,13 @@ describe("runPostFinalReport gate boundaries", () => {
           plainEnglishOutcome: FINAL_REPORT_OUTCOME,
         })
       );
-      assert.equal(r.ok, false);
-      assert.equal(r.error, "final_report_no_reviews");
+      assert.notEqual(r.error, "final_report_no_reviews");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it("final-report refuses with codex_review_missing when no codex entry is present (codex cycle-4 F3)", async () => {
+  it("final-report does not require a codex review entry", async () => {
     const dir = makeTempRepo();
     try {
       const r = await import("./lib.js").then(({ runPostFinalReport }) =>
@@ -248,14 +247,13 @@ describe("runPostFinalReport gate boundaries", () => {
           plainEnglishOutcome: FINAL_REPORT_OUTCOME,
         })
       );
-      assert.equal(r.ok, false);
-      assert.equal(r.error, "final_report_codex_review_missing");
+      assert.notEqual(r.error, "final_report_codex_review_missing");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it("final-report accepts empty reviews when lane='quickfix' (issue #906)", async () => {
+  it("final-report accepts empty reviews regardless of lane (#1693)", async () => {
     const dir = makeTempRepo();
     try {
       // Use sonarStatus='skipped' with no sonarcloud cfg so the runner returns
@@ -278,18 +276,18 @@ describe("runPostFinalReport gate boundaries", () => {
           summary: "Fixed the parser bug.",
         })
       );
-      // The lane-gated errors must NOT fire — that proves quickfix bypassed them.
+      // Review-related errors must not fire for any lane.
       assert.notEqual(r.error, "final_report_no_reviews");
       assert.notEqual(r.error, "final_report_codex_review_missing");
       // The runner reached the sonar-configured-but-skipped check downstream,
-      // proving lane='quickfix' got past the reviews gates.
+      // proving the request got past the observational reviews field.
       assert.equal(r.error, "final_report_sonar_skipped_but_configured");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it("final-report still requires codex review entry when lane='implement' (default)", async () => {
+  it("final-report allows non-codex review entries for lane='implement'", async () => {
     const dir = makeTempRepo();
     try {
       const r = await import("./lib.js").then(({ runPostFinalReport }) =>
@@ -303,8 +301,7 @@ describe("runPostFinalReport gate boundaries", () => {
           plainEnglishOutcome: FINAL_REPORT_OUTCOME,
         })
       );
-      assert.equal(r.ok, false);
-      assert.equal(r.error, "final_report_codex_review_missing");
+      assert.notEqual(r.error, "final_report_codex_review_missing");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

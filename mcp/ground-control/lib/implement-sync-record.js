@@ -1,6 +1,5 @@
 // The durable synchronization record: the issue-thread attestation binding a
-// delivery to the base it was synchronized against and, since issue #1679, to the
-// review that authorized it.
+// delivery to the base it was synchronized against and to its run lane.
 //
 // Split out of codex-workflow.js when the v2 binding attributes pushed that module
 // past the repo's 500-line limit (docs/CODING_STANDARDS.md, Sonar S104). Build,
@@ -10,18 +9,15 @@ import { randomBytes } from "node:crypto";
 import { GIT_OBJECT_ID_RE, validateImplementBranchName } from "./codex-workflow.js";
 import { isSafeGitRefName } from "./repo-context.js";
 
-// v2 makes this record the bridge from review to delivery (issue #1679): besides
-// the heads and trees it always carried, it names the trusted review publication
-// it was bound against, that review's revision digest, the settled tree the
-// delivery work produced, and the lane derived from the run's trusted pickup record.
+// v2 records the heads and trees, compatibility review placeholders, and the
+// lane derived from the run's trusted pickup record. Review is not authority.
 // A v1 record no longer parses, so an in-flight run re-synchronizes rather than
 // being accepted on evidence that binds nothing.
 export const IMPLEMENT_BASE_SYNC_SCHEMA = "gc.implement.remote-base-sync/v2";
 // Historical records stay readable so one on an issue's thread cannot stop that
 // issue from re-synchronizing; they are simply not authorization (issue #1679).
 export const IMPLEMENT_BASE_SYNC_SCHEMA_V1 = "gc.implement.remote-base-sync/v1";
-// `-` is the absent-publication sentinel: the /quickfix lane runs no mandatory
-// review, so it has no publication to name.
+// `-` is the compatibility placeholder for the retired review-binding fields.
 export const IMPLEMENT_BASE_SYNC_NO_PUBLICATION = "-";
 export const IMPLEMENT_BASE_SYNC_ACTIONS = Object.freeze(["start", "complete"]);
 export const IMPLEMENT_BASE_SYNC_OUTCOMES = Object.freeze([

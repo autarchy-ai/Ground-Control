@@ -265,12 +265,12 @@ describe("runAssertCompletion — post_merge refuses when PR not merged", () => 
 
 // ---------------------------------------------------------------------------
 // Test 8: pre_merge readiness — posts ready-for-review record, no merge gate,
-// only the published-review evidence assertion (issue #963; ADR-089 §2
-// removed the GRC pre-merge assertion).
+// only synchronized delivery and lane assertions (issue #1693 makes review
+// publication observational).
 // ---------------------------------------------------------------------------
 
 describe("runAssertCompletion — pre_merge readiness report", () => {
-  it("returns ok:true phase:pre_merge with readiness_report and published-review evidence", async () => {
+  it("returns ok:true phase:pre_merge with a readiness report", async () => {
     // No traceability markers and an UNMERGED PR. pre_merge must still succeed:
     // it skips the merge gate and every reconciliation assertion.
     const shim = makeCompletionShimRepo({ comments: [], prMerged: false });
@@ -298,21 +298,9 @@ describe("runAssertCompletion — pre_merge readiness report", () => {
         settled_tree_oid: "1".repeat(40),
         synchronization_record_id: "4".repeat(32),
       }, {
-        name: "codex_review_published",
-        ok: true,
-        comment_id: 8999,
-        // Issue #1679: the assertion names what the publication actually covered.
-        revision_digest: "c".repeat(64),
-        candidate_tree_oid: "1".repeat(40),
-        findings_count: 0,
-        branch: "963-branch",
-      }, {
-        // Issue #1679: the record and the publication are asserted as one chain,
-        // not as two independent checks.
         name: "delivery_binding_current",
         ok: true,
-        review_publication_id: "a".repeat(64),
-        review_revision_digest: "c".repeat(64),
+        lane: "implement",
       }]);
       assert.equal(r.final_report, null);
       assert.ok(r.readiness_report != null);
@@ -322,7 +310,7 @@ describe("runAssertCompletion — pre_merge readiness report", () => {
     }
   });
 
-  it("refuses an unpublished local review before posting readiness", async () => {
+  it("allows unpublished review observability before posting readiness", async () => {
     const shim = makeCompletionShimRepo({ comments: [], prMerged: false, publishedReview: false });
     try {
       const r = await withShimPath(shim.binDir, () => runAssertCompletion({
@@ -336,9 +324,8 @@ describe("runAssertCompletion — pre_merge readiness report", () => {
         plainEnglishOutcome: "Ready for review.",
         phase: "pre_merge",
       }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) }));
-      assert.equal(r.ok, false);
-      assert.equal(r.error, "completion_review_publication_missing");
-      assert.equal(r.next_action, "publish_the_retained_review_or_run_the_automatic_review_cycle");
+      assert.equal(r.ok, true, `expected ok:true; got: ${JSON.stringify(r)}`);
+      assert.ok(r.readiness_report != null);
     } finally {
       shim.cleanup();
     }

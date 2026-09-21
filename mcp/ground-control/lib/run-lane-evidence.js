@@ -1,9 +1,7 @@
 // Which lane a run belongs to, derived from the issue thread (issue #1679).
 //
-// `/quickfix` waives the mandatory pre-push review gate. That waiver used to be
-// granted by a bare `lane` argument on the PR-creation call: nothing recorded the
-// choice anywhere, so any caller could take the waiver at the last step of an
-// `/implement` run without the run ever having been a quickfix.
+// A bare `lane` argument used to control review-related delivery behavior. The
+// lane is now a run property for workflow reporting and delivery consistency.
 //
 // A lane is now a property of the run, recorded before it takes effect. The MCP
 // server posts a pickup comment when a run is bootstrapped, naming the lane and
@@ -11,7 +9,7 @@
 // write author for its branch, so switching lanes is itself recorded: when
 // the maintainer tells an agent to move on without a review, the agent
 // bootstraps the same branch as `/quickfix` and the thread says so. Every gate
-// that relaxes anything for `/quickfix` reads the lane from here, and a caller
+// that depends on the selected workflow lane reads it from here, and a caller
 // that states a different lane is refused.
 //
 // Deliberately, no further human signal is required. Choosing the lane is the

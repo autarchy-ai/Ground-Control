@@ -361,9 +361,8 @@ export async function runAssertCompletion(input, {
   // requirement AT THE IMMUTABLE MERGE REVISION — never the active checkout or
   // caller-supplied status. A mismatch fails closed before the final report, so the
   // report can never claim a lifecycle state absent from the merged target branch.
-  // Requirement-free runs skip this and keep prior behavior. runPostFinalReport still
-  // enforces CI green, Sonar pass-or-legit-skipped, the mandatory Codex review, and the
-  // sensitive/defer/reserved-marker scrubs.
+  // Requirement-free runs skip this and keep prior behavior. runPostFinalReport enforces
+  // CI green, Sonar pass-or-legit-skipped, and sensitive/defer/reserved-marker scrubs.
   const verify = await verifyMergedRequirements({
     repository, issueNumber, mergedPr: mergeCheck.mergedPr, requirements, assertions, workspaceAuthorizationResolver,
   });

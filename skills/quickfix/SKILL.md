@@ -102,12 +102,9 @@ pickup record by an author with effective repository write permission, which Q1
 created, and refuses a lane that disagrees with
 `implement_pr_lane_mismatch`. Readiness and finalize apply the same rule.
 
-To take an in-progress `/implement` branch onto this lane - for example when the
-maintainer says to move on without a review - run Q1 on that same branch. The
-server records the switch on the issue, and every later gate reads the new lane
-from there. Nothing else is needed. The waiver covers the
-review-publication tuple and nothing else, and it is refused for a
-requirement-backed issue. The body links the issue with `Closes #<issue>`; on an integration
+To take an in-progress `/implement` branch onto this lane, run Q1 on that same
+branch. The server records the switch on the issue, and every later lane check
+reads it from there. A requirement-backed issue is not a legal quickfix. The body links the issue with `Closes #<issue>`; on an integration
 branch that is a cross-reference, not the close mechanism.
 
 ### Q6. Monitor once per published head
@@ -141,8 +138,8 @@ the issue and PR numbers, and the completion payload from this run. The action
 re-reads the required hosted checks for the current PR head and records a trusted
 delivery handoff on the issue thread, plus a pointer comment on the PR.
 
-This lane still gets no pre-merge report and none of `/implement`'s requirement or
-review gates; the handoff is a machine record, not an outcome. What it buys is that
+This lane still gets no pre-merge report and none of `/implement`'s requirement
+processing; the handoff is a machine record, not an outcome. What it buys is that
 `.github/workflows/ground-control-phase-e.yml` can finalize the merged PR with no
 model or agent session (issue #1671, ADR-102), so **this run may end here**. Nothing
 in this lane polls for or waits on the merge.

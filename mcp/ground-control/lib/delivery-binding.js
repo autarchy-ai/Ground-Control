@@ -1,27 +1,7 @@
-// Binding a delivery to the synchronized branch and lane (issue #1679).
-//
-// Three identities are involved and they are deliberately distinct:
-//
-//   - the *review revision*  — what the reviewers received;
-//   - the *settled tree*     — where the delivery work ended, i.e. the tree of
-//                              the feature head before base synchronization;
-//   - the *delivered head*   — what was pushed after synchronization.
-//
-// The PR-creation gate used to ask only "does a complete trusted publication
-// tuple exist for this issue", and the evidence reader dropped the tuple's
-// revision digest entirely, so a clean review could authorize an unrelated tree.
-//
-// What can honestly be enforced depends on the review's own outcome, and
-// ADR-099 draws the line: a cycle that reported findings is *expected* to be
-// followed by repairs, so its settled tree is recorded without claiming Codex
-// reviewed it. A cycle that reported no findings had nothing to repair, so any
-// later tree is unreviewed work and the binding is exact.
-//
-// The binding is computed once, at the synchronization boundary, and recorded in
-// the trusted issue-thread synchronization record. PR creation and both
-// completion phases re-read that one record rather than growing three copies of
-// the policy or re-deriving it from a local checkout that may no longer hold the
-// commits.
+// Binding a delivery to its synchronized branch and trusted lane. Review is
+// workflow observability only; it does not participate in this authority check
+// (issue #1693). The binding is computed once at synchronization and reused by
+// PR creation and completion rather than re-derived from a local checkout.
 
 function refuse(error, message, nextAction) {
   return { ok: false, error, message, next_action: nextAction };
