@@ -10,6 +10,8 @@ export const SHA_B = "b".repeat(40);
 
 export const RECORD_ID = "c".repeat(32);
 
+const IMPLEMENT_BRANCH = "1426-script-phases";
+
 function context() {
   return {
     status: "ok",
@@ -25,7 +27,7 @@ export function baseDeps(overrides = {}) {
     prepareBranch: async () => ({
       ok: true,
       repo_path: "/repo",
-      branch: "1426-script-phases",
+      branch: IMPLEMENT_BRANCH,
     }),
     getIssueThread: async () => ({
       ok: true,
@@ -47,7 +49,7 @@ export function baseDeps(overrides = {}) {
     getTraceabilityByArtifact: async () => [{ id: "link-1" }],
     markPickedUp: async () => ({ ok: true, comment_url: "https://github.test/pickup" }),
     synchronize: async () => ({ ok: true, status: "complete", recordId: RECORD_ID }),
-    remoteSnapshot: async () => ({ ok: true, head_sha: "a".repeat(40), branch: "1426-script-phases", failures: [], passed: true }),
+    remoteSnapshot: async () => ({ ok: true, head_sha: "a".repeat(40), branch: IMPLEMENT_BRANCH, failures: [], passed: true }),
     // Readiness binds the delivery handoff to the head whose hosted checks it read (#1671).
     readRemoteGates: async () => ({ ok: true, passed: true, state: "OPEN", head_sha: "a".repeat(40) }),
     recordDeliveryReadiness: async () => ({ ok: true, record_comment_id: 4242 }),
@@ -99,7 +101,7 @@ export function publishExec({ paths = ["src/change.js"] } = {}) {
     execFile: async (file, argv) => {
       calls.push([file, ...argv]);
       if (file === "git" && argv.includes("--show-current")) {
-        return { stdout: "1426-script-phases\n", stderr: "" };
+        return { stdout: `${IMPLEMENT_BRANCH}\n`, stderr: "" };
       }
       if (file === "git" && argv.includes("-z")) {
         if (argv.includes("--cached") || argv.includes("--others")) {
