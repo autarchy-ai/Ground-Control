@@ -200,6 +200,25 @@ class GuestMaterializationTest(unittest.TestCase):
         self.assertIn("guest-only-output", recorded)
         self.assertIn("/bin/false", recorded)
 
+    def test_workspace_is_group_writable_for_the_dynamic_task_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "workspace"
+            nested = workspace / "nested"
+            nested.mkdir(parents=True, mode=0o750)
+            source = nested / "source.txt"
+            source.write_text("content", encoding="utf-8")
+            source.chmod(0o640)
+            outside = Path(directory) / "outside"
+            outside.write_text("unchanged", encoding="utf-8")
+            outside.chmod(0o600)
+            link = workspace / "outside-link"
+            link.symlink_to(outside)
+            guest_bootstrap.allow_task_scope(workspace)
+            self.assertTrue(workspace.stat().st_mode & 0o030)
+            self.assertTrue(nested.stat().st_mode & 0o030)
+            self.assertTrue(source.stat().st_mode & 0o020)
+            self.assertEqual(outside.stat().st_mode & 0o022, 0)
+
     def test_main_uses_only_the_fixed_paths(self) -> None:
         expected = [str(guest_bootstrap._PACKET_PATH), str(guest_bootstrap._WORKSPACE_PATH), "agent-1"]
         with patch("tools.incus_sandbox.guest_bootstrap.materialize") as materialize:
@@ -238,9 +257,11 @@ class TransferCommandTest(unittest.TestCase):
         self.assertEqual([argument for argument in commands[0] if argument.startswith("/home")],
                          ["/home/sandbox/.local", "/home/sandbox/.local/bin", "/home/sandbox/.gc-transfer"])
         self.assertTrue(all(command[4].startswith("agent-1/home/sandbox/")
-                            for command in commands[1:5]))
+                            for command in commands[2:5]))
+        self.assertTrue(all(command[4].startswith("agent-1/usr/local/lib/gc-incus-sandbox/")
+                            for command in commands[5:7]))
         # The bootstrap is root-owned and run by the unprivileged guest user.
-        self.assertIn("--mode=0755", commands[1])
+        self.assertIn("--mode=0755", commands[2])
 
     def test_transfer_rejects_a_name_that_could_change_the_guest_command(self) -> None:
         with self.assertRaises(TransferError):
@@ -286,6 +307,24 @@ class TransferCommandTest(unittest.TestCase):
         self.assertEqual([record["outcome"] for record in records], ["success", "failure"])
         with self.assertRaises(TransferError):
             incus_transfer.audited_transfer(config, "agent-1", io.BytesIO(b"packet"), "invalid")
+
+    def test_unbound_replacement_clears_the_previous_source_authority(self) -> None:
+        writer = types.SimpleNamespace(ensure_available=lambda: None, write=lambda _: None)
+        events = types.SimpleNamespace(EventWriter=lambda *_: writer)
+        source = packet({"schema": "gc.incus-sandbox.source/v1", "kind": "clone",
+                         "commit": "a" * 40,
+                         "repository": "https://github.com/example/private.git"})
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            binding = state / "source-bindings" / "agent-1.json"
+            binding.parent.mkdir()
+            binding.write_text('{"obsolete":true}', encoding="utf-8")
+            config = types.SimpleNamespace(event_log=state / "events", event_max_bytes=32,
+                                           project="gc-sandbox", state_dir=state)
+            with patch.dict(sys.modules, {"events": events}), \
+                 patch("tools.incus_sandbox.transfer.transfer"):
+                incus_transfer.audited_transfer(config, "agent-1", io.BytesIO(source), "clone")
+            self.assertFalse(binding.exists())
 
     def test_dirty_migration_requires_v2_root_owned_limits(self) -> None:
         events = types.SimpleNamespace(EventWriter=lambda *_: types.SimpleNamespace(

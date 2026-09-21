@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-09-19
-- **Amended:** 2026-09-21 for existing-session migration (#1645)
+- **Amended:** 2026-09-21 for existing-session migration (#1645) and explicit repository-scoped task processes (#1691)
 - **Issue:** #1643
 - **Requirement:** none
 - **Supersedes:** none

@@ -46,7 +46,7 @@ require_pinned_image() {
   "$dry_run" && { echo "require a pinned image fingerprint before setup"; return 0; }
   local image
   image="$(python3 -c 'import json; print(json.load(open("/etc/gc-incus-sandbox/config.json"))["image"])')"
-  if [[ ! "$image" =~ ^(sha256:|images:)[0-9a-f]{64}$ ]] || [[ "$image" == *"0000000000000000000000000000000000000000000000000000000000000000" ]]; then
+  if [[ ! "$image" =~ ^(images:|local:)[0-9a-f]{64}$ ]] || [[ "$image" == *"0000000000000000000000000000000000000000000000000000000000000000" ]]; then
     echo "replace the image placeholder with a pinned fingerprint before setup" >&2
     exit 65
   fi
@@ -136,10 +136,16 @@ install_files() {
   run install -m 0640 "$PAYLOAD_ROOT/config.py" "$INSTALL_ROOT/config.py"
   run install -m 0640 "$PAYLOAD_ROOT/events.py" "$INSTALL_ROOT/events.py"
   run install -m 0640 "$PAYLOAD_ROOT/observations.py" "$INSTALL_ROOT/observations.py"
+  run install -m 0640 "$PAYLOAD_ROOT/repository_environment.py" "$INSTALL_ROOT/repository_environment.py"
+  run install -m 0750 "$PAYLOAD_ROOT/task_environment.py" "$INSTALL_ROOT/task_environment.py"
+  run install -m 0644 "$PAYLOAD_ROOT/task_launcher.py" "$INSTALL_ROOT/task-launcher.py"
   run install -m 0644 "$PAYLOAD_ROOT/guest_bootstrap.py" "$INSTALL_ROOT/guest-bootstrap.py"
   run install -m 0644 "$PAYLOAD_ROOT/migration.py" "$INSTALL_ROOT/migration.py"
   run install -m 0644 "$PAYLOAD_ROOT/migration_packet.py" "$INSTALL_ROOT/migration_packet.py"
   run install -m 0644 "$PAYLOAD_ROOT/migration_guard.mjs" /usr/local/bin/migration_guard.mjs
+  run install -m 0644 "$PAYLOAD_ROOT/repository_identity.mjs" /usr/local/bin/repository_identity.mjs
+  run install -m 0644 "$PAYLOAD_ROOT/source_binding.mjs" /usr/local/bin/source_binding.mjs
+  run install -m 0644 "$PAYLOAD_ROOT/task_client.mjs" /usr/local/bin/task_client.mjs
   run install -m 0750 "$PAYLOAD_ROOT/helper.py" "$INSTALL_ROOT/helper.py"
   run install -m 0750 "$PAYLOAD_ROOT/transfer.py" "$INSTALL_ROOT/transfer.py"
   run install -m 0755 "$PAYLOAD_ROOT/client.mjs" /usr/local/bin/gc-incus-sandbox
@@ -149,7 +155,7 @@ install_files() {
     [[ "${SUDO_UID:-}" =~ ^[1-9][0-9]*$ ]] || { echo "install through sudo from the intended operator" >&2; exit 64; }
     cat >"/etc/sudoers.d/gc-incus-sandbox" <<EOF
 # This helper validates the closed action and sandbox-name vocabulary itself.
-${SUDO_USER} ALL=(root) NOPASSWD: $INSTALL_ROOT/helper.py *, $INSTALL_ROOT/transfer.py *
+${SUDO_USER} ALL=(root) NOPASSWD: $INSTALL_ROOT/helper.py *, $INSTALL_ROOT/transfer.py *, $INSTALL_ROOT/task_environment.py *
 EOF
     chmod 0440 /etc/sudoers.d/gc-incus-sandbox
     visudo -cf /etc/sudoers.d/gc-incus-sandbox
@@ -249,7 +255,7 @@ refresh() {
 upgrade() {
   # Replace only reviewed sandbox programs and migrate the closed root policy;
   # existing guests, allocations, storage, and network resources remain intact.
-  "$dry_run" && { echo "upgrade sandbox programs and gc.incus-sandbox config to v2"; return 0; }
+  "$dry_run" && { echo "upgrade sandbox programs and gc.incus-sandbox config to v3"; return 0; }
   require_program_ownership_record
   install_files true
   /usr/bin/python3 "$INSTALL_ROOT/config.py" upgrade "$CONFIG_ROOT/config.json"

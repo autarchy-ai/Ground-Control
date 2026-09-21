@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -24,6 +25,8 @@ class PacketError(RuntimeError):
 
 _COMMIT = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _REPOSITORY = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?$")
+_REPOSITORY_IDENTITY = re.compile(r"^[a-z0-9_.-]{1,100}/[a-z0-9_.-]{1,100}$")
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _HEADER_BYTES = 8
 _MAX_METADATA_BYTES = 4096
 _INVALID_METADATA = "source packet metadata is invalid"
@@ -81,14 +84,28 @@ def _validated_source(metadata: dict[str, object], payload: bytes) -> dict[str, 
     expected = {"schema", "kind", "commit", "repository"}
     if kind == "bundle":
         expected = {"schema", "kind", "commit"}
+    binding_fields = {"repository_identity", "environment_digest"}
+    present_binding = set(metadata) & binding_fields
+    if present_binding:
+        expected |= binding_fields
     if set(metadata) != expected:
         raise PacketError("source packet fields are invalid")
+    if present_binding and (
+        not isinstance(metadata.get("repository_identity"), str)
+        or not _REPOSITORY_IDENTITY.fullmatch(metadata["repository_identity"])
+        or not isinstance(metadata.get("environment_digest"), str)
+        or not _DIGEST.fullmatch(metadata["environment_digest"])
+    ):
+        raise PacketError("source packet environment binding is invalid")
     repository = _clone_repository(metadata, kind)
     if kind == "bundle" and not payload:
         raise PacketError("source packet bundle is empty")
     validated = {"schema": "gc.incus-sandbox.source/v1", "kind": kind, "commit": commit}
     if repository is not None:
         validated["repository"] = repository
+    if present_binding:
+        validated["repository_identity"] = metadata["repository_identity"]
+        validated["environment_digest"] = metadata["environment_digest"]
     return validated
 
 
@@ -195,6 +212,21 @@ def _checkout(metadata: dict[str, str], bundle_offset: int, environment: dict[st
             _BUNDLE_PATH.unlink(missing_ok=True)
 
 
+def allow_task_scope(workspace: Path) -> None:
+    """Let only the sandbox group write source used by the dynamic task identity."""
+    for current, directories, files in os.walk(workspace):
+        current_path = Path(current)
+        os.chmod(current_path, current_path.stat().st_mode | stat.S_IWGRP | stat.S_IXGRP)
+        for name in directories + files:
+            path = current_path / name
+            if path.is_symlink():
+                continue
+            mode = path.stat().st_mode | stat.S_IWGRP
+            if path.is_dir():
+                mode |= stat.S_IXGRP
+            os.chmod(path, mode)
+
+
 def materialize(sandbox: str = "sandbox") -> None:
     """Create a guest checkout and prepare the sandbox user's local tool prefix."""
     packet = _PACKET_PATH.read_bytes()
@@ -208,6 +240,7 @@ def materialize(sandbox: str = "sandbox") -> None:
             if isinstance(envelope, dict) and envelope.get("schema") == "gc.incus-sandbox.migration/v1":
                 require_guest_tools()
                 restore_migration(packet, _WORKSPACE_PATH, _PACKET_PATH.parent, sandbox)
+                allow_task_scope(_WORKSPACE_PATH)
                 guest_tool_prefix(Path.home() / ".local")
                 _PACKET_PATH.unlink(missing_ok=True)
                 return
@@ -215,6 +248,7 @@ def materialize(sandbox: str = "sandbox") -> None:
     require_guest_tools()
     if not prepared_workspace(metadata["commit"]):
         _checkout(metadata, bundle_offset, guest_environment())
+    allow_task_scope(_WORKSPACE_PATH)
     # Tools and credentials are installed by the operator in the guest session. A
     # transfer does not fetch and run a moving network package beside private source.
     guest_tool_prefix(Path.home() / ".local")

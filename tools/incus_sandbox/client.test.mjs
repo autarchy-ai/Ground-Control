@@ -30,6 +30,7 @@ test("routes preparation through the closed source-transfer path", () => {
     calls.push({ command, args, options });
     if (args.includes("rev-parse")) return { status: 0, stdout: `${"c".repeat(40)}\n` };
     if (args.includes("remote")) return { status: 0, stdout: "https://github.com/example/private.git\n" };
+    if (args.includes("show")) return { status: 128, stdout: Buffer.alloc(0) };
     return { status: 0 };
   }, {});
   assert.equal(calls.at(-1).command, "/usr/bin/sudo");
@@ -49,4 +50,51 @@ test("deletion requires the exact sandbox name as an explicit confirmation", () 
   assert.throws(() => runClient(["delete", "agent-1"], () => ({ status: 0 })), /confirmation/);
   assert.throws(() => runClient(["delete", "agent-1", "--confirm", "agent-2"], () => ({ status: 0 })),
     /confirmation/);
+});
+
+test("task start sends the fixed repository declaration over stdin rather than argv", () => {
+  const calls = [];
+  const declaration = Buffer.from(JSON.stringify({
+    schema: "gc.incus-sandbox.task-environment/v1",
+    repository: "example/private",
+    variables: [{ name: "REGION", literal: "eu-central-1" }],
+  }));
+  runProgram(["task-start", "agent-1"], ({ command, args, options }) => {
+    calls.push({ command, args, options });
+    if (command === "/usr/bin/git" && args.includes("--show-toplevel")) {
+      return { status: 0, stdout: "/work/repository\n" };
+    }
+    if (command === "/usr/bin/git") {
+      return { status: 0, stdout: "git@github.com:example/private.git\n" };
+    }
+    return { status: 0 };
+  }, { GH_TOKEN: "ambient-canary" }, {
+    readFile: (path) => {
+      assert.equal(path, "/work/repository/.gc-sandbox-env.json");
+      return declaration;
+    },
+  });
+  const privileged = calls.at(-1);
+  assert.deepEqual(privileged.args, [
+    "--", "/usr/local/lib/gc-incus-sandbox/task_environment.py", "start", "agent-1",
+  ]);
+  assert.deepEqual(privileged.options.stdio, ["pipe", "inherit", "inherit"]);
+  assert.doesNotMatch(JSON.stringify(privileged.args), /eu-central|ambient-canary/);
+  const request = JSON.parse(privileged.options.input);
+  assert.equal(request.repository, "example/private");
+  assert.deepEqual(Buffer.from(request.declaration_b64, "base64"), declaration);
+});
+
+test("task lifecycle has a closed command vocabulary", () => {
+  const calls = [];
+  for (const action of ["task-stop"]) {
+    runProgram([action, "agent-1"], ({ command, args, options }) => {
+      calls.push({ command, args, options });
+      return { status: 0 };
+    }, {});
+  }
+  assert.deepEqual(calls.map((call) => call.args.slice(2)), [["stop", "agent-1"]]);
+  assert.throws(() => runProgram(["task-status", "agent-1"], () => ({ status: 0 }), {}), /unsupported/);
+  assert.throws(() => runProgram(["task-start", "agent-1", "alias"], () => ({ status: 0 }), {}),
+    /task action/);
 });

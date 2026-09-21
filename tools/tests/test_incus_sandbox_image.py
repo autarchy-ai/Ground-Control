@@ -105,7 +105,7 @@ class TemplateCommandTest(unittest.TestCase):
     def test_provisioning_installs_the_documented_prerequisites_from_pinned_sources(self) -> None:
         script = provision_script()
         for expected in ("git-core", "nodejs", "npm", "python3", "tmux", "useradd -m -s /bin/bash sandbox",
-                         "sha256sum -c -", "gh_2.101.0_linux_"):
+                         "sha256sum -c -", "gh_2.101.0_linux_", "kernel.yama.ptrace_scope=1"):
             self.assertIn(expected, script)
         # The template carries tooling, never a credential, a host path, or a repository.
         for forbidden in ("GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "/home/atomik", "git clone"):
