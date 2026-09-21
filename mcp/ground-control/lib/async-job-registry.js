@@ -140,7 +140,15 @@ function _validateAsyncJobOptions(options) {
     executionScope = null,
     singleFlight = false,
     cancellable = true,
+    retryStaleResult = null,
   } = options ?? {};
+  if (retryStaleResult != null && typeof retryStaleResult !== "function") {
+    return {
+      ok: false,
+      error: "job_options_invalid",
+      message: "retryStaleResult must be a function when provided.",
+    };
+  }
   if (idempotencyKey != null) {
     if (
       typeof idempotencyKey !== "string"
@@ -194,6 +202,7 @@ function _validateAsyncJobOptions(options) {
     executionScope,
     singleFlight,
     cancellable,
+    retryStaleResult,
   };
 }
 
@@ -248,7 +257,15 @@ export function startAsyncJob(kind, runFn, options = {}) {
           message: "That idempotency key is already bound to different normalized input.",
         };
       }
-      return _asyncJobEnvelope(existing);
+      // A terminal job the caller flagged as stale (e.g. a watcher that ended
+      // without a verdict) answers nothing on replay. Evict it so a fresh job
+      // takes the same key/namespace slot instead of echoing the old envelope
+      // forever within the TTL (issue #1695).
+      const stale = existing.status === "done"
+        && typeof validated.retryStaleResult === "function"
+        && validated.retryStaleResult(existing.result);
+      if (!stale) return _asyncJobEnvelope(existing);
+      _asyncJobs.delete(existing.id);
     }
   }
 

@@ -44,6 +44,23 @@ describe("progressive hosted remediation", () => {
     assert.equal((await runMonitor(args, deps)).ok, true);
     assert.equal(calls, 1);
   });
+  it("starts a fresh Sonar watch after a producer_pending rerun on the same head", async () => {
+    let sonarCalls = 0;
+    const deps = { remoteSnapshot: async () => snapshot, monitorSleep: sleep,
+      watchCi: async () => ({ ok: true, conclusion: "success" }),
+      watchSonar: async () => {
+        sonarCalls += 1;
+        return sonarCalls === 1
+          ? { ok: false, error: "sonar_watch_producer_pending", pr_number: 42, head_sha: snapshot.head_sha }
+          : goodSonar;
+      } };
+    const first = await runMonitor(args, deps);
+    assert.equal(first.ok, false);
+    assert.equal(first.error, "sonar_watch_producer_pending");
+    const second = await runMonitor(args, deps);
+    assert.equal(second.ok, true);
+    assert.equal(sonarCalls, 2);
+  });
   it("invalidates old-head completion after a push", async () => {
     let reads = 0;
     const result = await runMonitor(args, {

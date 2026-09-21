@@ -56,7 +56,22 @@ export function nextMonitorInterval(currentMs, unchanged) {
 }
 
 // Child jobs survive an early failure response. Their handles let the driver
-// keep consuming diagnostics while repairing; a new SHA gets new child jobs.
+// keep consuming diagnostics while repairing. A new SHA gets new child jobs;
+// so does a rerun on the same SHA whose previous child ended without a verdict
+// (watchCi/watchSonar resolve `ok:false` only when they could not produce an
+// answer - `isNonVerdictWatchResult` below) - reusing that non-answer left
+// `monitor` stuck replaying it for the job's whole TTL (issue #1695).
+function isNonVerdictWatchResult(result) {
+  return result != null && typeof result === "object" && result.ok === false;
+}
+
+// The monitor loop's own window (`MONITOR_TOTAL_TIMEOUT_MS` below) is the
+// longest a single watch is worth waiting on. The Sonar child must be given at
+// least that long to wait for its producer check to register, or a repository
+// whose Sonar job starts only after a long-running test job fails its first
+// watch deterministically, before the producer ever appears (issue #1695).
+const MONITOR_TOTAL_TIMEOUT_MS = 2700000;
+
 export async function runMonitor(args, deps) {
   const invalid = requireField(args, "prNumber", "monitor");
   if (invalid) return invalid;
@@ -76,12 +91,16 @@ export async function runMonitor(args, deps) {
   const jobs = {};
   for (const [gate, run] of [
     ["ci", () => deps.watchCi({ repoPath: args.repoPath, branch: initial.branch, expectedHeadSha: head })],
-    ["sonar", () => deps.watchSonar({ repoPath: args.repoPath, prNumber: args.prNumber, initialWaitSeconds: 0, expectedHeadSha: head })],
+    ["sonar", () => deps.watchSonar({
+      repoPath: args.repoPath, prNumber: args.prNumber, initialWaitSeconds: 0, expectedHeadSha: head,
+      totalTimeoutSeconds: MONITOR_TOTAL_TIMEOUT_MS / 1000,
+    })],
   ]) {
     const job = start(`monitor_${gate}`, run, {
       idempotencyKey: head,
       idempotencyNamespace: `monitor:${args.repoPath}:${args.prNumber}:${gate}`,
       fingerprint: asyncJobInputFingerprint({ head }),
+      retryStaleResult: isNonVerdictWatchResult,
     });
     if (!job.ok) return job;
     jobs[gate] = job.job_id;
@@ -90,7 +109,7 @@ export async function runMonitor(args, deps) {
     resume: { action: "monitor", repo_path: args.repoPath, issue_number: args.issueNumber, pr_number: args.prNumber },
     time_to_actionable_ms: now() - started, wait_after_actionable_ms: 0 });
   let intervalMs = MONITOR_INTERVAL_BASE_MS;
-  while (now() - started < 2700000) {
+  while (now() - started < MONITOR_TOTAL_TIMEOUT_MS) {
     const current = await read();
     if (!current.ok) return { ...current, ...evidence() };
     if (current.head_sha !== head) return failure("monitor", "monitor_head_changed",
