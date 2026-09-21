@@ -6,6 +6,7 @@
 
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -49,6 +50,9 @@ const REQUIRED_FIELD_REGISTRY = {
   ],
   gc_release_identity: [
     "action", "repo_path", "issue_number", "family", "idempotency_key", "reason",
+  ],
+  gc_issue_dependency: [
+    "action", "repo_path", "blocked_issue_number", "blocking_issue_number", "repo",
   ],
 };
 
@@ -94,6 +98,39 @@ describe("MCP tool description parity (issue #1169)", { timeout: 30000 }, () => 
       }
     });
   }
+
+  // Both inventories are hand-maintained prose, and both had drifted below the real surface by
+  // the time #1673 added a tool: the README said 34 and the runtime header said 34 while the
+  // server advertised 35. Nothing crossed from the prose to the live surface, so the count went
+  // stale in the direction that is hardest to notice — it still looks like a number someone chose.
+  it("keeps the documented tool inventories synchronized with the live surface (issue #1673)", () => {
+    const names = Object.keys(toolMap);
+    for (const [label, source] of [
+      ["mcp/ground-control/README.md", readFileSync(`${DIR}/README.md`, "utf8")],
+      ["mcp/ground-control/server-runtime.js", readFileSync(`${DIR}/server-runtime.js`, "utf8")],
+    ]) {
+      const claimed = /registers \*\*(\d+) tools\*\*|exposes (\d+) tools/.exec(source);
+      assert.ok(claimed, `${label} must state how many tools the server registers`);
+      assert.equal(
+        Number(claimed[1] ?? claimed[2]),
+        names.length,
+        `${label} states a tool count that the server no longer registers`,
+      );
+    }
+    const runtime = readFileSync(`${DIR}/server-runtime.js`, "utf8");
+    const missing = names.filter((name) => !runtime.includes(name));
+    assert.deepEqual(missing, [], "server-runtime.js must name every registered tool in its inventory");
+  });
+
+  it("publishes the issue-dependency action enum as a closed set (issue #1673)", () => {
+    const dependency = toolMap.gc_issue_dependency?.inputSchema?.properties;
+    assert.deepEqual(dependency?.action?.enum, ["read", "add", "remove"]);
+    assert.equal(dependency?.blocked_issue_number?.type, "integer");
+    assert.equal(dependency?.blocked_issue_number?.exclusiveMinimum, 0);
+    // The write operand is optional at the schema level (ADR-035 keeps the shape flat) and
+    // required per action in the handler, so the description has to carry that contract.
+    assert.match(descriptionMap.gc_issue_dependency, /blocking_issue_number/);
+  });
 
   it("publishes the bounded async mechanical and polling schema", () => {
     const mechanical = toolMap.gc_implement_mechanical?.inputSchema?.properties;

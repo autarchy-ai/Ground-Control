@@ -10,13 +10,17 @@
 // TOOL SURFACE (issue #1500 re-platform)
 // ============================================================================
 //
-// The MCP server over repo-local files (issue #1500) exposes 34 tools that
+// The MCP server over repo-local files (issue #1500) exposes 36 tools that
 // back the /implement, /quickfix, /integrate, and /review workflow mechanics
 // plus the coding-agent<->reviewer separation. There is no backend, database, or
 // generic entity CRUD surface — requirements and ADRs are read/edited as
-// repo files directly. Registration lives in ./tools/*.js:
+// repo files directly. This inventory is checked against the live `listTools()`
+// surface by tool-descriptions.test.js, because it had silently drifted below it
+// before #1673. Registration lives in ./tools/*.js:
 //   tools/query.js               — gc_get_repo_ground_control_context,
 //                                   gc_create_github_issue, gc_remember,
+//                                   gc_update_issue_requirements,
+//                                   gc_issue_dependency,
 //                                   gc_codex_architecture_preflight,
 //                                   gc_post_implementation_plan,
 //                                   gc_close_issue_after_merge, gc_codex_review

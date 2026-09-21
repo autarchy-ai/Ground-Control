@@ -18,10 +18,16 @@ import { execFile as defaultExecFile } from "./runtime-primitives.js";
  *
  * `hostname` pins the API host so an ambient `GH_HOST` cannot redirect a call whose repository was
  * authorized from a github.com origin; `timeout` bounds the child in milliseconds.
+ *
+ * `fields` are `gh api -f`, which sends every value as a JSON string. `typedFields` are `-F`, which
+ * sends numbers, booleans, and null as themselves — the issue-dependency endpoints reject a
+ * stringified `issue_id` with 422 (issue #1673). Neither mode lets a caller choose the method,
+ * host, headers, or endpoint; those stay this function's own arguments.
  */
 export async function ghRestJson(repoRoot, path, {
   method = "GET",
   fields = null,
+  typedFields = null,
   paginate = false,
   hostname = null,
   timeout = 0,
@@ -32,7 +38,10 @@ export async function ghRestJson(repoRoot, path, {
   if (paginate) args.push("--paginate", "--slurp");
   args.push(path);
   for (const [key, value] of Object.entries(fields ?? {})) args.push("-f", `${key}=${value}`);
+  for (const [key, value] of Object.entries(typedFields ?? {})) args.push("-F", `${key}=${value}`);
   const { stdout } = await execFile("gh", args, { cwd: repoRoot, maxBuffer: 64 * 1024 * 1024, timeout });
+  // A 204 carries no body, so an empty response is "no content", not a parse failure.
+  if (String(stdout).trim() === "") return paginate ? [] : null;
   const parsed = JSON.parse(stdout);
   if (!paginate) return parsed;
   // --slurp wraps each page in an outer array; list endpoints return arrays per page.
