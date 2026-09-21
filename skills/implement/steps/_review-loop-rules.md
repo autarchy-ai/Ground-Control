@@ -71,11 +71,14 @@ Preserve pre-commit, review, CI, Sonar, and final-report gates.
   redundant verification.
 
 The cap bounds reviewer effort; it is not a requirement for a clean terminal
-verdict. If the user declines another cycle or says to proceed, set
-`status: "accepted_at_cap"` and advance to Phase C. Authorization is required
-only to spend another cycle. Declining another cycle is not a waiver of a known
-finding: every real finding from completed cycles must already be fixed or
-explicitly dispositioned before the question is asked.
+verdict. The user chooses whether the remaining risk warrants another review
+cycle or proceeding. If the user declines another cycle or says to proceed —
+including an explicit instruction such as “proceed without” — set
+`status: "accepted_at_cap"` and advance to Phase C immediately. Do not ask
+again, treat the decision as a blocker, or claim a further review is required.
+Authorization is required only to spend another cycle. Declining another cycle
+is not a waiver of a known finding: every real finding from completed cycles
+must already be fixed or explicitly dispositioned before the question is asked.
 
 The reason for this boundary is empirical: later review cycles often find
 issues introduced while fixing the prior cycle, expanding the loop without

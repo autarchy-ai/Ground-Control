@@ -168,18 +168,25 @@ async function loadIssueRequirementContext(args, deps, context, requirementUids,
 // or a bounded failure envelope; both carry `ok`, so the caller branches on it.
 async function ensureIssuePickup(args, deps, thread, branch, action) {
   const lane = args.lane === "quickfix" ? "quickfix" : "implement";
-  // The run's lane is the lane of the newest pickup this server wrote for the
-  // branch, so a pickup is reused only when that newest record already names the
-  // requested lane. Anything else - no record, a record by someone else, or a
-  // record in the other lane - writes a fresh one, which is how a switch between
-  // lanes is recorded on the issue before it takes effect (issue #1679).
-  const login = await (deps.authenticatedLogin ?? getAuthenticatedGitHubLogin)(args.repoPath);
-  const current = currentPickupLane(
+  // The shared lane reader accepts only exact records by repository-write
+  // authors. Reusing its result keeps bootstrap and every later gate aligned.
+  const derived = await deps.readRunLane({
+    repoPath: args.repoPath,
+    issueNumber: args.issueNumber,
+    branchName: branch,
+  });
+  if (!derived.ok) {
+    return failure(action, derived.error, derived.message, derived.next_action);
+  }
+  // Release reservation is deliberately bound to this server's `/implement`
+  // pickup. Keep that separate ownership evidence when a different trusted
+  // author established the lane record.
+  const ownImplementPickup = lane === "implement" && currentPickupLane(
     (thread.comments ?? []).map((comment) => ({ id: comment?.id, body: comment?.body, authorLogin: comment?.author })),
-    login,
+    await (deps.authenticatedLogin ?? getAuthenticatedGitHubLogin)(args.repoPath),
     branch,
-  );
-  if (current === lane) {
+  ) === "implement";
+  if (derived.pickup_found && derived.lane === lane && (lane !== "implement" || ownImplementPickup)) {
     return { ok: true, reused: true };
   }
   const pickup = await deps.markPickedUp({

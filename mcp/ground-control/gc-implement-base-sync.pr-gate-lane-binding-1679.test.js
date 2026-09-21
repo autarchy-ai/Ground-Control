@@ -1,8 +1,6 @@
 // The synchronized PR gate used to take the caller's word for which lane a run
-// belonged to. `lane: "quickfix"` plus an issue with no requirement UIDs waived
-// the mandatory pre-push review gate — but a requirement-free issue is an
-// ordinary `/implement` target too, so the pair proved nothing and any caller
-// could open a PR for work that was never reviewed (issue #1679).
+// belonged to. The lane remains a delivery authority even though issue #1693
+// makes review publication observational rather than a PR-creation condition.
 //
 // The lane is now derived from the pickup record the MCP server wrote under its
 // own identity. These drive the gate far enough to observe which branch it took:
@@ -54,8 +52,8 @@ async function workspaceAuthorization() {
   };
 }
 
-// Reaching Git at all means the review gate let the call through; these tests
-// only care which side of that gate the call landed on.
+// Reaching Git means lane derivation accepted the call; these tests only care
+// which side of that authority boundary the call landed on.
 const PAST_THE_GATE = "reached the synchronization boundary";
 
 async function createPr({ lane, derivedLane, reviewPublished = false }) {
@@ -85,25 +83,24 @@ describe("the PR gate derives the lane instead of accepting it (#1679)", () => {
     assert.equal(result.error, "implement_pr_lane_mismatch");
   });
 
-  it("still requires a published review for an /implement run on a requirement-free issue", async () => {
+  it("does not require a published review for an /implement run", async () => {
     const result = await createPr({ lane: "implement", derivedLane: "implement" });
 
     assert.equal(result.ok, false);
-    assert.equal(result.error, "implement_pr_review_publication_missing");
+    assert.equal(result.error, "implement_pr_create_failed");
   });
 
-  it("requires a published review when the caller states no lane at all", async () => {
+  it("does not require a published review when the caller states no lane", async () => {
     const result = await createPr({ lane: undefined, derivedLane: "implement" });
 
     assert.equal(result.ok, false);
-    assert.equal(result.error, "implement_pr_review_publication_missing");
+    assert.equal(result.error, "implement_pr_create_failed");
   });
 
-  it("waives the review gate only for a run the server picked up as /quickfix", async () => {
+  it("continues with a server-picked quickfix lane", async () => {
     const result = await createPr({ lane: "quickfix", derivedLane: "quickfix" });
 
-    // The waiver was granted, so the call proceeded to the synchronization
-    // checks; nothing else about the gate was relaxed.
+    // The lane was accepted, so the call proceeded to synchronization checks.
     assert.equal(result.ok, false);
     assert.equal(result.error, "implement_pr_create_failed");
     assert.notEqual(result.error, "implement_pr_review_publication_missing");

@@ -16,7 +16,6 @@ import {
   runPostMergeCompletion,
   verifyMergedRequirements,
 } from "./assert-completion-post-merge.js";
-import { readTrustedReviewPublicationEvidence } from "./review-publication-evidence.js";
 import { readLatestTrustedImplementSyncRecord } from "./knowledge-capture.js";
 import { assertDeliveryBindingCurrent, deliveredHeadRefusal } from "./delivery-binding.js";
 import { laneClaimRefusal, readTrustedRunLane } from "./run-lane-evidence.js";
@@ -168,18 +167,10 @@ async function _assertDeliveryChain(repository, issueNumber, assertions, deliver
   // exactly as it would be for /implement (issue #1679).
   const head = await _assertDeliveredHeadSynchronized(repository, issueNumber, assertions, delivered);
   if (head.refusal) return head.refusal;
-  let evidence = null;
-  if (lane !== "quickfix") {
-    const review = await _assertReviewPublished(repository, issueNumber, assertions, delivered.branch);
-    if (review.refusal) return review.refusal;
-    evidence = review.evidence;
-  }
   // `lane` is the one derived from trusted evidence. Passing the record's own
   // lane here compared the record with itself and could never refuse.
   const bound = assertDeliveryBindingCurrent({
     record: head.record,
-    evidence,
-    branchName: delivered.branch,
     lane,
   });
   if (!bound.ok) {
@@ -196,64 +187,9 @@ async function _assertDeliveryChain(repository, issueNumber, assertions, deliver
   assertions.push({
     name: "delivery_binding_current",
     ok: true,
-    review_publication_id: head.record.reviewPublicationId,
-    review_revision_digest: head.record.reviewRevisionDigest,
+    lane,
   });
   return null;
-}
-
-async function _assertReviewPublished(repository, issueNumber, assertions, deliveredBranch) {
-  const evidence = await readTrustedReviewPublicationEvidence({
-    repoRoot: repository.repoRoot,
-    owner: repository.owner,
-    name: repository.name,
-    issueNumber,
-  });
-  if (evidence.ok && evidence.published) {
-    // Naming the reviewed revision is not the same as checking it. Recording the
-    // fields without comparing them let a publication from another branch satisfy
-    // both completion phases (issue #1679, core-F1). The branch is the part a
-    // completion phase can check on its own: it comes from the pull request
-    // GitHub reports, and the reviewed branch comes from the trusted cycle
-    // marker. The tree binding stays where the delivery is authorized - the
-    // synchronization boundary and PR creation - because only those hold the
-    // settled tree.
-    // A delivery whose branch cannot be read is a delivery that cannot be checked,
-    // so it refuses rather than skipping the comparison.
-    if (evidence.branch !== deliveredBranch) {
-      return { refusal: {
-        ok: false,
-        error: "completion_review_branch_mismatch",
-        message:
-          `The trusted review publication for issue #${issueNumber} ran on branch `
-          + `'${evidence.branch}', but this pull request delivers '${deliveredBranch ?? "an unreadable branch"}'. `
-          + "A review of other work cannot authorize this delivery.",
-        issue_number: issueNumber,
-        assertions,
-        final_report: null,
-        next_action: "publish_a_review_for_this_branch_and_retry",
-      } };
-    }
-    assertions.push({
-      name: "codex_review_published",
-      ok: true,
-      comment_id: evidence.comment_id,
-      revision_digest: evidence.revision_digest,
-      candidate_tree_oid: evidence.candidate_tree_oid,
-      findings_count: evidence.findings_count,
-      branch: evidence.branch,
-    });
-    return { evidence };
-  }
-  return { refusal: {
-    ok: false,
-    error: evidence.error ?? "completion_review_publication_missing",
-    message: evidence.message ?? "A trusted published Codex decision record is required before readiness or completion.",
-    issue_number: issueNumber,
-    assertions,
-    final_report: null,
-    next_action: "publish_the_retained_review_or_run_the_automatic_review_cycle",
-  } };
 }
 
 // Phase D terminal (phase="pre_merge"): post the readiness record and return its
@@ -425,9 +361,8 @@ export async function runAssertCompletion(input, {
   // requirement AT THE IMMUTABLE MERGE REVISION — never the active checkout or
   // caller-supplied status. A mismatch fails closed before the final report, so the
   // report can never claim a lifecycle state absent from the merged target branch.
-  // Requirement-free runs skip this and keep prior behavior. runPostFinalReport still
-  // enforces CI green, Sonar pass-or-legit-skipped, the mandatory Codex review, and the
-  // sensitive/defer/reserved-marker scrubs.
+  // Requirement-free runs skip this and keep prior behavior. runPostFinalReport enforces
+  // CI green, Sonar pass-or-legit-skipped, and sensitive/defer/reserved-marker scrubs.
   const verify = await verifyMergedRequirements({
     repository, issueNumber, mergedPr: mergeCheck.mergedPr, requirements, assertions, workspaceAuthorizationResolver,
   });

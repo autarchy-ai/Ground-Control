@@ -14,8 +14,8 @@ import { makeCompletionShimRepo, withShimPath } from "./gc-assert-completion.tes
 // tree into a successful assertion without comparing either to the delivery, so a
 // trusted publication produced on some other branch satisfied both phases. Naming
 // evidence is not checking it.
-describe("completion refuses a review that ran on another branch (#1679)", () => {
-  it("refuses post_merge when the reviewed branch is not the branch the PR delivers", async () => {
+describe("completion does not authorize delivery through a review record (#1693)", () => {
+  it("accepts post_merge when an observational review ran on another branch", async () => {
     const shim = makeCompletionShimRepo({
       comments: [],
       commentIdSeq: [9600, 9601, 9602],
@@ -35,9 +35,7 @@ describe("completion refuses a review that ran on another branch (#1679)", () =>
         }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) }),
       );
 
-      assert.equal(r.ok, false);
-      assert.equal(r.error, "completion_review_branch_mismatch");
-      assert.equal(r.final_report, null, "no completion record may be posted on unbound evidence");
+      assert.equal(r.ok, true);
     } finally {
       shim.cleanup();
     }

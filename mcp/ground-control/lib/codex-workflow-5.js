@@ -16,7 +16,6 @@ import { readTrustedImplementSyncRecord } from "./knowledge-capture.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { rejectReservedMarkerSequence } from "./repo-vocabulary.js";
 import { checkPrBodyShape, execFile } from "./runtime-primitives.js";
-import { readTrustedReviewPublicationEvidence } from "./review-publication-evidence.js";
 import { laneClaimRefusal, readTrustedRunLane } from "./run-lane-evidence.js";
 import { assertDeliveryBindingCurrent } from "./delivery-binding.js";
 
@@ -100,8 +99,21 @@ async function findExistingSynchronizedImplementPr({
       title: input.title,
       body: input.body,
     });
-    if (!validation.ok) return validation;
-    return { ok: true, candidate: existing[0], repoSlug };
+    if (validation.ok) return { ok: true, candidate: existing[0], repoSlug, needsUpdate: false };
+    // An existing PR whose repository, branch, base, and head still match may
+    // be brought to the freshly rendered canonical body through this same
+    // synchronized writer. Never permit a body update to repair identity drift.
+    const identity = validateExistingSynchronizedImplementPr(existing[0], {
+      owner: repoAuthorization.owner,
+      name: repoAuthorization.name,
+      baseBranch,
+      branchName: input.branchName,
+      featureSha: localSha,
+      title: existing[0].title,
+      body: existing[0].body,
+    });
+    if (!identity.ok) return validation;
+    return { ok: true, candidate: existing[0], repoSlug, needsUpdate: true };
   } catch (error) {
     return {
       ok: false,
@@ -219,6 +231,36 @@ async function createSynchronizedImplementPr({
   };
 }
 
+async function updateSynchronizedImplementPr({
+  repoRoot, repoAuthorization, input, record, fetchedBaseSha, localSha, candidate, commandRunner,
+}) {
+  try {
+    const updated = await ghRestJson(
+      repoRoot,
+      `/repos/${repoAuthorization.owner}/${repoAuthorization.name}/pulls/${candidate.number}`,
+      { method: "PATCH", fields: { title: input.title, body: input.body }, execFile: commandRunner },
+    );
+    const prUrl = typeof updated?.html_url === "string" ? updated.html_url : candidate.url;
+    return {
+      ok: true,
+      already_exists: true,
+      updated_existing: true,
+      pr_number: candidate.number,
+      pr_url: prUrl,
+      synchronization_record_id: record.recordId,
+      fetched_base_sha: fetchedBaseSha,
+      feature_sha: localSha,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: "implement_pr_existing_update_failed",
+      message: extractGhErrorMessage(error),
+      next_action: "repair_the_canonical_pr_update_and_retry",
+    };
+  }
+}
+
 // GitHub auto-close keywords, per its "closing issues via keywords" docs. Case-
 // insensitive, immediately preceding the issue reference. A requirement-backed issue
 // must not carry any of these for its own number in the PR body (issue #1541).
@@ -267,16 +309,12 @@ async function assertPrBodyClosingKeywordBoundToIssueScope(input, issueThreadRea
 // caller's word: a requirement-backed issue is not a legal quickfix, so it keeps the
 // mandatory review.
 //
-// `lane` here is the lane DERIVED from the server's own pickup record, never the
+// `lane` here is the lane DERIVED from the newest trusted pickup record, never the
 // caller's argument. An empty requirement section is not proof of a quickfix run -
 // a requirement-free bug fix is an ordinary /implement target - so the two
 // conditions together were waivable by anyone who passed lane="quickfix"
 // (issue #1679). The requirement-scope condition stays: it is an independent
 // constraint, not the evidence.
-function reviewPublicationRequired(lane, scope) {
-  return lane !== "quickfix" || scope.length > 0;
-}
-
 // The caller may still state its lane; it must agree with the derived one. A
 // disagreement is surfaced rather than silently ignored, because it means the
 // run and the call have different ideas about which gates apply.
@@ -342,7 +380,6 @@ export async function runCreateSynchronizedImplementPr(input, {
   contextResolver = getRepoGroundControlContext,
   syncRecordReader = readTrustedImplementSyncRecord,
   issueThreadReader = (args) => runGetIssueThread(args, { workspaceAuthorizationResolver }),
-  reviewEvidenceReader = readTrustedReviewPublicationEvidence,
   laneReader = readTrustedRunLane,
 } = {}) {
   const inputValidation = validateSynchronizedImplementPrInput(input);
@@ -354,24 +391,6 @@ export async function runCreateSynchronizedImplementPr(input, {
   if (!closingBinding.ok) return closingBinding;
   const lane = await resolveDeliveryLane(input, repoRoot, repoAuthorization, laneReader);
   if (!lane.ok) return lane;
-  // The quickfix lane publishes no review, so it reads none: a waived gate must
-  // not spend a GitHub round trip either. Every other lane reads once and uses
-  // the same envelope for the gate and for the delivery binding below.
-  const reviewEvidence = lane.lane === "quickfix" ? null : await reviewEvidenceReader({
-    repoRoot,
-    owner: repoAuthorization.owner,
-    name: repoAuthorization.name,
-    issueNumber: input.issueNumber,
-  });
-  if (reviewPublicationRequired(lane.lane, closingBinding.scope)
-    && (reviewEvidence?.ok !== true || reviewEvidence.published !== true)) {
-    return {
-      ok: false,
-      error: "implement_pr_review_publication_missing",
-      message: reviewEvidence?.message ?? "A complete trusted review publication is required before PR creation.",
-      next_action: "publish_the_retained_review_and_retry",
-    };
-  }
   try {
     const synchronization = await validateImplementSynchronization({
       repoRoot,
@@ -383,11 +402,8 @@ export async function runCreateSynchronizedImplementPr(input, {
     });
     if (!synchronization.ok) return synchronization;
     const { record, fetchedBaseSha, localSha } = synchronization;
-    // The record is trusted but not fresh: re-check that the publication it was
-    // bound to is still the one this issue carries, ran on this branch, and - for
-    // a zero-finding review - still names the tree being delivered (issue #1679).
     const bindingCurrent = assertDeliveryBindingCurrent({
-      record, evidence: reviewEvidence, branchName: input.branchName, lane: lane.lane,
+      record, lane: lane.lane,
     });
     if (!bindingCurrent.ok) return bindingCurrent;
     const existingLookup = await findExistingSynchronizedImplementPr({
@@ -399,7 +415,7 @@ export async function runCreateSynchronizedImplementPr(input, {
       commandRunner,
     });
     if (!existingLookup.ok) return existingLookup;
-    if (existingLookup.candidate) {
+    if (existingLookup.candidate && !existingLookup.needsUpdate) {
       return {
         ok: true,
         already_exists: true,
@@ -407,6 +423,12 @@ export async function runCreateSynchronizedImplementPr(input, {
         pr_url: existingLookup.candidate.url,
         synchronization_record_id: record.recordId,
       };
+    }
+    if (existingLookup.candidate) {
+      return await updateSynchronizedImplementPr({
+        repoRoot, repoAuthorization, input, record, fetchedBaseSha, localSha,
+        candidate: existingLookup.candidate, commandRunner,
+      });
     }
     const { repoSlug } = existingLookup;
     return await createSynchronizedImplementPr({

@@ -1,17 +1,15 @@
 // Which lane a run belongs to, derived from the issue thread (issue #1679).
 //
-// `/quickfix` waives the mandatory pre-push review gate. That waiver used to be
-// granted by a bare `lane` argument on the PR-creation call: nothing recorded the
-// choice anywhere, so any caller could take the waiver at the last step of an
-// `/implement` run without the run ever having been a quickfix.
+// A bare `lane` argument used to control review-related delivery behavior. The
+// lane is now a run property for workflow reporting and delivery consistency.
 //
 // A lane is now a property of the run, recorded before it takes effect. The MCP
-// server posts a pickup comment under its own GitHub identity when a run is
-// bootstrapped, naming the lane and the branch. The run's lane is the lane of the
-// newest such record for its branch, so switching lanes is itself recorded: when
+// server posts a pickup comment when a run is bootstrapped, naming the lane and
+// branch. The run's lane is the lane of the newest exact record by a repository-
+// write author for its branch, so switching lanes is itself recorded: when
 // the maintainer tells an agent to move on without a review, the agent
 // bootstraps the same branch as `/quickfix` and the thread says so. Every gate
-// that relaxes anything for `/quickfix` reads the lane from here, and a caller
+// that depends on the selected workflow lane reads it from here, and a caller
 // that states a different lane is refused.
 //
 // Deliberately, no further human signal is required. Choosing the lane is the
@@ -20,7 +18,7 @@
 // adding a ceremony in front of it.
 
 import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
-import { getAuthenticatedGitHubLogin, readIssueCommentsWithAuthors } from "./grc-legacy-compat-3.js";
+import { readIssueCommentsWithAuthors, resolveExecutionObligationTrust } from "./grc-legacy-compat-3.js";
 
 export const RUN_LANES = Object.freeze(["implement", "quickfix"]);
 
@@ -43,15 +41,27 @@ function authoredBy(comment, login) {
 /**
  * The lane of the newest pickup record this server wrote for the branch, or null.
  *
- * Comment ids increase with time, so the highest id is the newest record. The
- * bootstrap uses the same answer to decide whether a pickup must be written, so
- * the recorded lane and the effective lane can never disagree.
+ * This is retained for the separate release-identity contract, which deliberately
+ * binds its records to the server identity. Lane derivation uses the trusted
+ * predicate below instead.
  */
 export function currentPickupLane(comments, login, branch) {
   let newest = null;
   for (const [index, comment] of (comments ?? []).entries()) {
     const record = parseRunPickupRecord(comment?.body);
     if (record == null || record.branch !== branch || !authoredBy(comment, login)) continue;
+    const order = Number.isInteger(comment.id) ? comment.id : index;
+    if (newest == null || order > newest.order) newest = { order, lane: record.lane };
+  }
+  return newest?.lane ?? null;
+}
+
+/** The lane from the newest exact pickup record written by a trusted author. */
+export function currentTrustedPickupLane(comments, trust, branch) {
+  let newest = null;
+  for (const [index, comment] of (comments ?? []).entries()) {
+    const record = parseRunPickupRecord(comment?.body);
+    if (record == null || record.branch !== branch || !trust?.isTrusted(comment)) continue;
     const order = Number.isInteger(comment.id) ? comment.id : index;
     if (newest == null || order > newest.order) newest = { order, lane: record.lane };
   }
@@ -67,23 +77,21 @@ export function implementPickupRecordedBy(comments, login, branch) {
 }
 
 /**
- * Derive the lane for an issue branch from this server's own pickup records.
+ * Derive the lane for an issue branch from trusted pickup records.
  *
- * Returns `{ok:true, lane}`. A branch with no pickup record is an `/implement`
- * branch, so the absence of evidence never waives anything. An unreadable thread
- * or an unknown server identity refuses, because then nothing is established.
+ * Returns `{ok:true, lane, pickup_found}`. A branch with no trusted pickup
+ * record is an `/implement` branch, so the absence of evidence never waives
+ * anything. An unreadable thread or unavailable trust resolution refuses.
  */
 export async function readTrustedRunLane(
   { repoRoot, owner, name, issueNumber, branchName },
-  { readComments = readIssueCommentsWithAuthors, authenticatedLogin = getAuthenticatedGitHubLogin } = {},
+  { readComments = readIssueCommentsWithAuthors, resolveTrust = resolveExecutionObligationTrust } = {},
 ) {
   let comments;
-  let login;
+  let trust;
   try {
-    [comments, login] = await Promise.all([
-      readComments(repoRoot, owner, name, issueNumber),
-      authenticatedLogin(repoRoot),
-    ]);
+    comments = await readComments(repoRoot, owner, name, issueNumber);
+    trust = await resolveTrust(repoRoot, owner, name, comments);
   } catch {
     return {
       ok: false,
@@ -92,15 +100,19 @@ export async function readTrustedRunLane(
       next_action: "retry_after_restoring_github_access",
     };
   }
-  if (typeof login !== "string" || login === "") {
+  if ((comments ?? []).some((comment) => {
+    const record = parseRunPickupRecord(comment?.body);
+    return record?.branch === branchName && trust?.isResolved?.(comment) === false;
+  })) {
     return {
       ok: false,
       error: "run_lane_unverifiable",
-      message: "This server's own GitHub identity is unknown, so no pickup record can be attributed to it.",
-      next_action: "restore_github_authentication_and_retry",
+      message: "Pickup author permission could not be resolved to derive this run's lane.",
+      next_action: "retry_after_restoring_github_access",
     };
   }
-  return { ok: true, lane: currentPickupLane(comments, login, branchName) ?? "implement" };
+  const pickupLane = currentTrustedPickupLane(comments, trust, branchName);
+  return { ok: true, lane: pickupLane ?? "implement", pickup_found: pickupLane != null };
 }
 
 /**

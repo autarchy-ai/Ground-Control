@@ -2,8 +2,8 @@
 // retired with the backend: runAssertCompletion no longer runs a server-side
 // reconcile assertion, so the post-merge happy path carries an empty assertions[]
 // and depends only on the gh/git gates — merge state, open-obligation scrub, and the
-// runPostFinalReport gates (CI green, Sonar pass-or-legit-skipped, mandatory Codex
-// review). These tests are entirely hermetic: a gh route shim stands in for GitHub
+// runPostFinalReport gates (CI green and Sonar pass-or-legit-skipped). Review
+// records are observational. These tests are entirely hermetic: a gh route shim stands in for GitHub
 // and there is no backend to mock.
 
 import { describe, it } from "node:test";
@@ -13,13 +13,12 @@ import { workspaceAuthorizationFor } from "./workspace-authorization.test-helper
 import { makeCompletionShimRepo, makeFailShimRepo, withShimPath } from "./gc-assert-completion.test-helpers.js";
 
 // ---------------------------------------------------------------------------
-// Happy path — no in-scope requirements, ci green / sonar skipped, codex review
-// present, PR merged → ok:true. The gate records trusted published-review
-// evidence without restoring the removed GRC reconciliation assertion.
+// Happy path — no in-scope requirements, ci green / sonar skipped, PR merged →
+// ok:true. Review publication is deliberately absent from delivery assertions.
 // ---------------------------------------------------------------------------
 
 describe("runAssertCompletion — thin post-merge happy path", () => {
-  it("returns ok:true with published-review evidence and a final report", async () => {
+  it("returns ok:true with synchronized delivery evidence and a final report", async () => {
     const shim = makeCompletionShimRepo({ comments: [], commentIdSeq: [9500, 9501, 9502] });
     try {
       const r = await withShimPath(shim.binDir, () =>
@@ -45,21 +44,9 @@ describe("runAssertCompletion — thin post-merge happy path", () => {
         settled_tree_oid: "1".repeat(40),
         synchronization_record_id: "4".repeat(32),
       }, {
-        name: "codex_review_published",
-        ok: true,
-        comment_id: 8999,
-        // Issue #1679: the assertion names what the publication actually covered.
-        revision_digest: "c".repeat(64),
-        candidate_tree_oid: "1".repeat(40),
-        findings_count: 0,
-        branch: "1103-branch",
-      }, {
-        // Issue #1679: the record and the publication are asserted as one chain,
-        // not as two independent checks.
         name: "delivery_binding_current",
         ok: true,
-        review_publication_id: "a".repeat(64),
-        review_revision_digest: "c".repeat(64),
+        lane: "implement",
       }]);
       assert.ok(r.final_report != null);
       assert.ok(typeof r.final_report.comment_url === "string");
@@ -91,23 +78,20 @@ describe("runAssertCompletion — thin post-merge happy path", () => {
         }),
       );
       assert.equal(r.ok, true, `expected ok:true; got: ${JSON.stringify(r)}`);
-      // No review assertion - that is the waiver - but the delivery is still bound
-      // to the head that was synchronized, under a quickfix record (issue #1679).
+      // Review does not affect this assertion; the delivery is bound to the
+      // synchronized head under its recorded quickfix lane.
       assert.deepEqual(r.assertions.map((assertion) => assertion.name), [
         "delivery_head_synchronized",
         "delivery_binding_current",
       ]);
-      assert.equal(r.assertions[1].review_publication_id, "-");
+      assert.equal(r.assertions[1].lane, "quickfix");
       assert.ok(typeof r.final_report.comment_url === "string");
     } finally {
       shim.cleanup();
     }
   });
 
-  // core-F1 / security-F2 (cycle 4): finalize forwarded the caller's lane, and
-  // completion skipped the entire delivery chain when it read 'quickfix'. So a
-  // caller could finalize an ordinary /implement run as a quickfix and post a
-  // trusted final report with no synchronized head and no published review.
+  // Finalize must still use the server-derived lane, not a caller assertion.
   for (const [label, derived, expected] of [
     ["a run that was never picked up as /quickfix",
       { ok: true, lane: "implement" }, "completion_lane_mismatch"],

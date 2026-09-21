@@ -35,7 +35,7 @@ async function recordHandoff(args, deps, action, { lane, headSha }) {
 
 // /quickfix has no pre-merge report, so it reads the hosted-gate snapshot itself. That
 // gives the lane the same eligibility bar /implement has without giving it /implement's
-// requirement and review gates.
+// requirement processing.
 async function quickfixReadiness(args, deps, action) {
   const hosted = await deps.readRemoteGates({ repoPath: args.repoPath, prNumber: args.prNumber });
   if (!hosted.ok || !hosted.passed || hosted.state !== "OPEN") {

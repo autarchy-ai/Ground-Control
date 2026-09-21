@@ -25,21 +25,26 @@ const pickup = (lane, id, { branch = BRANCH, login = SERVER } = {}) => ({
   authorLogin: login,
 });
 
-function read(comments, { login = SERVER } = {}) {
+function read(comments, { trustedLogins = [SERVER] } = {}) {
   return readTrustedRunLane(
     { repoRoot: "/repo", owner: OWNER, name: NAME, issueNumber: ISSUE, branchName: BRANCH },
-    { readComments: async () => comments, authenticatedLogin: async () => login },
+    {
+      readComments: async () => comments,
+      resolveTrust: async () => ({
+        isTrusted: (comment) => trustedLogins.includes(comment.authorLogin),
+      }),
+    },
   );
 }
 
 describe("the run lane is the branch's newest recorded pickup (#1679)", () => {
-  it("derives quickfix from this server's quickfix pickup record", async () => {
+  it("derives quickfix from a trusted maintainer's quickfix pickup record", async () => {
     const result = await read([pickup("quickfix", 1)]);
     assert.equal(result.ok, true);
     assert.equal(result.lane, "quickfix");
   });
 
-  it("derives implement from this server's implement pickup record", async () => {
+  it("derives implement from a trusted implement pickup record", async () => {
     assert.equal((await read([pickup("implement", 1)])).lane, "implement");
   });
 
@@ -61,9 +66,12 @@ describe("the run lane is the branch's newest recorded pickup (#1679)", () => {
     assert.equal((await read([pickup("quickfix", 9), pickup("implement", 4)])).lane, "quickfix");
   });
 
-  it("ignores a pickup-shaped comment posted by anyone but this server", async () => {
+  it("ignores a pickup-shaped comment posted by an untrusted author", async () => {
     // Otherwise any commenter could switch a run onto the waived lane.
-    const result = await read([pickup("implement", 1), pickup("quickfix", 2, { login: "someone-else" })]);
+    const result = await read(
+      [pickup("implement", 1), pickup("quickfix", 2, { login: "someone-else" })],
+      { trustedLogins: [SERVER] },
+    );
     assert.equal(result.lane, "implement");
   });
 
@@ -81,16 +89,18 @@ describe("the run lane is the branch's newest recorded pickup (#1679)", () => {
     assert.equal((await read([pickup("implement", 1), forged])).lane, "implement");
   });
 
-  it("refuses rather than guessing when the server's own identity is unknown", async () => {
-    const result = await read([pickup("quickfix", 1)], { login: null });
-    assert.equal(result.ok, false);
-    assert.equal(result.error, "run_lane_unverifiable");
+  it("derives a lane when the finalizing process has no GitHub login", async () => {
+    const result = await read([pickup("quickfix", 1, { login: "maintainer" })], {
+      trustedLogins: ["maintainer"],
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.lane, "quickfix");
   });
 
   it("refuses rather than guessing when the thread cannot be read", async () => {
     const result = await readTrustedRunLane(
       { repoRoot: "/repo", owner: OWNER, name: NAME, issueNumber: ISSUE, branchName: BRANCH },
-      { readComments: async () => { throw new Error("gh api 502"); }, authenticatedLogin: async () => SERVER },
+      { readComments: async () => { throw new Error("gh api 502"); } },
     );
     assert.equal(result.ok, false);
     assert.equal(result.error, "run_lane_unverifiable");

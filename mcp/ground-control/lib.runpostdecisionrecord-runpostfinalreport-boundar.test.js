@@ -241,16 +241,12 @@ describe("runPostDecisionRecord / runPostFinalReport boundary checks (codex cycl
 
 
 
-  // The `lane: "quickfix"` carve-out relaxes the empty-reviews and missing-
-  // codex gates for the /quickfix Step Q19 path (issue #906); all other
-  // gates remain in force. Without these tests, future edits could
-  // re-tighten the gate and leave default `/quickfix` runs unable to
-  // publish their close comment.
+  // Review records are observational for every lane (issue #1693).
 
 
 
 
-  it("final-report still requires non-empty reviews when lane is absent", async () => {
+  it("final-report allows empty reviews when lane is absent", async () => {
     const dir = makeTempRepo();
     try {
       const r = await import("./lib.js").then(({ runPostFinalReport }) =>
@@ -264,8 +260,7 @@ describe("runPostDecisionRecord / runPostFinalReport boundary checks (codex cycl
           plainEnglishOutcome: FINAL_REPORT_OUTCOME,
         })
       );
-      assert.equal(r.ok, false);
-      assert.equal(r.error, "final_report_no_reviews");
+      assert.notEqual(r.error, "final_report_no_reviews");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -274,9 +269,6 @@ describe("runPostDecisionRecord / runPostFinalReport boundary checks (codex cycl
 
   // The lane='quickfix' carve-out is bounded by the lane's requirement-free
   // invariant: a /quickfix run cannot carry a non-empty requirements[].
-  // Without this server-side rejection, any caller could publish a final
-  // report for requirement-scoped work while bypassing the mandatory codex
-  // review evidence. Added per #906 codex cycle-3 F1 + security F1.
   it("final-report rejects lane='quickfix' when requirements[] is non-empty", async () => {
     const dir = makeTempRepo();
     try {

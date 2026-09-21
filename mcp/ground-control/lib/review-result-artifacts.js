@@ -358,17 +358,18 @@ function validateSanitizedHeader(record, input) {
   if (input.verdict !== record.verdict) {
     return publicationFailure("review_publication_verdict_mismatch", "the retained verdict must be published unchanged");
   }
-  if (!Array.isArray(input.notes) || input.notes.length > 2
-    || input.notes.some((note) => note == null || typeof note !== "object"
+  const notes = input.notes ?? [];
+  if (!Array.isArray(notes) || notes.length > 2
+    || notes.some((note) => note == null || typeof note !== "object"
       || Object.keys(note).some((key) => key !== "text") || !validBoundedString(note.text, 4000))) {
     return publicationFailure("review_publication_notes_invalid", "notes must contain at most two bounded {text} entries");
   }
-  if (input.notes.length !== record.notes.length) {
+  if (notes.length !== record.notes.length) {
     return publicationFailure("review_publication_notes_mismatch", "every retained reviewer note must have one sanitized public note");
   }
   const architecturalMarker = rejectReservedMarkerSequence(input.architectural_read, "architectural_read");
   if (architecturalMarker) return publicationFailure("review_publication_reserved_marker", architecturalMarker);
-  for (const [index, note] of input.notes.entries()) {
+  for (const [index, note] of notes.entries()) {
     const marker = rejectReservedMarkerSequence(note.text, `notes.${index}.text`);
     if (marker) return publicationFailure("review_publication_reserved_marker", marker);
   }
@@ -443,7 +444,7 @@ export function validateSanitizedReviewPublication(record, input) {
   if (invalidFindings) return invalidFindings;
   const value = {
     verdict: input.verdict,
-    notes: input.notes.map((note) => ({ text: note.text.trim() })),
+    notes: (input.notes ?? []).map((note) => ({ text: note.text.trim() })),
     architectural_read: input.architectural_read.trim(),
     findings: input.findings.map((finding) => ({ ...finding })),
   };
