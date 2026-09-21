@@ -147,6 +147,25 @@ order, and terminal review envelope are unchanged.
 
 **2026-06-14 (issue #1103 Phase D consolidation).** The former Steps 17 (verify), 18 (label removal), and 19 (final report) are collapsed into a single Step 17. The new consolidated step calls `gc_assert_completion`, which sequences `gc_assert_traceability_reconciled`, `gc_assert_grc_reconciled`, and `gc_post_final_report` in one deterministic MCP tool call. The `in-progress` label removal is now optional best-effort, not a mandatory step gate; the label lifecycle is operational-only and the issue is closed at Phase E. Phase D boundary is now Steps 9 → 17. The single-human-touchpoint contract is unchanged.
 
+**2026-09-21 (issue #1686 pickup-label lifecycle owner).** The `in-progress` label is now
+dropped by `gc_close_issue_after_merge`, at the shared close boundary, once the issue is
+actually closed. The #1103 amendment above made its removal an optional best-effort agent
+step after Step 17, which held while an agent still ran Phase E; ADR-102 (#1671) moved Phase
+E into a merged-pull-request workflow and let the agent terminate permanently at Phase D, so
+the step kept its place in the contract and lost its executor and every delivery closed still
+flagged in progress. Placing it at the close boundary gives it an owner every caller reaches:
+the merged-pull-request workflow, `gc_finalize_merged_pr`, an agent re-invoked after a merge,
+and `/quickfix` Q7. It is best-effort there, and only the removal is: a cleanup failure never
+changes the close outcome, the returned envelope, or whether finalization is reported as
+successful, because a stale label is a cheaper outcome than a completed delivery reported as
+failed. It removes the single issue-label association rather than replacing the label set or
+deleting the repository label, and it runs strictly after a successful close, including the
+idempotent `already_closed` path so a replay converges. A refused or failed close removes
+nothing: an issue left open really is still in progress. The label still confers no authority
+and gates nothing. Step 17's own optional-removal recipe is retired: that step is reached
+before the merge as well, where the label is accurate and removing it would invert the signal
+on the one issue most in need of it.
+
 **2026-06-19 (issue #1189 Cursor CLI driver).** The agent-neutral `/implement` skill is invocable from Cursor CLI via `bin/install-skills.sh` (hard-copy into `~/.cursor/skills/<name>`) and, in Ground-Control repos, a project wrapper at `.cursor/skills/implement/SKILL.md` (real file pointing at `skills/implement/SKILL.md`; symlinked skill folders fail Cursor discovery). The GC-O007 gate model is unchanged: Cursor CLI is a third orchestrator driver alongside Claude Code and Codex; Codex remains reviewer-of-record; poll-loop stages stay on the parent session. See `docs/DEVELOPMENT_WORKFLOW.md § Cursor CLI`.
 
 **2026-06-22 (issue #963 post-merge reconciliation ordering).** A new **Phase E** is added to the gated loop's phase structure. The requirement `DRAFT→ACTIVE` transition (Step 15), traceability reconciliation (Step 16), and the reconciled final report (Step 17) move from Phase D (pre-merge) to Phase E (post-merge), so Ground Control state never runs ahead of shipped code: a reviewed-but-abandoned PR no longer leaves a requirement flipped ACTIVE with links to code that never merged. Phase D's terminal step becomes a pre-merge **readiness** record (`gc_assert_completion phase="pre_merge"`, carrying a `ready_for_review` marker); the Phase E completion (`gc_assert_completion phase="post_merge"`, the default) is merge-gated and refuses with `completion_pr_not_merged` unless the linked PR is merged, mirroring the #1058 close gate. The single-human-touchpoint contract (PR merge) is unchanged - Phase E runs autonomously when the user re-invokes `/implement <issue>` after merge. The A/B/C structure is unchanged. GC-O007 statement (B)/(D) are amended and a clause (E) added in lockstep (see ADR-029 §2026-06-22 for the full mechanism).

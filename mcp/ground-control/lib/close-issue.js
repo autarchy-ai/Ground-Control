@@ -12,6 +12,8 @@ import { findTrustedFinalReportMarker } from "./final-report-marker.js";
 import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { devStartGateConfigFailure, devStartGateFailure, readDevStartPlanFields, readSourceBearingDecision, validateNonSourceDevStartGate } from "./grc-legacy-compat.js";
 import { buildCodexReviewCycleMarker, normalizeDevStartGateConfig, parseCodexReviewCycleMarkers } from "./repo-context-2.js";
+import { IMPLEMENT_IN_PROGRESS_LABEL } from "./constants.js";
+import { ghRestJson } from "./github-rest.js";
 import { execFile } from "./runtime-primitives.js";
 
 const TO_SNAKE = Object.fromEntries(Object.entries(TO_CAMEL).map(([k, v]) => [v, k]));
@@ -248,6 +250,35 @@ async function hasTrustedFinalReportMarker(repoRoot, owner, name, issueNumber, p
 // a later PR on the same issue, and the comment itself is the durable record of the
 // bypass (ADR-029). A human authorizes by commenting `gc-authorize-merge-state-override
 // pr=<n> <reason>` on the issue. Returns { authorized, reason }.
+// Drop the pickup flag once the issue is closed.
+//
+// This lives at the shared close boundary rather than in skill prose because that is the
+// one point every caller reaches — the merged-pull-request workflow, gc_finalize_merged_pr,
+// an agent re-invoked after a merge, and /quickfix Q7. It used to be an optional agent step
+// after Step 17, and ADR-102 let the agent terminate before the merge, so the step kept its
+// place in the contract and lost its executor: every delivery closed still flagged in
+// progress (issue #1686).
+//
+// Best-effort, and deliberately narrow. Only the removal is inside the catch; a cleanup
+// that fails must not turn a completed delivery into a reported failure, and a stale label
+// is the cheaper outcome. It removes the single issue-label association — not a label
+// replace, which would clobber a concurrent edit, and not the repository label, which every
+// other issue shares. GitHub answers 404 when the issue does not carry it, which is the
+// same success for our purposes and the reason a replay is safe.
+const LABEL_CALL_TIMEOUT_MS = 30_000;
+async function dropInProgressLabel(repoRoot, owner, name, issueNumber) {
+  try {
+    await ghRestJson(
+      repoRoot,
+      `/repos/${owner}/${name}/issues/${issueNumber}/labels/${IMPLEMENT_IN_PROGRESS_LABEL}`,
+      { method: "DELETE", hostname: "github.com", timeout: LABEL_CALL_TIMEOUT_MS },
+    );
+  } catch {
+    // Nothing is recorded from the failure: the label carries no authority, the caller's
+    // envelope is about the close, and extractGhErrorMessage does not redact.
+  }
+}
+
 const MERGE_STATE_OVERRIDE_RE = /(?:^|\s)gc-authorize-merge-state-override\s+pr=(\d+)\b/i;
 export async function readTrustedMergeStateOverride(repoRoot, owner, name, issueNumber, prNumber) {
   const comments = await readIssueCommentsWithAuthors(repoRoot, owner, name, issueNumber);
@@ -321,6 +352,9 @@ async function closeIssueIdempotently({ repoRoot, owner, name, issueNumber, pr }
   }
 
   if (issueState === "closed") {
+    // Also on this path, so a replayed finalization converges on a clean state rather than
+    // inheriting whatever the first attempt left behind.
+    await dropInProgressLabel(repoRoot, owner, name, issueNumber);
     return {
       ok: true,
       already_closed: true,
@@ -389,6 +423,10 @@ async function closeIssueIdempotently({ repoRoot, owner, name, issueNumber, pr }
       pr_number: pr.number,
     };
   }
+
+  // Strictly after the close succeeded. A refusal or a failed patch returned above and
+  // attempts nothing: an issue left open really is still in progress.
+  await dropInProgressLabel(repoRoot, owner, name, issueNumber);
 
   return {
     ok: true,

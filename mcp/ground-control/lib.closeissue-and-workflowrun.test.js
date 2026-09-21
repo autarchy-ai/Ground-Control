@@ -3,127 +3,27 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { execFileSync } from "node:child_process";
 import { restLinkedPullRequestRoutes } from "./github-rest.test-helpers.js";
 import { workspaceAuthorizationFor } from "./workspace-authorization.test-helpers.js";
-
-// ---------------------------------------------------------------------------
-// gc_assert_traceability_reconciled (issue #1058)
-// ---------------------------------------------------------------------------
-
-// Shared module-scope helpers for the traceability/final-report/close-issue
-// suites below. Hoisted out of the individual `describe` callbacks so the
-// route-replaying gh shim source, the git-init boilerplate, and the
-// PATH-wrapping runner are defined exactly once (Sonar S7721/S4144/S138).
-const GH_NAME_WITH_OWNER = "nameWithOwner";
-
-function initGitRepo(dir) {
-  execFileSync("git", ["-C", dir, "init", "-q"]);
-  execFileSync("git", ["-C", dir, "config", "user.email", "t@example.com"]);
-  execFileSync("git", ["-C", dir, "config", "user.name", "t"]);
-  writeFileSync(join(dir, "README"), "x\n");
-  execFileSync("git", ["-C", dir, "add", "README"]);
-  execFileSync("git", ["-C", dir, "commit", "-q", "-m", "init"]);
-  // Real origin so owner/repo resolves from the git remote, as production does. git ignores
-  // GH_REPO; the `gh repo view` fallback honours it.
-  execFileSync("git", ["-C", dir, "remote", "add", "origin", "https://github.com/fake/repo.git"]);
-  return dir;
-}
-
-// Source for a hermetic `gh` shim that replays cfg.routes by argv prefix.
-// String.raw keeps the `\n` in the unhandled-argv diagnostic literal (S7780).
-function buildGhRouteShimSource(configPath) {
-  return String.raw`#!/usr/bin/env node
-const fs = require("node:fs");
-const cfg = JSON.parse(fs.readFileSync(${JSON.stringify(configPath)}, "utf8"));
-const argv = process.argv.slice(2);
-function match(prefix) { return prefix.every((p, i) => argv[i] === p); }
-for (const route of cfg.routes) {
-  if (match(route.argv_prefix)) {
-    if (route.exit_code != null && route.exit_code !== 0) {
-      process.stderr.write(route.stderr || "");
-      process.exit(route.exit_code);
-    }
-    process.stdout.write(route.stdout || "");
-    process.exit(0);
-  }
-}
-process.stderr.write("gh shim: unhandled argv: " + JSON.stringify(argv) + "\n");
-process.exit(2);
-`;
-}
-
-// Materializes a git repo + a bin dir holding a `gh` shim that replays
-// `ghHandler.routes`. Returns { repoDir, binDir, cleanup }.
-function makeRouteShimRepo({ ghHandler, repoPrefix, binPrefix }) {
-  const repoDir = initGitRepo(mkdtempSync(join(tmpdir(), repoPrefix)));
-  const binDir = mkdtempSync(join(tmpdir(), binPrefix));
-  const configPath = join(binDir, "config.json");
-  writeFileSync(configPath, JSON.stringify(ghHandler));
-  writeFileSync(join(binDir, "gh"), buildGhRouteShimSource(configPath), { mode: 0o755 });
-  return {
-    repoDir, binDir,
-    cleanup() { rmSync(repoDir, { recursive: true, force: true }); rmSync(binDir, { recursive: true, force: true }); },
-  };
-}
-
-async function withShimPath(binDir, fn) {
-  const oldPath = process.env.PATH;
-  process.env.PATH = `${binDir}:${oldPath}`;
-  try { return await fn(); } finally { process.env.PATH = oldPath; }
-}
+// The route-replaying gh shim and the close-path fixtures moved to their own file when the
+// label-lifecycle suite became a second consumer (issue #1686).
+import {
+  FINAL_REPORT_MARKER,
+  ISSUE_API_PATH,
+  LINKED_PR_URL,
+  MARKER_TRUST_ROUTES,
+  PR_MERGED_AT,
+  makeShimRepo,
+  slurpComments,
+  withCloseResult,
+  withShimPath,
+} from "./close-issue-shim.fixture.test.js";
 
 // ---------------------------------------------------------------------------
 // gc_close_issue_after_merge (issue #1058)
 // ---------------------------------------------------------------------------
 
 describe("runCloseIssueAfterMerge", () => {
-  // Repeated fixture literals, hoisted to named constants (Sonar S1192).
-  const PR_MERGED_AT = "2026-05-30T10:00:00Z";
-  const LINKED_PR_URL = "https://github.com/fake/repo/pull/42";
-  const ISSUE_API_PATH = "/repos/fake/repo/issues/1058";
-  // Proof that merged requirement-state validation ran: the trusted final-report
-  // marker on the issue thread (issue #1541). By close time in the real flow, the
-  // post-merge completion assertion has posted it.
-  const FINAL_REPORT_MARKER = '<!-- gc:final-report issue="1058" pr="42" -->';
-  // `gh api --paginate --slurp` wraps each page's array in an outer array.
-  const slurpComments = (comments) => JSON.stringify([comments]);
-  // Routes that satisfy the final-report marker gate: a trusted (repo-write author)
-  // comment carrying the marker, plus the collaborator-permission lookup trust uses.
-  const MARKER_TRUST_ROUTES = [
-    {
-      argv_prefix: ["api", "--method", "GET", "--paginate", "--slurp"],
-      stdout: slurpComments([{ body: FINAL_REPORT_MARKER, user: { login: "fake" }, author_association: "OWNER" }]),
-    },
-    {
-      argv_prefix: ["api", "--method", "GET", "/repos/fake/repo/collaborators/fake/permission"],
-      stdout: "write\n",
-    },
-  ];
-
-  function makeShimRepo({ ghHandler }) {
-    return makeRouteShimRepo({ ghHandler, repoPrefix: "gc-close-test-", binPrefix: "gc-close-bin-" });
-  }
-
-  // Runs runCloseIssueAfterMerge against `shim` (on the shimmed PATH) and hands
-  // the structured result to `assertResult`, then cleans the shim up. Removes
-  // the import + path-wrap + try/finally cleanup boilerplate repeated by the
-  // result-asserting cases.
-  async function withCloseResult(shim, issueNumber, assertResult) {
-    try {
-      await withShimPath(shim.binDir, async () => {
-        const { runCloseIssueAfterMerge } = await import("./lib.js");
-        const r = await runCloseIssueAfterMerge({ repoPath: shim.repoDir, issueNumber }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
-        assertResult(r);
-      });
-    } finally {
-      shim.cleanup();
-    }
-  }
-
   it("throws on invalid issue_number (input validation)", async () => {
     const shim = makeShimRepo({ ghHandler: { routes: [] } });
     try {
