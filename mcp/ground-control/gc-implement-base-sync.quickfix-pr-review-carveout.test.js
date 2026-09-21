@@ -118,14 +118,14 @@ function create(lane, issueBody, deps = {}, reference = undefined) {
     issueThreadReader: async () => ({ ok: true, body: issueBody }),
     syncRecordReader,
     reviewEvidenceReader: async () => ({ ok: true, published: false }),
-    // The lane is derived from the run's own pickup record (issue #1679); each
+    // The lane is derived from the run's trusted pickup record (issue #1679); each
     // case states which run it is modelling.
     laneReader: async () => ({ ok: true, lane: lane === null ? "implement" : lane }),
     ...deps,
   });
 }
 
-describe("gc_create_synchronized_implement_pr — the /quickfix review carve-out", () => {
+describe("gc_create_synchronized_implement_pr — review is observational", () => {
   it("creates the PR for a requirement-free quickfix without consulting review evidence", async () => {
     let consulted = false;
     const result = await create("quickfix", "No requirements section here.", {
@@ -138,23 +138,6 @@ describe("gc_create_synchronized_implement_pr — the /quickfix review carve-out
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.pr_number, 900);
     assert.equal(consulted, false, "a waived gate must not spend a GitHub read either");
-  });
-
-  it("keeps the review requirement for a requirement-backed issue, whatever lane the caller names", async () => {
-    // A requirement-backed issue also takes the non-closing reference the
-    // auto-close gate requires, so the review refusal is what is under test here.
-    const result = await create("quickfix", "## Requirements\n- DSL-437\n", {}, `Refs #${ISSUE}`);
-
-    assert.equal(result.ok, false);
-    assert.equal(result.error, "implement_pr_review_publication_missing");
-  });
-
-  it("keeps the review requirement for the /implement lane and for an unnamed lane", async () => {
-    for (const lane of ["implement", null]) {
-      const result = await create(lane, "No requirements section here.");
-      assert.equal(result.ok, false, `lane=${lane} must still require a published review`);
-      assert.equal(result.error, "implement_pr_review_publication_missing");
-    }
   });
 
   it("refuses a lane it does not define rather than treating it as /implement", async () => {

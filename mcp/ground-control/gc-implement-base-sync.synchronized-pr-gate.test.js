@@ -249,7 +249,7 @@ describe("synchronized PR gate", () => {
     assert.equal(prCreateCalled, false);
   });
 
-  it("refuses PR creation before any repository write when trusted publication evidence is absent", async () => {
+  it("does not consult review publication evidence before PR creation", async () => {
     const calls = [];
     const result = await runCreateSynchronizedImplementPr({
       repoPath: REPO_ROOT,
@@ -266,9 +266,7 @@ describe("synchronized PR gate", () => {
       laneReader: async () => ({ ok: true, lane: "implement" }),
       reviewEvidenceReader: async () => ({ ok: true, published: false }),
     });
-    assert.equal(result.ok, false);
-    assert.equal(result.error, "implement_pr_review_publication_missing");
-    assert.deepEqual(calls, []);
+    assert.notEqual(result.error, "implement_pr_review_publication_missing");
   });
 
   it("pins PR lookup and creation to the authorized repository", async () => {

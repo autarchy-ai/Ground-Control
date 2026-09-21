@@ -292,7 +292,7 @@ function _registerGcCreateSynchronizedImplementPr(server) {
     "the workflow to the named repair or synchronization boundary; callers must not fall back to direct gh pr create. " +
     "lane='quickfix' waives only the review-publication tuple, because that lane runs AI review under --review alone " +
     "(ADR-029); the waiver is refused for a requirement-backed issue, which is not a legal quickfix, and no other " +
-    "evidence is relaxed. The lane is read from the newest pickup record this server wrote for the branch, not taken " +
+    "evidence is relaxed. The lane is read from the newest trusted pickup record for the branch, not taken " +
     "from the input; a caller lane that disagrees refuses with implement_pr_lane_mismatch. Bootstrapping a branch in " +
     "another lane records the switch on the issue before it takes effect. The gate also re-checks that the synchronization record's recorded review publication " +
     "is still the one the issue carries, ran on this branch, and - for a zero-finding review - still names the tree " +

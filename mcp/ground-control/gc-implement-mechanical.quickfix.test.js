@@ -47,7 +47,7 @@ describe("runImplementMechanical quickfix lane", () => {
       readRemoteGates: async () => ({
         ok: true, passed: true, state: "OPEN", head_sha: "c".repeat(40), branch: "1637-quickfix",
       }),
-      // Issue #1679: the lane comes from the server's own pickup record, and the
+      // Issue #1679: the lane comes from a trusted pickup record, and the
       // head must be the one that was synchronized.
       readRunLane: async () => ({ ok: true, lane: "quickfix" }),
       readSyncRecord: async () => quickfixSyncRecord(),

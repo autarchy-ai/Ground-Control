@@ -8,6 +8,16 @@ Accepted
 
 2026-05-03
 
+> **Amended by issue #1693 (2026-09-21):** Review execution and publication are
+> observational workflow records, not delivery authority. The synchronization,
+> PR-creation, readiness, and completion boundaries do not require a review
+> publication, bind a delivery to a reviewed revision, or infer a user's review
+> decision from a marker. A user decides whether additional review is warranted;
+> accepting a review cap advances the delivery without another review cycle.
+> Branch synchronization, hosted checks, requirement-state verification, and all
+> other delivery gates remain enforced. This supersedes the review-publication
+> authorization and delivery-binding portions of the #1632 and #1679 amendments.
+
 > **Amended by issue #1632 (2026-09-18):** Review execution and public
 > durable-record publication are separate operations. A pre-push Codex review
 > may run in `deferred` publication mode, which retains the exact reviewed
@@ -28,10 +38,11 @@ Accepted
 > read from the run's own recorded lane, not from an argument. It used to be
 > granted by a bare `lane` argument on the PR-creation call, so nothing recorded
 > the choice and an `/implement` run could take the waiver at its last step. A
-> lane is now a property of the run: the MCP server writes a pickup record under
-> its own identity when a branch is bootstrapped, and the branch's lane is the
-> lane of the newest such record. Switching lanes is itself recorded - when the
-> maintainer tells an agent to move on without a review, the agent bootstraps the
+> lane is now a property of the run: the MCP server writes a pickup record when
+> a branch is bootstrapped, and the branch's lane is the lane of the newest exact
+> record by an author with effective repository write permission. Switching lanes
+> is itself recorded - when the maintainer tells an agent to move on without a
+> review, the agent bootstraps the
 > same branch as `/quickfix` and the thread says so. Synchronization, PR creation,
 > readiness and both completion phases all read the lane from that record and
 > refuse a caller that states a different one. The waiver still relaxes the

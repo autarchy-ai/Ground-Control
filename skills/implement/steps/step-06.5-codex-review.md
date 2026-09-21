@@ -59,7 +59,7 @@ When the cycle finishes:
   re-invoke this step. Do not treat it as clean and do not escalate a cap that
   was never spent.
 - `status: "accepted_at_cap"` → the last in-cap findings were fixed and verified, and the user declined another review cycle; advance to Phase C. A clean terminal verdict is not required.
-- `status: "capped"` → ask whether to spend one additional cycle. If the user declines or says to proceed, return `accepted_at_cap` and advance. If they authorize another cycle, rerun this step with `override_cap=true` + `override_reason`.
+- `status: "capped"` → present the choice to spend one additional cycle or proceed. If the user says to proceed without another review, continue, or otherwise declines, that is the authoritative decision: return `accepted_at_cap` and advance immediately. Do not re-ask, treat the decision as a blocker, or claim that a further review is required. Rerun this step with `override_cap=true` + `override_reason` only when the user expressly chooses another cycle.
 
 ## Return contract
 

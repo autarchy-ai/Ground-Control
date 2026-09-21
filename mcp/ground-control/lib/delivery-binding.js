@@ -1,4 +1,4 @@
-// Binding a delivery to the review that authorized it (issue #1679).
+// Binding a delivery to the synchronized branch and lane (issue #1679).
 //
 // Three identities are involved and they are deliberately distinct:
 //
@@ -23,8 +23,6 @@
 // the policy or re-deriving it from a local checkout that may no longer hold the
 // commits.
 
-import { IMPLEMENT_BASE_SYNC_NO_PUBLICATION } from "./implement-sync-record.js";
-
 function refuse(error, message, nextAction) {
   return { ok: false, error, message, next_action: nextAction };
 }
@@ -35,45 +33,16 @@ function refuse(error, message, nextAction) {
  * `settledTreeSha` is the tree of the pre-synchronization feature head — the
  * tree the delivery work produced, before a base merge changes it.
  */
-export async function resolveDeliveryBinding({ evidence, lane, settledTreeSha }) {
+export async function resolveDeliveryBinding({ lane, settledTreeSha }) {
   if (!lane.ok) return lane;
-  // The quickfix lane runs no mandatory review (ADR-029, issue #906), so it has
-  // no publication to bind against. Its waiver is checked where it is granted;
-  // here it simply records that no publication authorized this delivery.
-  if (lane.lane === "quickfix") {
-    return {
-      ok: true,
-      binding: {
-        settledTreeSha,
-        reviewPublicationId: IMPLEMENT_BASE_SYNC_NO_PUBLICATION,
-        reviewRevisionDigest: IMPLEMENT_BASE_SYNC_NO_PUBLICATION,
-        lane: lane.lane,
-      },
-    };
-  }
-  if (evidence?.ok !== true || evidence.published !== true) {
-    return refuse(
-      "implement_base_sync_review_publication_missing",
-      evidence?.message
-        ?? "A complete trusted review publication is required before the delivery can be synchronized.",
-      "publish_the_retained_review_and_retry",
-    );
-  }
-  if (evidence.findings_count === 0 && evidence.candidate_tree_oid !== settledTreeSha) {
-    return refuse(
-      "implement_base_sync_reviewed_tree_changed",
-      "The last published review reported no findings, so it authorized exactly the tree it read. "
-      + `The delivery carries a different tree (${settledTreeSha}), which no review has seen. `
-      + "Run and publish a review cycle on the current revision.",
-      "rerun_review_on_the_current_revision_and_retry",
-    );
-  }
   return {
     ok: true,
     binding: {
       settledTreeSha,
-      reviewPublicationId: evidence.publication_id,
-      reviewRevisionDigest: evidence.revision_digest,
+      // Retained only for v2 record compatibility; no consumer treats these as
+      // authorization or requires review evidence.
+      reviewPublicationId: IMPLEMENT_BASE_SYNC_NO_PUBLICATION,
+      reviewRevisionDigest: IMPLEMENT_BASE_SYNC_NO_PUBLICATION,
       lane: lane.lane,
     },
   };
@@ -105,7 +74,7 @@ export function deliveredHeadRefusal({ record, headSha, branchName, issueNumber 
  * publication that has since become ambiguous, must not pass on the strength of
  * a stale row.
  */
-export function assertDeliveryBindingCurrent({ record, evidence, branchName, lane }) {
+export function assertDeliveryBindingCurrent({ record, lane }) {
   // The record's lane decides which checks apply below, so a record from another
   // lane cannot be the one this delivery is judged against. Without this, a
   // quickfix record taken into an implement run reaches the quickfix early return
@@ -115,49 +84,10 @@ export function assertDeliveryBindingCurrent({ record, evidence, branchName, lan
     return refuse(
       "implement_delivery_binding_lane_mismatch",
       `This run is an /${lane} delivery, but its synchronization record was written for an /${record.lane} one. `
-      + "Re-synchronize so the record binds this run's review evidence.",
+      + "Re-synchronize so the record binds this run's lane.",
       "return_to_the_synchronization_boundary",
-    );
-  }
-  if (record.lane === "quickfix") {
-    return record.reviewPublicationId === IMPLEMENT_BASE_SYNC_NO_PUBLICATION
-      ? { ok: true }
-      : refuse(
-        "implement_delivery_binding_inconsistent",
-        "A quickfix synchronization record names a review publication, which that lane does not produce.",
-        "return_to_the_synchronization_boundary",
-      );
-  }
-  if (evidence?.ok !== true || evidence.published !== true) {
-    return refuse(
-      "implement_pr_review_publication_missing",
-      evidence?.message ?? "A complete trusted review publication is required before PR creation.",
-      "publish_the_retained_review_and_retry",
-    );
-  }
-  if (evidence.publication_id !== record.reviewPublicationId
-    || evidence.revision_digest !== record.reviewRevisionDigest) {
-    return refuse(
-      "implement_delivery_binding_stale",
-      "The synchronization record was bound to a different review publication than the one the issue now carries.",
-      "return_to_the_synchronization_boundary",
-    );
-  }
-  // Only the review that ran on this branch can authorize this branch's delivery.
-  if (evidence.branch !== branchName) {
-    return refuse(
-      "implement_delivery_binding_branch_mismatch",
-      `The authorizing review ran on branch '${evidence.branch}', not on '${branchName}'.`,
-      "rerun_review_on_this_branch_and_retry",
-    );
-  }
-  if (evidence.findings_count === 0 && evidence.candidate_tree_oid !== record.settledTreeSha) {
-    return refuse(
-      "implement_delivery_binding_tree_mismatch",
-      "The authorizing review reported no findings, so it authorized exactly the tree it read, "
-      + "and the synchronized delivery carries a different one.",
-      "rerun_review_on_the_current_revision_and_retry",
     );
   }
   return { ok: true };
 }
+import { IMPLEMENT_BASE_SYNC_NO_PUBLICATION } from "./implement-sync-record.js";

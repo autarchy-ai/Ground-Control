@@ -16,7 +16,6 @@ import { readTrustedImplementSyncRecord } from "./knowledge-capture.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { rejectReservedMarkerSequence } from "./repo-vocabulary.js";
 import { checkPrBodyShape, execFile } from "./runtime-primitives.js";
-import { readTrustedReviewPublicationEvidence } from "./review-publication-evidence.js";
 import { laneClaimRefusal, readTrustedRunLane } from "./run-lane-evidence.js";
 import { assertDeliveryBindingCurrent } from "./delivery-binding.js";
 
@@ -267,16 +266,12 @@ async function assertPrBodyClosingKeywordBoundToIssueScope(input, issueThreadRea
 // caller's word: a requirement-backed issue is not a legal quickfix, so it keeps the
 // mandatory review.
 //
-// `lane` here is the lane DERIVED from the server's own pickup record, never the
+// `lane` here is the lane DERIVED from the newest trusted pickup record, never the
 // caller's argument. An empty requirement section is not proof of a quickfix run -
 // a requirement-free bug fix is an ordinary /implement target - so the two
 // conditions together were waivable by anyone who passed lane="quickfix"
 // (issue #1679). The requirement-scope condition stays: it is an independent
 // constraint, not the evidence.
-function reviewPublicationRequired(lane, scope) {
-  return lane !== "quickfix" || scope.length > 0;
-}
-
 // The caller may still state its lane; it must agree with the derived one. A
 // disagreement is surfaced rather than silently ignored, because it means the
 // run and the call have different ideas about which gates apply.
@@ -342,7 +337,6 @@ export async function runCreateSynchronizedImplementPr(input, {
   contextResolver = getRepoGroundControlContext,
   syncRecordReader = readTrustedImplementSyncRecord,
   issueThreadReader = (args) => runGetIssueThread(args, { workspaceAuthorizationResolver }),
-  reviewEvidenceReader = readTrustedReviewPublicationEvidence,
   laneReader = readTrustedRunLane,
 } = {}) {
   const inputValidation = validateSynchronizedImplementPrInput(input);
@@ -354,24 +348,6 @@ export async function runCreateSynchronizedImplementPr(input, {
   if (!closingBinding.ok) return closingBinding;
   const lane = await resolveDeliveryLane(input, repoRoot, repoAuthorization, laneReader);
   if (!lane.ok) return lane;
-  // The quickfix lane publishes no review, so it reads none: a waived gate must
-  // not spend a GitHub round trip either. Every other lane reads once and uses
-  // the same envelope for the gate and for the delivery binding below.
-  const reviewEvidence = lane.lane === "quickfix" ? null : await reviewEvidenceReader({
-    repoRoot,
-    owner: repoAuthorization.owner,
-    name: repoAuthorization.name,
-    issueNumber: input.issueNumber,
-  });
-  if (reviewPublicationRequired(lane.lane, closingBinding.scope)
-    && (reviewEvidence?.ok !== true || reviewEvidence.published !== true)) {
-    return {
-      ok: false,
-      error: "implement_pr_review_publication_missing",
-      message: reviewEvidence?.message ?? "A complete trusted review publication is required before PR creation.",
-      next_action: "publish_the_retained_review_and_retry",
-    };
-  }
   try {
     const synchronization = await validateImplementSynchronization({
       repoRoot,
@@ -383,11 +359,8 @@ export async function runCreateSynchronizedImplementPr(input, {
     });
     if (!synchronization.ok) return synchronization;
     const { record, fetchedBaseSha, localSha } = synchronization;
-    // The record is trusted but not fresh: re-check that the publication it was
-    // bound to is still the one this issue carries, ran on this branch, and - for
-    // a zero-finding review - still names the tree being delivered (issue #1679).
     const bindingCurrent = assertDeliveryBindingCurrent({
-      record, evidence: reviewEvidence, branchName: input.branchName, lane: lane.lane,
+      record, lane: lane.lane,
     });
     if (!bindingCurrent.ok) return bindingCurrent;
     const existingLookup = await findExistingSynchronizedImplementPr({

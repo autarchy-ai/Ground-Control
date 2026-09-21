@@ -97,8 +97,9 @@ requirement UIDs, and `pre_push_reviews: "completed"` only when `--review` ran;
 otherwise pass `"not_run"`. Create the PR with
 `gc_create_synchronized_implement_pr`, passing `lane: "quickfix"` and the
 synchronization record returned by `publish`. The lane input is an assertion, not
-authority (issue #1679): the server reads the branch's lane from the newest
-pickup record it wrote, which Q1 created, and refuses a lane that disagrees with
+authority (issue #1679): the server reads the branch's lane from the newest exact
+pickup record by an author with effective repository write permission, which Q1
+created, and refuses a lane that disagrees with
 `implement_pr_lane_mismatch`. Readiness and finalize apply the same rule.
 
 To take an in-progress `/implement` branch onto this lane - for example when the

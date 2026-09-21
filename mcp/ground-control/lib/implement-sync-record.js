@@ -13,7 +13,7 @@ import { isSafeGitRefName } from "./repo-context.js";
 // v2 makes this record the bridge from review to delivery (issue #1679): besides
 // the heads and trees it always carried, it names the trusted review publication
 // it was bound against, that review's revision digest, the settled tree the
-// delivery work produced, and the lane derived from the run's own pickup record.
+// delivery work produced, and the lane derived from the run's trusted pickup record.
 // A v1 record no longer parses, so an in-flight run re-synchronizes rather than
 // being accepted on evidence that binds nothing.
 export const IMPLEMENT_BASE_SYNC_SCHEMA = "gc.implement.remote-base-sync/v2";

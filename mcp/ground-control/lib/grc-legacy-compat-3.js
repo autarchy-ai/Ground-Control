@@ -177,8 +177,12 @@ async function postSingleReviewComment({
   const { stdout } = await execFile("gh", args, { cwd: repoRoot });
   try {
     return JSON.parse(stdout);
-  } catch {
-    return null;
+  } catch (error) {
+    const detail = `${error?.message ?? ""}\n${error?.stderr ?? ""}`;
+    // A collaborator lookup can definitively report that an author has no
+    // repository relationship. Transport and authorization failures remain
+    // unresolved so security decisions can fail closed.
+    return /\b404\b/.test(detail) ? null : undefined;
   }
 }
 /**
@@ -357,6 +361,10 @@ export async function resolveExecutionObligationTrust(repoRoot, owner, name, com
     isTrusted: (comment) => {
       const login = comment.authorLogin?.toLowerCase() ?? null;
       return login != null && permissions.get(login) != null;
+    },
+    isResolved: (comment) => {
+      const login = comment.authorLogin?.toLowerCase() ?? null;
+      return login != null && permissions.get(login) !== undefined;
     },
     // A SECOND, distinct class (issue #1671). The repository's own Actions identity is a
     // GitHub App, so the collaborator endpoint reports no permission for it and `isTrusted`

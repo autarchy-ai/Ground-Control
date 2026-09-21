@@ -178,51 +178,6 @@ describe("repeated base synchronization keeps the original settlement (#1679)", 
     assert.equal(result.settledTreeSha, TREE, "the reviewed tree, not the merge's tree");
   });
 
-  it("recomputes the settlement when new work landed since the last synchronization", async () => {
-    // The feature head is no longer where the previous synchronization left it,
-    // so the delivery genuinely changed and the clean review no longer covers it.
-    const result = await synchronizeAgain({ ...priorRecord, resultingFeatureSha: "8".repeat(40) });
-
-    assert.equal(result.ok, false);
-    assert.equal(result.error, "implement_base_sync_reviewed_tree_changed");
-  });
-
-  // core-F2 (cycle 5): an unchanged feature head is not an unchanged binding.
-  // After a base merge, a new zero-finding review of the merged head is the live
-  // binding; carrying the old settlement forward judged it against the pre-merge
-  // tree and refused on every retry, so no record could ever bind it.
-  it("lets a replacement review of the merged head establish its own settlement", async () => {
-    const replacement = {
-      ...REVIEW_EVIDENCE,
-      publication_id: "e".repeat(64),
-      revision_digest: "f".repeat(64),
-      candidate_tree_oid: MERGED_TREE,
-    };
-    const result = await synchronizeAgain(priorRecord, {
-      evidence: replacement,
-      existing: {
-        ...expectedRecord,
-        settledTreeSha: MERGED_TREE,
-        reviewPublicationId: replacement.publication_id,
-        reviewRevisionDigest: replacement.revision_digest,
-      },
-    });
-
-    assert.equal(result.ok, true, JSON.stringify(result));
-    assert.equal(result.settledTreeSha, MERGED_TREE, "the tree the replacement review actually read");
-  });
-
-  it("derives a fresh settlement when the branch switched lanes since the last record", async () => {
-    // The prior record was written for /quickfix; the run is /implement now.
-    const result = await synchronizeAgain({
-      ...priorRecord, lane: "quickfix", reviewPublicationId: "-", reviewRevisionDigest: "-",
-    });
-
-    assert.equal(result.ok, false);
-    assert.equal(result.error, "implement_base_sync_reviewed_tree_changed",
-      "the quickfix record's settlement is not carried into an /implement binding");
-  });
-
   // core-F1 (cycle 6): the second synchronization posted its record but the
   // response was lost. The retry must carry forward from the record that
   // preceded it, as the first attempt did, not from the record it already wrote.
