@@ -140,7 +140,15 @@ function _validateAsyncJobOptions(options) {
     executionScope = null,
     singleFlight = false,
     cancellable = true,
+    retryStaleResult = null,
   } = options ?? {};
+  if (retryStaleResult != null && typeof retryStaleResult !== "function") {
+    return {
+      ok: false,
+      error: "job_options_invalid",
+      message: "retryStaleResult must be a function when provided.",
+    };
+  }
   if (idempotencyKey != null) {
     if (
       typeof idempotencyKey !== "string"
@@ -194,6 +202,7 @@ function _validateAsyncJobOptions(options) {
     executionScope,
     singleFlight,
     cancellable,
+    retryStaleResult,
   };
 }
 
@@ -224,6 +233,36 @@ export function asyncJobInputFingerprint(value) {
     .digest("hex");
 }
 
+// Resolves an idempotency-keyed start against any existing job with the same
+// key/namespace: an envelope to return immediately (reuse, or a fingerprint
+// conflict), or null when startAsyncJob should create a new job because none
+// matched or the match was evicted as stale.
+function _resolveIdempotentAsyncJob(validated) {
+  if (validated.idempotencyKey == null) return null;
+  const existing = Array.from(_asyncJobs.values()).find((job) =>
+    job.idempotencyKey === validated.idempotencyKey
+    && job.idempotencyNamespace === validated.idempotencyNamespace,
+  );
+  if (!existing) return null;
+  if (existing.fingerprint !== validated.fingerprint) {
+    return {
+      ok: false,
+      error: "job_idempotency_conflict",
+      message: "That idempotency key is already bound to different normalized input.",
+    };
+  }
+  // A terminal job the caller flagged as stale (e.g. a watcher that ended
+  // without a verdict) answers nothing on replay. Evict it so a fresh job
+  // takes the same key/namespace slot instead of echoing the old envelope
+  // forever within the TTL (issue #1695).
+  const stale = existing.status === "done"
+    && typeof validated.retryStaleResult === "function"
+    && validated.retryStaleResult(existing.result);
+  if (!stale) return _asyncJobEnvelope(existing);
+  _asyncJobs.delete(existing.id);
+  return null;
+}
+
 // Start one generic async job. `kind` is a stable label echoed in poll
 // responses. Idempotent callers provide a server-derived fingerprint and
 // namespace plus the caller-stable key for one logical attempt.
@@ -235,22 +274,8 @@ export function startAsyncJob(kind, runFn, options = {}) {
   if (!validated.ok) return validated;
   _reapExpiredAsyncJobs();
 
-  if (validated.idempotencyKey != null) {
-    const existing = Array.from(_asyncJobs.values()).find((job) =>
-      job.idempotencyKey === validated.idempotencyKey
-      && job.idempotencyNamespace === validated.idempotencyNamespace,
-    );
-    if (existing) {
-      if (existing.fingerprint !== validated.fingerprint) {
-        return {
-          ok: false,
-          error: "job_idempotency_conflict",
-          message: "That idempotency key is already bound to different normalized input.",
-        };
-      }
-      return _asyncJobEnvelope(existing);
-    }
-  }
+  const idempotent = _resolveIdempotentAsyncJob(validated);
+  if (idempotent) return idempotent;
 
   if (validated.singleFlight && validated.executionScope != null) {
     const contended = Array.from(_asyncJobs.values()).some((job) =>

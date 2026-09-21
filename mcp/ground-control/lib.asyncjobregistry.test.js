@@ -213,6 +213,41 @@ describe("async job registry (gc_codex_job, issues #937 and #1473)", () => {
     assert.equal(runCount, 1);
   });
 
+  it("evicts and restarts a terminal job its caller flags as stale (issue #1695)", async () => {
+    const { startAsyncJob, pollAsyncJob, _resetAsyncJobsForTest } = await import("./lib.js");
+    _resetAsyncJobsForTest();
+    let runCount = 0;
+    let resolveRun;
+    const run = () => {
+      runCount += 1;
+      return new Promise((resolve) => { resolveRun = resolve; });
+    };
+    const options = {
+      idempotencyKey: "monitor-head-1695",
+      idempotencyNamespace: "monitor:/repo:99:sonar",
+      fingerprint: "a".repeat(64),
+      retryStaleResult: (result) => result?.ok === false,
+    };
+    const first = startAsyncJob("monitor_sonar", run, options);
+    await flush();
+    resolveRun({ ok: false, error: "sonar_watch_producer_pending" });
+    await flush();
+    assert.equal(runCount, 1);
+
+    const rerun = startAsyncJob("monitor_sonar", run, options);
+    assert.notEqual(rerun.job_id, first.job_id, "a non-verdict terminal result must not be replayed");
+    assert.equal(rerun.status, "running");
+    await flush();
+    assert.equal(runCount, 2);
+    assert.equal(pollAsyncJob(first.job_id).error, "job_not_found", "the stale job is evicted, not merely superseded");
+
+    resolveRun({ ok: true, quality_gate: "OK" });
+    await flush();
+    const reused = startAsyncJob("monitor_sonar", run, options);
+    assert.equal(reused.job_id, rerun.job_id, "a genuine verdict is still reused");
+    assert.equal(runCount, 2);
+  });
+
   it("rejects reuse of one idempotency key for different normalized input", async () => {
     const { startAsyncJob, _resetAsyncJobsForTest } = await import("./lib.js");
     _resetAsyncJobsForTest();
