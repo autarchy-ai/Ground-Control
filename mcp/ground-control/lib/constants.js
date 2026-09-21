@@ -6,6 +6,11 @@
 
 import { emptyExamplePathsConfig } from "./repo-context.js";
 
+// The operational pickup flag, applied when a lane takes an issue and dropped when the
+// shared post-merge close concludes the issue is closed. One name rather than a literal at
+// each end of the lifecycle: the two ends drifting apart is the failure this prevents, and
+// it is why the label outlived its removal once already (issue #1686).
+export const IMPLEMENT_IN_PROGRESS_LABEL = "in-progress";
 export const STATUSES = ["DRAFT", "ACTIVE", "DEPRECATED", "ARCHIVED"];
 export const REQUIREMENT_TYPES = ["FUNCTIONAL", "NON_FUNCTIONAL", "CONSTRAINT", "INTERFACE"];
 export const PRIORITIES = ["MUST", "SHOULD", "COULD", "WONT"];

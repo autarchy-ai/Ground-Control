@@ -1,5 +1,9 @@
 # /implement In-Progress Issue Flag Preflight
 
+Historical guidance for issue #842. For issue #1686, the removal owner and
+failure semantics below are superseded as design guidance by
+[Post-merge label cleanup preflight](post-merge-label-cleanup-preflight.md).
+
 Issue #842 asks the `/implement` workflow to mark the resolved GitHub issue as
 in progress immediately after `gh issue develop --checkout`, post a durable
 pickup comment, and remove the label when the workflow closes the issue.
