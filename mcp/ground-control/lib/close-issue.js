@@ -6,14 +6,13 @@
 
 import { TO_CAMEL } from "./field-mapping.js";
 import { extractGhErrorMessage } from "./grc-legacy-compat-2.js";
-import { fetchPullRequest, listIssueCrossReferencedPullNumbers } from "./github-rest.js";
+import { fetchPullRequest, ghRestJson, listIssueCrossReferencedPullNumbers } from "./github-rest.js";
 import { readIssueCommentBodies, readIssueCommentsWithAuthors, resolveExecutionObligationTrust, validateSourceDevStartGate } from "./grc-legacy-compat-3.js";
 import { findTrustedFinalReportMarker } from "./final-report-marker.js";
 import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { devStartGateConfigFailure, devStartGateFailure, readDevStartPlanFields, readSourceBearingDecision, validateNonSourceDevStartGate } from "./grc-legacy-compat.js";
 import { buildCodexReviewCycleMarker, normalizeDevStartGateConfig, parseCodexReviewCycleMarkers } from "./repo-context-2.js";
 import { IMPLEMENT_IN_PROGRESS_LABEL } from "./constants.js";
-import { ghRestJson } from "./github-rest.js";
 import { execFile } from "./runtime-primitives.js";
 
 const TO_SNAKE = Object.fromEntries(Object.entries(TO_CAMEL).map(([k, v]) => [v, k]));
