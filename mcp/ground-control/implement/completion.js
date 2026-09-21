@@ -3,6 +3,9 @@
 // The module had reached 1,231 lines against the repo's 500-LOC limit
 // (docs/CODING_STANDARDS.md). gc-implement-mechanical.js remains the tool entry point.
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { PHASE_E_WORKFLOW_PATH } from "../lib/phase-e-workflow.js";
 import { failure, requireField } from "./gate-helpers.js";
 import { mapCompletion } from "./publish.js";
 
@@ -12,6 +15,12 @@ import { mapCompletion } from "./publish.js";
 // would both cost an extra GitHub round trip and open a window in which the head moves
 // between the check and the binding.
 async function recordHandoff(args, deps, action, { lane, headSha }) {
+  // Whether this repository can finish on its own, checked on the delivery path rather than
+  // left to whoever runs `grndctl doctor`. APTL passed Phase D, merged, and stalled with no
+  // report and no failure record, because the absent file is the thing that would have
+  // failed (issue #1688). The handoff is still recorded — it is what a manual
+  // `finalize-merged-pr` replays — but the record says which of the two will happen.
+  const executorPresent = existsSync(join(args.repoPath, PHASE_E_WORKFLOW_PATH));
   const recorded = await deps.recordDeliveryReadiness({
     repoPath: args.repoPath,
     issueNumber: args.issueNumber,
@@ -19,6 +28,7 @@ async function recordHandoff(args, deps, action, { lane, headSha }) {
     lane,
     headSha,
     payload: args.completion,
+    executorPresent,
   });
   if (!recorded.ok) {
     return failure(
@@ -29,7 +39,7 @@ async function recordHandoff(args, deps, action, { lane, headSha }) {
       { delivery_readiness: recorded },
     );
   }
-  return { ok: true, recorded };
+  return { ok: true, recorded, executorPresent };
 }
 
 // /quickfix has no pre-merge report, so it reads the hosted-gate snapshot itself. That

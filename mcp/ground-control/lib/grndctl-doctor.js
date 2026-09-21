@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { parseGroundControlYaml } from "./ground-control-config.js";
 import { detectGithubRepo } from "./grndctl-detect.js";
 import { MCP_SERVER_ENTRY } from "./grndctl-init.js";
-import { PHASE_E_WORKFLOW_PATH } from "./phase-e-workflow.js";
+import { PHASE_E_WORKFLOW_PATH, renderPhaseEWorkflow } from "./phase-e-workflow.js";
 import { execFile } from "./runtime-primitives.js";
 import { parseEnvFileLine } from "./server-env.js";
 
@@ -60,20 +60,39 @@ function mcpCheck(cwd) {
 // Without the merged-pull-request workflow, Phase E never runs on its own and every
 // delivered issue waits for someone to finish it by hand (issue #1671). A warning rather
 // than a failure: a repository may deliberately finalize from an agent session.
+//
+// The file's content is fixed (issue #1688), so "drifted" is now simply "not the template"
+// — there is nothing repo-specific in it to allow for. This repository's own copy runs the
+// checkout instead of a release, which is the one legitimate difference.
 function phaseEWorkflowCheck(cwd) {
   const path = join(cwd, PHASE_E_WORKFLOW_PATH);
   if (!existsSync(path)) {
     return check("Phase E workflow installed", false, `run grndctl init to add ${PHASE_E_WORKFLOW_PATH}`, { warn: true });
   }
   const text = readFileSync(path, "utf8");
-  const pinned = /grndctl@\d+\.\d+\.\d+|bin\/grndctl\.js/.test(text);
-  const merged = text.includes("pull_request.merged == true");
+  const current = text === renderPhaseEWorkflow() || text.includes("bin/grndctl.js");
   return check(
     "Phase E workflow installed",
-    pinned && merged,
-    `${PHASE_E_WORKFLOW_PATH} must run a pinned grndctl and guard on pull_request.merged == true`,
+    current && text.includes("pull_request.merged == true"),
+    `${PHASE_E_WORKFLOW_PATH} has drifted from the current trigger; run grndctl init to replace it`,
     { warn: true },
   );
+}
+
+// The workflow reads the release it runs from here, so an enabled lane with no version is a
+// job that fails at merge time rather than finalizing (issue #1688). Ground Control's own
+// copy runs the checkout instead of a published release, so it consumes no version and the
+// check does not apply to it.
+function phaseEVersionCheck(cwd, config) {
+  const path = join(cwd, PHASE_E_WORKFLOW_PATH);
+  if (!existsSync(path) || readFileSync(path, "utf8").includes("bin/grndctl.js")) return [];
+  const phaseE = config?.ok ? config.value.phase_e : null;
+  return [check(
+    "phase_e.version set",
+    Boolean(phaseE?.enabled && phaseE.version),
+    "add a phase_e block with the grndctl version to .ground-control.yaml; the workflow reads it",
+    { warn: true },
+  )];
 }
 
 async function envChecks(cwd, sonarConfigured) {
@@ -102,6 +121,7 @@ export async function runDoctorChecks({ cwd = process.cwd(), version, works = co
     ...(await yamlChecks(cwd, config)),
     mcpCheck(cwd),
     phaseEWorkflowCheck(cwd),
+    ...phaseEVersionCheck(cwd, config),
     ...(await envChecks(cwd, Boolean(config?.ok && config.value.sonarcloud))),
   ];
 }

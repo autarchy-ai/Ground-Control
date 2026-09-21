@@ -4,13 +4,18 @@
 // time, while `lib/` is already part of the published package. Ground Control's own copy at
 // `.github/workflows/ground-control-phase-e.yml` runs the checkout's server so a change to
 // the finalizer is exercised by the delivery that makes it; a consumer repository runs the
-// published release, pinned to an exact version rather than a moving tag.
+// published release.
+//
+// The content is fixed (issue #1688). GitHub fires `pull_request: closed` only from a file
+// committed under `.github/workflows/`, so this file has to exist — but it is a trigger, not
+// a configuration surface. The grndctl release it runs is read at job time from
+// `phase_e.version` in `.ground-control.yaml`, which is the one Ground Control config a
+// repository carries. Baking the version in here made the file a second thing to pin and
+// upgrade, and the two could disagree with nothing to notice.
 
 // One declaration of the path: the close gate's trust anchor and the installer must name
 // the same file, or renaming it would silently disable automated finalization.
 export { PHASE_E_WORKFLOW_PATH } from "./automation-provenance.js";
-
-const VERSION_PLACEHOLDER = "__GRNDCTL_VERSION__";
 
 export const PHASE_E_WORKFLOW_TEMPLATE = [
   "name: Ground Control Phase E",
@@ -30,8 +35,8 @@ export const PHASE_E_WORKFLOW_TEMPLATE = [
   "#",
   "# It runs no tests, no policy suite, and no review, and it waits for no other post-merge job.",
   "#",
-  "# Written by `grndctl init`. The pinned version below is the grndctl that wrote it; bump it",
-  "# deliberately rather than tracking a moving tag.",
+  "# Written by `grndctl init`. Its content is fixed: the grndctl release it runs comes from",
+  "# `phase_e.version` in .ground-control.yaml, so this file never needs upgrading.",
   "",
   "on:",
   "  pull_request:",
@@ -75,17 +80,28 @@ export const PHASE_E_WORKFLOW_TEMPLATE = [
   "      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0",
   "        with:",
   "          node-version: 22",
+  "      # The single scalar this job needs from the repository's config. Read with sed rather",
+  "      # than a YAML tool so the step depends on nothing that is not already on the runner,",
+  "      # and fail loudly: an unset version would otherwise resolve to a moving `latest`.",
+  "      - name: Resolve the pinned grndctl release",
+  "        id: gc",
+  "        run: |",
+  "          version=\"$(sed -n '/^phase_e:/,/^[^[:space:]]/s/^[[:space:]]*version:[[:space:]]*//p' .ground-control.yaml | tr -d '\"'\"'\"' | head -n 1)\"",
+  "          if [ -z \"$version\" ]; then",
+  "            echo '::error::phase_e.version is not set in .ground-control.yaml; run grndctl init' >&2",
+  "            exit 1",
+  "          fi",
+  "          echo \"version=$version\" >> \"$GITHUB_OUTPUT\"",
   "      - name: Finalize the merged delivery",
   "        env:",
   "          GH_TOKEN: ${{ github.token }}",
   "          PR: ${{ github.event.pull_request.number || inputs.pr }}",
-  "        run: npx --yes grndctl@__GRNDCTL_VERSION__ finalize-merged-pr --pr \"$PR\"",
+  "          VERSION: ${{ steps.gc.outputs.version }}",
+  "        run: npx --yes \"grndctl@$VERSION\" finalize-merged-pr --pr \"$PR\"",
   "",
 ].join("\n");
 
-export function renderPhaseEWorkflow(version) {
-  if (typeof version !== "string" || !/^\d+\.\d+\.\d+/.test(version)) {
-    throw new Error("renderPhaseEWorkflow requires the installed grndctl version");
-  }
-  return PHASE_E_WORKFLOW_TEMPLATE.replaceAll(VERSION_PLACEHOLDER, version);
+/** The workflow's fixed content. It takes no version: `phase_e.version` supplies that. */
+export function renderPhaseEWorkflow() {
+  return PHASE_E_WORKFLOW_TEMPLATE;
 }

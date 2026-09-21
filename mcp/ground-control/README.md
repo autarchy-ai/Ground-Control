@@ -51,11 +51,21 @@ grndctl init      # in each repository: confirm settings, review changes, then w
 grndctl doctor
 ```
 
-`grndctl init` also installs `.github/workflows/ground-control-phase-e.yml`, pinned to
-the exact installed version. That workflow finishes Phase E when a delivery pull request
-merges, so an agent can be terminated at a ready pull request and the merge alone closes
-out the issue (ADR-102). It never rewrites a copy the repository already has;
-`grndctl doctor` reports one that is missing or has drifted.
+`grndctl init` also installs `.github/workflows/ground-control-phase-e.yml`. That workflow
+finishes Phase E when a delivery pull request merges, so an agent can be terminated at a
+ready pull request and the merge alone closes out the issue (ADR-102).
+
+Its content is fixed and identical in every repository: it is a trigger, because GitHub
+fires `pull_request: closed` only from a file under `.github/workflows/`, not a second
+place to configure Ground Control (issue #1688). The grndctl release it runs comes from
+`phase_e.version` in `.ground-control.yaml`, so upgrading automated finalization is editing
+one line in the one config this repository carries. `init` replaces a drifted copy, because
+there is nothing repo-specific in it to preserve, and `grndctl doctor` reports a copy that
+is missing or drifted and a `phase_e` block that is absent or has no version.
+
+A repository without the workflow finalizes by hand. The Phase D readiness record says so
+in that case rather than promising an automation that cannot run: the fix for a merged
+delivery that silently stalled with no report and no failure record.
 
 One more verb runs there rather than from an agent session:
 

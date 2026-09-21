@@ -114,6 +114,25 @@ readiness, or requirement completion; those remain the incumbent finalizer's gat
 report written before the original close failed. The correction changes neither marker
 format nor the distinct automation trust class, and does not authorize human-only overrides.
 
+### The workflow file is a trigger, not a second config (issue #1688)
+
+A Ground Control repository carries one Ground Control config, `.ground-control.yaml`. The
+workflow file cannot be removed, because GitHub fires `pull_request: closed` only from a
+file committed under `.github/workflows/`, but it no longer holds configuration. Its content
+is fixed and identical everywhere; the grndctl release it runs is read at job time from
+`phase_e.version`, and an unset version fails the job rather than resolving a moving tag.
+`grndctl init` writes both, replaces a drifted copy, and `doctor` reports either half
+missing.
+
+The failure that forced this: a repository with `.ground-control.yaml` and no workflow
+recorded a delivery handoff promising automatic finalization, merged at the bound head, and
+stopped. No final report, no close, no `gc:delivery-finalization-failed` record: the
+absent file is the thing that would have failed, so nothing failed. An agent that follows
+the contract terminates at Phase D, so nobody was told. Readiness now checks for the
+executor on the delivery path and, where there is none, records the same machine payload
+while saying plainly that the merge finalizes by hand and naming the command. Every repo
+onboarded before #1671 was in that state and none of them knew.
+
 ### Replay is safe, and failure is never a close path
 
 Final-report publication became idempotent: an existing trusted marker for this exact issue

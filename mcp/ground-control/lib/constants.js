@@ -6,6 +6,39 @@
 
 import { emptyExamplePathsConfig } from "./repo-context.js";
 
+// Automated post-merge finalization (issue #1688). `.ground-control.yaml` is the one
+// Ground Control config a repository carries, so the grndctl version Phase E runs is
+// declared here rather than baked into the workflow file. The workflow still has to exist —
+// GitHub fires `pull_request: closed` only from a file in `.github/workflows/` — but it
+// becomes a write-once trigger that reads this value, not a second thing to version.
+export function normalizePhaseEConfig(raw) {
+  if (raw == null) return { ok: true, value: { enabled: false, version: null } };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    return { ok: false, errors: ["phase_e must be a mapping"] };
+  }
+  const errors = [];
+  for (const key of Object.keys(raw)) {
+    if (!["enabled", "version"].includes(key)) errors.push(`unknown phase_e key '${key}'`);
+  }
+  const enabled = raw.enabled == null ? true : raw.enabled;
+  if (typeof enabled !== "boolean") errors.push("phase_e.enabled must be a boolean");
+  let version = null;
+  if (raw.version != null) {
+    if (typeof raw.version !== "string" || !/^\d+\.\d+\.\d+/.test(raw.version)) {
+      errors.push("phase_e.version must be an exact grndctl version such as '2.5.1'");
+    } else {
+      version = raw.version;
+    }
+  }
+  // An enabled lane with no version has nothing to run: the workflow resolves the release
+  // from this field, so leaving it out would silently fall back to whatever `latest` is.
+  if (enabled === true && version === null) {
+    errors.push("phase_e.version is required when phase_e is enabled");
+  }
+  if (errors.length) return { ok: false, errors };
+  return { ok: true, value: { enabled, version } };
+}
+
 // The operational pickup flag, applied when a lane takes an issue and dropped when the
 // shared post-merge close concludes the issue is closed. One name rather than a literal at
 // each end of the lifecycle: the two ends drifting apart is the failure this prevents, and

@@ -49,21 +49,26 @@ describe("Phase E workflow template", () => {
     assert.match(runName, /inputs\.pr/);
   });
 
-  it("pins an exact grndctl version rather than a moving tag", () => {
-    const rendered = renderPhaseEWorkflow("2.5.1");
-    assert.match(rendered, /npx --yes grndctl@2\.5\.1 finalize-merged-pr/);
-    assert.ok(!rendered.includes("grndctl@latest"), "a moving tag would change what runs without review");
+  // The file is a trigger, not a configuration surface (issue #1688). Every consumer's copy
+  // is byte-identical, so there is nothing in it to pin, upgrade, or drift.
+  it("carries no version of its own and reads the pinned release from the repo config", () => {
+    const rendered = renderPhaseEWorkflow();
+    assert.equal(rendered, renderPhaseEWorkflow(), "every repository installs the same bytes");
+    assert.ok(!/grndctl@\d+\.\d+\.\d+/.test(rendered), "a baked version is a second thing to upgrade");
     assert.ok(!rendered.includes("__GRNDCTL_VERSION__"));
+    assert.match(rendered, /\.ground-control\.yaml/);
+    assert.match(rendered, /npx --yes "grndctl\$\{?VERSION\}?"|npx --yes "grndctl@\$VERSION"/);
   });
 
-  it("refuses to render without a version", () => {
-    for (const bad of [null, "", "latest", "v2"]) {
-      assert.throws(() => renderPhaseEWorkflow(bad), /installed grndctl version/);
-    }
+  it("fails the job rather than resolving a moving tag when the config says nothing", () => {
+    const rendered = renderPhaseEWorkflow();
+    assert.ok(!rendered.includes("grndctl@latest"), "a moving tag would change what runs without review");
+    assert.match(rendered, /phase_e\.version is not set/);
+    assert.match(rendered, /exit 1/);
   });
 
   it("runs only for a merged pull request, and never checks out its head", () => {
-    const rendered = renderPhaseEWorkflow("1.0.0");
+    const rendered = renderPhaseEWorkflow();
     assert.match(rendered, /pull_request\.merged == true/);
     assert.ok(!rendered.includes("pull_request_target"), "pull_request_target would grant write to fork code");
     assert.match(rendered, /ref: \$\{\{ github\.event\.pull_request\.merge_commit_sha/);
@@ -88,20 +93,36 @@ describe("Phase E workflow template", () => {
 });
 
 describe("grndctl init installs the workflow", () => {
-  it("creates it pinned to the installed version", async () => {
+  it("creates the trigger and puts the pinned release in the repo config", async () => {
     const repo = tempRepo();
     try {
       const changes = await planInit(repo.dir, { project: "p", github_repo: "o/r", plan_rules: "no" }, { version: "3.1.4" });
-      const planned = changes.find((c) => c.path.endsWith(PHASE_E_WORKFLOW_PATH));
-      assert.equal(planned.action, "create");
-      assert.match(planned.content, /grndctl@3\.1\.4/);
+      const workflow = changes.find((c) => c.path.endsWith(PHASE_E_WORKFLOW_PATH));
+      assert.equal(workflow.action, "create");
+      assert.ok(!workflow.content.includes("3.1.4"), "the version does not live in the workflow");
+      // One config per repository: the version a consumer upgrades is this line (#1688).
+      const yaml = changes.find((c) => c.path.endsWith(".ground-control.yaml"));
+      assert.match(yaml.content, /phase_e:/);
+      assert.match(yaml.content, /version: ['"]?3\.1\.4/);
     } finally {
       repo.cleanup();
     }
   });
 
-  it("never rewrites a workflow the repository already tuned", async () => {
+  it("replaces a drifted copy, because the file holds nothing repo-specific any more", async () => {
     const repo = tempRepo({ [PHASE_E_WORKFLOW_PATH]: "name: mine\n" });
+    try {
+      const changes = await planInit(repo.dir, { project: "p", github_repo: "o/r", plan_rules: "no" }, { version: "3.1.4" });
+      const planned = changes.find((c) => c.path.endsWith(PHASE_E_WORKFLOW_PATH));
+      assert.equal(planned.action, "update");
+      assert.equal(planned.content, renderPhaseEWorkflow());
+    } finally {
+      repo.cleanup();
+    }
+  });
+
+  it("leaves a current copy alone", async () => {
+    const repo = tempRepo({ [PHASE_E_WORKFLOW_PATH]: renderPhaseEWorkflow() });
     try {
       const changes = await planInit(repo.dir, { project: "p", github_repo: "o/r", plan_rules: "no" }, { version: "3.1.4" });
       const planned = changes.find((c) => c.path.endsWith(PHASE_E_WORKFLOW_PATH));
@@ -139,7 +160,7 @@ describe("grndctl doctor reports the workflow", () => {
   });
 
   it("passes on a freshly installed copy", async () => {
-    const repo = tempRepo({ [PHASE_E_WORKFLOW_PATH]: renderPhaseEWorkflow("1.0.0") });
+    const repo = tempRepo({ [PHASE_E_WORKFLOW_PATH]: renderPhaseEWorkflow() });
     try {
       const result = doctorNamed(await runDoctorChecks({ cwd: repo.dir, version: "1.0.0", works }), "Phase E workflow installed");
       assert.equal(result.status, "ok");

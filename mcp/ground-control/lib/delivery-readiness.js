@@ -51,11 +51,17 @@ export function encodeDeliveryPayload(payload) {
   return JSON.stringify(payload).replaceAll("-", String.raw`\u002d`);
 }
 
-export function buildDeliveryReadinessRecord({ issueNumber, prNumber, lane, headSha, payload }) {
+export function buildDeliveryReadinessRecord({ issueNumber, prNumber, lane, headSha, payload, executorPresent = true }) {
   const payloadText = encodeDeliveryPayload(payload);
   const digest = createHash("sha256").update(payloadText, "utf8").digest("hex");
+  // Say what this repository will actually do. A repository without the Phase E workflow
+  // finalizes by hand, and promising automation there produced the silent failure this
+  // sentence exists to prevent: the merge came, nothing ran, and nothing said so (#1688).
   return [
-    `**Delivery readiness recorded** — Phase E finalizes issue #${issueNumber} automatically when PR #${prNumber} merges.`,
+    executorPresent
+      ? `**Delivery readiness recorded** — Phase E finalizes issue #${issueNumber} automatically when PR #${prNumber} merges.`
+      : `**Delivery readiness recorded** — this repository has no Phase E workflow, so nothing finalizes issue #${issueNumber} on its own. `
+        + `After PR #${prNumber} merges, run \`grndctl finalize-merged-pr --pr ${prNumber}\`, or add the workflow with \`grndctl init\`.`,
     "",
     `<!-- gc:delivery-readiness version="${DELIVERY_READINESS_VERSION}" issue="${issueNumber}" `
       + `pr="${prNumber}" lane="${lane}" head="${headSha}" digest="${digest}"`,
@@ -262,7 +268,7 @@ async function postComment(repoRoot, owner, name, number, body) {
  * agent is left to repair it.
  */
 export async function runRecordDeliveryReadiness(
-  { repoPath, issueNumber, prNumber, lane = "implement", headSha, payload },
+  { repoPath, issueNumber, prNumber, lane = "implement", headSha, payload, executorPresent = true },
   { workspaceAuthorizationResolver = undefined } = {},
 ) {
   if (!DELIVERY_LANES.includes(lane)) {
@@ -280,7 +286,7 @@ export async function runRecordDeliveryReadiness(
   if (!validation.ok) {
     return refusal("delivery_readiness_payload_invalid", validation.errors.join("; "));
   }
-  const body = buildDeliveryReadinessRecord({ issueNumber, prNumber, lane, headSha, payload });
+  const body = buildDeliveryReadinessRecord({ issueNumber, prNumber, lane, headSha, payload, executorPresent });
   if (body.length > GITHUB_ISSUE_COMMENT_BODY_MAX) {
     return refusal("delivery_readiness_payload_too_large", "the rendered readiness record exceeds GitHub's comment size limit");
   }

@@ -7,7 +7,7 @@
 // documentation on the parser at all. A module named for its contract is the anchor.
 
 import { load as parseYaml } from "js-yaml";
-import { normalizeCrossCuttingConcernsConfig, normalizeExamplePathsConfig, normalizeKnowledgeConfig, normalizeRequirementsConfig } from "./constants.js";
+import { normalizeCrossCuttingConcernsConfig, normalizeExamplePathsConfig, normalizeKnowledgeConfig, normalizePhaseEConfig, normalizeRequirementsConfig } from "./constants.js";
 import { normalizeRoutingConfig, normalizeWorkflowConfig } from "./repo-context-2.js";
 import { SUPPORTED_GROUND_CONTROL_SCHEMA_VERSIONS, normalizeDocsConfig, normalizeRulesConfig, normalizeSonarcloudConfig } from "./repo-context.js";
 import { normalizeReleaseFamiliesConfig } from "./release-identity-config.js";
@@ -44,6 +44,7 @@ export function parseGroundControlYaml(yamlText) {
     "architecture",
     "short_code",
     "release_families",
+    "phase_e",
   ];
   // `grc` is intentionally NOT in allowedTop's rejection path: a legacy
   // `grc.*` block from a consumer repo's .ground-control.yaml (ADR-057/058,
@@ -136,6 +137,9 @@ export function parseGroundControlYaml(yamlText) {
   });
   if (!releaseFamiliesResult.ok) errors.push(...releaseFamiliesResult.errors);
 
+  const phaseEResult = normalizePhaseEConfig(parsed.phase_e);
+  if (!phaseEResult.ok) errors.push(...phaseEResult.errors);
+
   if (errors.length) return { ok: false, errors };
 
   return {
@@ -157,6 +161,7 @@ export function parseGroundControlYaml(yamlText) {
       routing: routingResult.value,
       architecture: architectureResult.value,
       release_families: releaseFamiliesResult.value,
+      phase_e: phaseEResult.value,
     },
   };
 }

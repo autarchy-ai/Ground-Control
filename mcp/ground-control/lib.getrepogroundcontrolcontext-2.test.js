@@ -11,6 +11,7 @@ import {
   buildCodexArchitectureExecArgs,
   buildCodexArchitecturePreflightPrompt,
   getRepoGroundControlContext,
+  parseGroundControlYaml,
 } from "./lib.js";
 
 describe("getRepoGroundControlContext", () => {
@@ -296,5 +297,42 @@ describe("buildCodexArchitectureExecArgs", () => {
       "/tmp/out.txt",
       "-",
     ]);
+  });
+});
+
+// One Ground Control config per repository (issue #1688): the grndctl release Phase E runs
+// is declared here, not baked into the workflow file, so there is one thing to upgrade.
+describe("phase_e config block", () => {
+  const base = 'schema_version: 1\nproject: p\n';
+
+  it("is off when absent, so an existing repo is unchanged", () => {
+    const parsed = parseGroundControlYaml(base);
+    assert.equal(parsed.ok, true);
+    assert.deepEqual(parsed.value.phase_e, { enabled: false, version: null });
+  });
+
+  it("carries the pinned release the workflow reads", () => {
+    const parsed = parseGroundControlYaml(`${base}phase_e:\n  enabled: true\n  version: "2.5.1"\n`);
+    assert.equal(parsed.ok, true);
+    assert.deepEqual(parsed.value.phase_e, { enabled: true, version: "2.5.1" });
+  });
+
+  it("refuses an enabled lane with nothing to run", () => {
+    const parsed = parseGroundControlYaml(`${base}phase_e:\n  enabled: true\n`);
+    assert.equal(parsed.ok, false);
+    assert.ok(parsed.errors.some((e) => e.includes("phase_e.version is required")));
+  });
+
+  it("refuses a moving tag where an exact version belongs", () => {
+    for (const bad of ["latest", "v2", "2.5"]) {
+      const parsed = parseGroundControlYaml(`${base}phase_e:\n  enabled: true\n  version: "${bad}"\n`);
+      assert.equal(parsed.ok, false, bad);
+    }
+  });
+
+  it("refuses an unknown key rather than ignoring a typo", () => {
+    const parsed = parseGroundControlYaml(`${base}phase_e:\n  verison: "2.5.1"\n`);
+    assert.equal(parsed.ok, false);
+    assert.ok(parsed.errors.some((e) => e.includes("unknown phase_e key")));
   });
 });

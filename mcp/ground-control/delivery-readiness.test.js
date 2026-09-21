@@ -77,6 +77,33 @@ async function read(entries, overrides = {}) {
   );
 }
 
+// A repository with no Phase E workflow finalizes by hand. APTL recorded this handoff,
+// merged, and stalled: no report, no close, no failure record, because the absent file is
+// the thing that would have failed (issue #1688). The record now says which it will be.
+describe("what the readiness record promises", () => {
+  const record = (executorPresent) => buildDeliveryReadinessRecord({
+    issueNumber: 993, prNumber: 1142, lane: "implement",
+    headSha: "a".repeat(40), payload: { requirements: [] }, executorPresent,
+  });
+
+  it("promises automatic finalization only where an executor exists", () => {
+    assert.match(record(true), /finalizes issue #993 automatically when PR #1142 merges/);
+  });
+
+  it("says plainly that nothing will run, and names the manual command", () => {
+    const body = record(false);
+    assert.ok(!body.includes("automatically"), "promising automation that cannot run is the defect");
+    assert.match(body, /no Phase E workflow/);
+    assert.match(body, /grndctl finalize-merged-pr --pr 1142/);
+  });
+
+  // Still a handoff either way: a manual finalize replays the same payload.
+  it("records the same machine payload on both paths", () => {
+    const digest = (b) => /digest="([0-9a-f]{64})"/.exec(b)[1];
+    assert.equal(digest(record(true)), digest(record(false)));
+  });
+});
+
 describe("delivery readiness record", () => {
   it("round-trips the completion payload through the rendered record", async () => {
     const result = await read([{ body: record() }]);
