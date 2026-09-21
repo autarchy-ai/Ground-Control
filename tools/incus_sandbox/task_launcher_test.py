@@ -11,6 +11,8 @@ from tools.incus_sandbox.task_launcher import FrameError, environment_from_frame
 
 
 class TaskLauncherTest(unittest.TestCase):
+    """Exercise the guest frame and transient-service boundary."""
+
     def test_constructs_a_minimal_environment_without_ambient_inheritance(self) -> None:
         frame = json.dumps({
             "schema": "gc.incus-sandbox.task-frame/v1",

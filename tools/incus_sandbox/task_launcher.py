@@ -35,10 +35,11 @@ _CONTROL_SOCKET = f"{_RUNTIME}/control"
 _READY = f"{_RUNTIME}/ready"
 _WORKSPACE = "/home/sandbox/workspace"
 _LAUNCHER = "/usr/local/lib/gc-incus-sandbox/task-launcher.py"
+_INVALID_VARIABLE = "task frame variable is invalid"
 
 
-def environment_from_frame(raw: bytes, ambient: dict[str, str]) -> dict[str, str]:
-    """Validate a bounded frame and build an environment without ambient inheritance."""
+def _frame(raw: bytes) -> dict[str, object]:
+    """Decode and validate the closed task frame envelope."""
     if not isinstance(raw, bytes) or not raw or len(raw) > MAX_TASK_FRAME_BYTES:
         raise FrameError("task frame size is invalid")
     try:
@@ -50,6 +51,32 @@ def environment_from_frame(raw: bytes, ambient: dict[str, str]) -> dict[str, str
             or not isinstance(frame.get("task_id"), str) or not _TASK_ID.fullmatch(frame["task_id"])
             or not isinstance(frame.get("variables"), list) or len(frame["variables"]) > 128):
         raise FrameError("task frame is invalid")
+    return frame
+
+
+def _variable(item: object, names: set[str]) -> tuple[str, str]:
+    """Decode one unique bounded environment entry."""
+    if not isinstance(item, dict) or set(item) != {"name", "value_b64"}:
+        raise FrameError(_INVALID_VARIABLE)
+    try:
+        name = valid_environment_name(item.get("name"))
+    except DeclarationError as exc:
+        raise FrameError(_INVALID_VARIABLE) from exc
+    if name in names or not isinstance(item.get("value_b64"), str):
+        raise FrameError(_INVALID_VARIABLE)
+    try:
+        value = base64.b64decode(item["value_b64"], validate=True)
+        decoded = value.decode("utf-8")
+    except ValueError as exc:
+        raise FrameError(_INVALID_VARIABLE) from exc
+    if len(value) > _MAX_VALUE_BYTES or b"\0" in value:
+        raise FrameError(_INVALID_VARIABLE)
+    return name, decoded
+
+
+def environment_from_frame(raw: bytes, ambient: dict[str, str]) -> dict[str, str]:
+    """Validate a bounded frame and build an environment without ambient inheritance."""
+    frame = _frame(raw)
     environment = {
         "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": _RUNTIME,
         "SHELL": "/bin/bash",
@@ -59,21 +86,7 @@ def environment_from_frame(raw: bytes, ambient: dict[str, str]) -> dict[str, str
         environment["TERM"] = term
     names: set[str] = set()
     for item in frame["variables"]:
-        if not isinstance(item, dict) or set(item) != {"name", "value_b64"}:
-            raise FrameError("task frame variable is invalid")
-        try:
-            name = valid_environment_name(item.get("name"))
-        except DeclarationError as exc:
-            raise FrameError("task frame variable is invalid") from exc
-        if name in names or not isinstance(item.get("value_b64"), str):
-            raise FrameError("task frame variable is invalid")
-        try:
-            value = base64.b64decode(item["value_b64"], validate=True)
-            decoded = value.decode("utf-8")
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise FrameError("task frame variable is invalid") from exc
-        if len(value) > _MAX_VALUE_BYTES or b"\0" in value:
-            raise FrameError("task frame variable is invalid")
+        name, decoded = _variable(item, names)
         environment[name] = decoded
         names.add(name)
     return environment
@@ -95,6 +108,7 @@ def systemd_run_command() -> list[str]:
 
 
 def _stop_unit() -> None:
+    """Stop and collect the fixed transient task unit if it exists."""
     active = subprocess.run([_SYSTEMCTL, "is-active", "--quiet", _UNIT],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if active.returncode == 0:
@@ -105,6 +119,7 @@ def _stop_unit() -> None:
 
 
 def _send_frame(raw: bytes, timeout_seconds: float = 5.0) -> None:
+    """Send the validated frame once through the private task socket."""
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -145,6 +160,7 @@ def start(raw: bytes) -> None:
 
 
 def _read_socket(connection: socket.socket) -> bytes:
+    """Read one bounded frame until the root launcher closes its write side."""
     chunks, total = [], 0
     while True:
         chunk = connection.recv(min(65536, MAX_TASK_FRAME_BYTES - total + 1))
@@ -184,6 +200,7 @@ def stop() -> None:
 
 
 def main(argv: list[str]) -> int:
+    """Dispatch the fixed internal guest task lifecycle."""
     if argv == ["start"]:
         start(sys.stdin.buffer.read(MAX_TASK_FRAME_BYTES + 1))
         return 0

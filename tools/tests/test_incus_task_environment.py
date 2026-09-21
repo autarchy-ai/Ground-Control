@@ -17,6 +17,7 @@ from tools.incus_sandbox.repository_environment import (
 from tools.incus_sandbox.task_environment import (
     clear_source_binding,
     ProviderError,
+    TaskRuntime,
     TaskEnvironmentService,
     record_source_binding,
 )
@@ -161,10 +162,11 @@ class TaskEnvironmentServiceTest(unittest.TestCase):
             state_dir=self.state,
             operator_uid=os.getuid(),
             repositories=self.policy,
-            active_owner=lambda sandbox, uid: sandbox == "agent-1" and uid == os.getuid(),
-            runner=lambda argv, input_bytes=None: self.calls.append((argv, input_bytes)),
-            expected_provider_uid=os.getuid(),
-            task_id_factory=lambda: "a" * 32,
+            runtime=TaskRuntime(
+                active_owner=lambda sandbox, uid: sandbox == "agent-1" and uid == os.getuid(),
+                runner=lambda argv, input_bytes=None: self.calls.append((argv, input_bytes)),
+                expected_provider_uid=os.getuid(), task_id_factory=lambda: "a" * 32,
+            ),
         ), digest
 
     @staticmethod

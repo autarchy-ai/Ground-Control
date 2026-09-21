@@ -78,34 +78,39 @@ def _clone_repository(metadata: dict[str, object], kind: str) -> str | None:
     return repository
 
 
+def _environment_binding(metadata: dict[str, object]) -> dict[str, str]:
+    """Validate and return the optional all-or-nothing source binding."""
+    fields = {"repository_identity", "environment_digest"}
+    present = set(metadata) & fields
+    if not present:
+        return {}
+    repository = metadata.get("repository_identity")
+    digest = metadata.get("environment_digest")
+    if (present != fields or not isinstance(repository, str)
+            or not _REPOSITORY_IDENTITY.fullmatch(repository)
+            or not isinstance(digest, str) or not _DIGEST.fullmatch(digest)):
+        raise PacketError("source packet environment binding is invalid")
+    return {"repository_identity": repository, "environment_digest": digest}
+
+
 def _validated_source(metadata: dict[str, object], payload: bytes) -> dict[str, str]:
     """Validate source identity and the closed fields allowed for each transfer kind."""
     kind, commit = _source_identity(metadata)
     expected = {"schema", "kind", "commit", "repository"}
     if kind == "bundle":
         expected = {"schema", "kind", "commit"}
-    binding_fields = {"repository_identity", "environment_digest"}
-    present_binding = set(metadata) & binding_fields
-    if present_binding:
-        expected |= binding_fields
+    binding = _environment_binding(metadata)
+    if binding:
+        expected |= set(binding)
     if set(metadata) != expected:
         raise PacketError("source packet fields are invalid")
-    if present_binding and (
-        not isinstance(metadata.get("repository_identity"), str)
-        or not _REPOSITORY_IDENTITY.fullmatch(metadata["repository_identity"])
-        or not isinstance(metadata.get("environment_digest"), str)
-        or not _DIGEST.fullmatch(metadata["environment_digest"])
-    ):
-        raise PacketError("source packet environment binding is invalid")
     repository = _clone_repository(metadata, kind)
     if kind == "bundle" and not payload:
         raise PacketError("source packet bundle is empty")
     validated = {"schema": "gc.incus-sandbox.source/v1", "kind": kind, "commit": commit}
     if repository is not None:
         validated["repository"] = repository
-    if present_binding:
-        validated["repository_identity"] = metadata["repository_identity"]
-        validated["environment_digest"] = metadata["environment_digest"]
+    validated.update(binding)
     return validated
 
 

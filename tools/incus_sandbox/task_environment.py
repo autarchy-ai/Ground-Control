@@ -14,8 +14,9 @@ import stat
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterator
 
 if __package__:
     from .repository_environment import (
@@ -30,13 +31,18 @@ class ProviderError(RuntimeError):
 
 
 _NAME = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
+_ENV_NAME = re.compile(r"^[A-Z_][A-Z0-9_]{0,63}$")
 _TASK_ID = re.compile(r"^[0-9a-f]{32}$")
 _MAX_REQUEST_BYTES = 96 * 1024
 _LAUNCHER = "/usr/local/lib/gc-incus-sandbox/task-launcher.py"
 _INCUS = "/usr/bin/incus"
+_INVALID_SANDBOX = "sandbox identity is invalid"
+_INVALID_REQUEST = "task start request is invalid"
+_UNAVAILABLE = "a required task value is unavailable"
 
 
 def _atomic_json(path: Path, document: object) -> None:
+    """Replace one private JSON state file atomically."""
     path.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
     temporary: Path | None = None
     try:
@@ -57,7 +63,7 @@ def _atomic_json(path: Path, document: object) -> None:
 def record_source_binding(state_dir: Path, sandbox: str, repository: str, declaration: bytes) -> str:
     """Persist only the identity and digest established by source preparation."""
     if not _NAME.fullmatch(sandbox):
-        raise ProviderError("sandbox identity is invalid")
+        raise ProviderError(_INVALID_SANDBOX)
     digest = hashlib.sha256(declaration).hexdigest()
     record_source_digest(state_dir, sandbox, repository, digest)
     return digest
@@ -79,16 +85,42 @@ def record_source_digest(state_dir: Path, sandbox: str, repository: str, digest:
 def clear_source_binding(state_dir: Path, sandbox: str) -> None:
     """Remove all authority derived from a replaced or deleted source."""
     if not _NAME.fullmatch(sandbox):
-        raise ProviderError("sandbox identity is invalid")
+        raise ProviderError(_INVALID_SANDBOX)
     (state_dir / "source-bindings" / f"{sandbox}.json").unlink(missing_ok=True)
     (state_dir / "tasks" / f"{sandbox}.json").unlink(missing_ok=True)
+
+
+def _valid_status_variable(item: object) -> bool:
+    """Accept only the closed redacted variable status shape."""
+    return (
+        isinstance(item, dict) and set(item) == {"name", "source", "state"}
+        and isinstance(item.get("name"), str) and bool(_ENV_NAME.fullmatch(item["name"]))
+        and item.get("source") in {"literal", "secret"}
+        and item.get("state") in {"available", "unavailable", "expired", "revoked"}
+    )
+
+
+def redacted_task_observation(path: Path, vm_running: bool) -> dict[str, object]:
+    """Read only validated redacted task state for the lifecycle status surface."""
+    result: dict[str, object] = {"state": "not_started", "variables": []}
+    if vm_running:
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            document = None
+        if isinstance(document, dict):
+            variables = document.get("variables")
+            result = ({"state": "running", "variables": variables}
+                      if isinstance(variables, list) and all(map(_valid_status_variable, variables))
+                      else {"state": "unavailable", "variables": []})
+    return result
 
 
 @contextlib.contextmanager
 def state_lock(state_dir: Path, sandbox: str) -> Iterator[None]:
     """Serialize source replacement and task lifecycle for one sandbox."""
     if not _NAME.fullmatch(sandbox):
-        raise ProviderError("sandbox identity is invalid")
+        raise ProviderError(_INVALID_SANDBOX)
     lock_dir = state_dir / "task-locks"
     lock_dir.mkdir(mode=0o750, parents=True, exist_ok=True)
     descriptor = os.open(lock_dir / f"{sandbox}.lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -100,55 +132,63 @@ def state_lock(state_dir: Path, sandbox: str) -> Iterator[None]:
         os.close(descriptor)
 
 
+@dataclass(frozen=True)
+class TaskRuntime(object):
+    """Injected side-effect boundaries for one task environment service."""
+
+    active_owner: Callable[[str, int], bool]
+    runner: Callable[..., object]
+    expected_provider_uid: int = 0
+    task_id_factory: Callable[[], str] = lambda: secrets.token_hex(16)
+
+
 class TaskEnvironmentService(object):
     """Resolve a bound declaration and stream it once to the fixed guest launcher."""
 
     def __init__(self, *, project: str, state_dir: Path, operator_uid: int,
                  repositories: dict[str, dict[str, dict[str, object]]],
-                 active_owner: Callable[[str, int], bool],
-                 runner: Callable[..., object], expected_provider_uid: int = 0,
-                 max_value_bytes: int = 16 * 1024,
-                 task_id_factory: Callable[[], str] = lambda: secrets.token_hex(16)) -> None:
+                 runtime: TaskRuntime, max_value_bytes: int = 16 * 1024) -> None:
         self.project = project
         self.state_dir = state_dir
         self.operator_uid = operator_uid
         self.repositories = repositories
-        self.active_owner = active_owner
-        self.runner = runner
-        self.expected_provider_uid = expected_provider_uid
+        self.active_owner = runtime.active_owner
+        self.runner = runtime.runner
+        self.expected_provider_uid = runtime.expected_provider_uid
         self.max_value_bytes = max_value_bytes
-        self.task_id_factory = task_id_factory
+        self.task_id_factory = runtime.task_id_factory
 
     @staticmethod
     def _sandbox(sandbox: str) -> str:
         if not isinstance(sandbox, str) or not _NAME.fullmatch(sandbox):
-            raise ProviderError("sandbox identity is invalid")
+            raise ProviderError(_INVALID_SANDBOX)
         return sandbox
 
     def _authorize(self, sandbox: str, caller_uid: int) -> None:
         if caller_uid != self.operator_uid or not self.active_owner(sandbox, caller_uid):
             raise ProviderError("task start is not authorized")
 
-    def _request(self, raw: bytes) -> tuple[str, bytes]:
+    @staticmethod
+    def _request(raw: bytes) -> tuple[str, bytes]:
         if not isinstance(raw, bytes) or not raw or len(raw) > _MAX_REQUEST_BYTES:
-            raise ProviderError("task start request is invalid")
+            raise ProviderError(_INVALID_REQUEST)
         try:
             request = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ProviderError("task start request is invalid") from exc
+            raise ProviderError(_INVALID_REQUEST) from exc
         expected = {"schema", "repository", "declaration_b64"}
         if not isinstance(request, dict) or set(request) != expected:
-            raise ProviderError("task start request is invalid")
+            raise ProviderError(_INVALID_REQUEST)
         if request.get("schema") != "gc.incus-sandbox.task-start/v1":
-            raise ProviderError("task start request is invalid")
+            raise ProviderError(_INVALID_REQUEST)
         repository = request.get("repository")
         encoded = request.get("declaration_b64")
         if not isinstance(repository, str) or not isinstance(encoded, str):
-            raise ProviderError("task start request is invalid")
+            raise ProviderError(_INVALID_REQUEST)
         try:
             declaration = base64.b64decode(encoded, validate=True)
         except ValueError as exc:
-            raise ProviderError("task start request is invalid") from exc
+            raise ProviderError(_INVALID_REQUEST) from exc
         return repository, declaration
 
     def _binding(self, sandbox: str) -> dict[str, str]:
@@ -161,42 +201,48 @@ class TaskEnvironmentService(object):
             raise ProviderError("sandbox has no valid source binding")
         return binding
 
-    def _provider_value(self, repository: str, alias: str) -> bytes:
+    def _provider_locator(self, repository: str, alias: str) -> Path:
+        """Return one available absolute path from host policy."""
         try:
             locator = self.repositories[repository][alias]
         except KeyError as exc:
-            raise ProviderError("a required task value is unavailable") from exc
+            raise ProviderError(_UNAVAILABLE) from exc
         if isinstance(locator, dict):
             if set(locator) != {"path", "state"}:
-                raise ProviderError("a required task value is unavailable")
+                raise ProviderError(_UNAVAILABLE)
             path, state = locator.get("path"), locator.get("state")
         else:
             path, state = getattr(locator, "path", None), getattr(locator, "state", None)
         if state != "available":
-            raise ProviderError("a required task value is unavailable")
+            raise ProviderError(_UNAVAILABLE)
         if isinstance(path, str):
             path = Path(path)
         if not isinstance(path, Path) or not path.is_absolute():
-            raise ProviderError("a required task value is unavailable")
+            raise ProviderError(_UNAVAILABLE)
+        return path
+
+    def _provider_value(self, repository: str, alias: str) -> bytes:
+        """Read one authorized provider file through a no-follow descriptor."""
+        path = self._provider_locator(repository, alias)
         descriptor: int | None = None
         try:
             descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
             details = os.fstat(descriptor)
             if (not stat.S_ISREG(details.st_mode) or details.st_uid != self.expected_provider_uid
                     or details.st_mode & 0o077):
-                raise ProviderError("a required task value is unavailable")
+                raise ProviderError(_UNAVAILABLE)
             value = os.read(descriptor, self.max_value_bytes + 1)
         except OSError as exc:
-            raise ProviderError("a required task value is unavailable") from exc
+            raise ProviderError(_UNAVAILABLE) from exc
         finally:
             if descriptor is not None:
                 os.close(descriptor)
         if not value or len(value) > self.max_value_bytes or b"\0" in value:
-            raise ProviderError("a required task value is unavailable")
+            raise ProviderError(_UNAVAILABLE)
         try:
             value.decode("utf-8")
         except UnicodeDecodeError as exc:
-            raise ProviderError("a required task value is unavailable") from exc
+            raise ProviderError(_UNAVAILABLE) from exc
         return value
 
     def _resolve(self, parsed: object) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
@@ -316,6 +362,7 @@ def main(argv: list[str]) -> int:
     lifecycle = LifecycleHelper(config, event_writer=events, caller_uid=caller_uid)
 
     def active_owner(sandbox: str, uid: int) -> bool:
+        """Require the authenticated operator's currently active sandbox."""
         if uid != caller_uid:
             return False
         lifecycle.require_active_owner(sandbox)
@@ -323,8 +370,9 @@ def main(argv: list[str]) -> int:
 
     service = TaskEnvironmentService(
         project=config.project, state_dir=config.state_dir, operator_uid=config.operator_uid,
-        repositories=config.task_environment.repositories, active_owner=active_owner,
-        runner=_run_guest, max_value_bytes=config.task_environment.max_value_bytes,
+        repositories=config.task_environment.repositories,
+        runtime=TaskRuntime(active_owner=active_owner, runner=_run_guest),
+        max_value_bytes=config.task_environment.max_value_bytes,
     )
     action, sandbox = argv
     event_action = f"task_{action}"

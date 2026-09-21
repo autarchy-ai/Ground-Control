@@ -210,6 +210,42 @@ def _migration_limits(doc: dict[str, object]) -> MigrationLimits | None:
     return migration
 
 
+def _provider_locator(raw: object) -> ProviderLocator:
+    """Validate one host-selected provider locator."""
+    if not isinstance(raw, dict) or set(raw) != {"path", "state"}:
+        raise ConfigError("task_environment provider locator is invalid")
+    path, state = raw["path"], raw["state"]
+    if not isinstance(path, str) or not path.startswith("/") or "\0" in path:
+        raise ConfigError("task_environment provider path is invalid")
+    if state not in {"available", "expired", "revoked"}:
+        raise ConfigError("task_environment provider state is invalid")
+    return ProviderLocator(Path(path), state)
+
+
+def _provider_aliases(raw: object) -> dict[str, ProviderLocator]:
+    """Validate the aliases authorized for one repository."""
+    if not isinstance(raw, dict) or len(raw) > 128:
+        raise ConfigError("task_environment aliases are invalid")
+    aliases: dict[str, ProviderLocator] = {}
+    for alias, locator in raw.items():
+        if not isinstance(alias, str) or not _ALIAS.fullmatch(alias):
+            raise ConfigError("task_environment alias is invalid")
+        aliases[alias] = _provider_locator(locator)
+    return aliases
+
+
+def _provider_repositories(raw: object) -> dict[str, dict[str, ProviderLocator]]:
+    """Validate the repository-keyed host authority map."""
+    if not isinstance(raw, dict) or len(raw) > 256:
+        raise ConfigError("task_environment repositories are invalid")
+    repositories = {}
+    for repository, aliases in raw.items():
+        if not isinstance(repository, str) or not _REPOSITORY.fullmatch(repository):
+            raise ConfigError("task_environment repository identity is invalid")
+        repositories[repository] = _provider_aliases(aliases)
+    return repositories
+
+
 def _task_environment_policy(doc: dict[str, object]) -> TaskEnvironmentPolicy:
     """Validate the closed v3 repository-to-provider authority map."""
     if doc["schema"] != _SCHEMA_V3:
@@ -217,32 +253,11 @@ def _task_environment_policy(doc: dict[str, object]) -> TaskEnvironmentPolicy:
     section = doc.get("task_environment")
     if not isinstance(section, dict) or set(section) != {"max_value_bytes", "repositories"}:
         raise ConfigError("task_environment policy fields are invalid")
-    max_value_bytes = _positive(section["max_value_bytes"], "task_environment.max_value_bytes")
-    if max_value_bytes > 16 * 1024:
+    maximum = _positive(section["max_value_bytes"], "task_environment.max_value_bytes")
+    if maximum > 16 * 1024:
         raise ConfigError("task_environment.max_value_bytes exceeds the guest validator")
-    raw_repositories = section["repositories"]
-    if not isinstance(raw_repositories, dict) or len(raw_repositories) > 256:
-        raise ConfigError("task_environment repositories are invalid")
-    repositories: dict[str, dict[str, ProviderLocator]] = {}
-    for repository, raw_aliases in raw_repositories.items():
-        if not isinstance(repository, str) or not _REPOSITORY.fullmatch(repository):
-            raise ConfigError("task_environment repository identity is invalid")
-        if not isinstance(raw_aliases, dict) or len(raw_aliases) > 128:
-            raise ConfigError("task_environment aliases are invalid")
-        aliases: dict[str, ProviderLocator] = {}
-        for alias, raw_locator in raw_aliases.items():
-            if not isinstance(alias, str) or not _ALIAS.fullmatch(alias):
-                raise ConfigError("task_environment alias is invalid")
-            if not isinstance(raw_locator, dict) or set(raw_locator) != {"path", "state"}:
-                raise ConfigError("task_environment provider locator is invalid")
-            path, state = raw_locator["path"], raw_locator["state"]
-            if not isinstance(path, str) or not path.startswith("/") or "\0" in path:
-                raise ConfigError("task_environment provider path is invalid")
-            if state not in {"available", "expired", "revoked"}:
-                raise ConfigError("task_environment provider state is invalid")
-            aliases[alias] = ProviderLocator(Path(path), state)
-        repositories[repository] = aliases
-    return TaskEnvironmentPolicy(max_value_bytes=max_value_bytes, repositories=repositories)
+    return TaskEnvironmentPolicy(max_value_bytes=maximum,
+                                 repositories=_provider_repositories(section["repositories"]))
 
 
 def _build_config(doc: dict[str, object]) -> SandboxConfig:

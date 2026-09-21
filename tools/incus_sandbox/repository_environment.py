@@ -48,6 +48,7 @@ MAX_TASK_FRAME_BYTES = 64 * 1024
 
 
 def _document(raw: bytes) -> dict[str, object]:
+    """Decode the bounded closed declaration document."""
     if not isinstance(raw, bytes) or not raw or len(raw) > _MAX_DOCUMENT_BYTES:
         raise DeclarationError("task environment declaration size is invalid")
     try:
@@ -62,6 +63,7 @@ def _document(raw: bytes) -> dict[str, object]:
 
 
 def _repository(value: object, expected: str) -> str:
+    """Require the declaration's canonical repository identity."""
     if not isinstance(value, str) or not _REPOSITORY.fullmatch(value) or value != expected:
         raise DeclarationError("task environment repository identity does not match")
     return value
@@ -77,6 +79,7 @@ def valid_environment_name(value: object) -> str:
 
 
 def _variable(raw: object, max_value_bytes: int) -> EnvironmentDeclaration:
+    """Validate one exclusive literal or secret-reference declaration."""
     if not isinstance(raw, dict):
         raise DeclarationError("task environment variable is invalid")
     sources = {"literal", "secret_ref"} & set(raw)
