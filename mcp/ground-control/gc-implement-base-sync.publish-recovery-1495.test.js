@@ -35,6 +35,8 @@ const deliveryBindingDeps = {
     candidate_tree_oid: TREE, findings_count: 0, branch: BRANCH,
   }),
   laneReader: async () => ({ ok: true, lane: "implement" }),
+  // No earlier synchronization on this branch; the settlement is derived fresh.
+  latestSyncRecordReader: async () => ({ ok: true, record: null }),
 };
 // The base the external recovery re-merged against — a different integration
 // commit than the one this attempt fetched and recorded.

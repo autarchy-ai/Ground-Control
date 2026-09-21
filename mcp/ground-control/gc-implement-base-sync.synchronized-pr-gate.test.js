@@ -263,6 +263,7 @@ describe("synchronized PR gate", () => {
       commandRunner: async (command, args) => { calls.push([command, args]); return { stdout: "" }; },
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
+      laneReader: async () => ({ ok: true, lane: "implement" }),
       reviewEvidenceReader: async () => ({ ok: true, published: false }),
     });
     assert.equal(result.ok, false);

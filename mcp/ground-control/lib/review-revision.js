@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { copyFileSync, rmSync } from "node:fs";
+import { copyFileSync, rmSync, statSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GIT_OBJECT_ID_RE } from "./codex-workflow.js";
@@ -68,10 +68,22 @@ export async function captureCandidateTreeOid(repoRoot, {
 // Git writes its index atomically through a lockfile and rename, so a plain copy
 // reads one whole version of it. A repository that has no index yet has nothing
 // staged, so HEAD is the same starting point.
+//
+// The copy keeps the index's own timestamps. Git re-reads any file modified no
+// earlier than the index was written ("racily clean"), because its stat data
+// cannot tell such an edit apart. A fresh mtime on the copy would switch that
+// check off and miss a same-size edit made within the index's timestamp, so the
+// captured tree would differ from what `git add -A` stages. Date carries whole
+// milliseconds, truncating downward, which can only widen the check.
 async function seedCandidateIndex(gitDir, indexFile, run) {
+  const source = join(gitDir, "index");
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are derived from git rev-parse and a random temp name
-    copyFileSync(join(gitDir, "index"), indexFile);
+    copyFileSync(source, indexFile);
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- same derived path as the copy above
+    const { atime, mtime } = statSync(source);
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- the random temp name created above
+    utimesSync(indexFile, atime, mtime);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
     await run(["read-tree", "HEAD"]);

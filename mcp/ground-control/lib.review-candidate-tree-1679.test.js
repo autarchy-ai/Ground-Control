@@ -12,7 +12,7 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { captureCandidateTreeOid } from "./lib.js";
@@ -114,6 +114,45 @@ describe("the reviewed candidate tree is the tree publish would stage (#1679)", 
     assert.equal(oid, stagedTreeOracle());
     const listed = execFileSync("git", ["-C", repo, "ls-tree", "-r", "--name-only", oid], { encoding: "utf8" });
     assert.ok(listed.includes("generated/fixture.bin"), "the force-staged path is part of the delivery");
+  });
+});
+
+// Git re-reads a file whose stat data matches the index but whose mtime is not
+// older than the index itself ("racily clean"), because stat data cannot tell
+// such an edit apart. The temporary index is a copy; if the copy took a fresh
+// mtime, that check would be off and a same-size edit made within the index's
+// timestamp would vanish from the candidate tree. The race is pinned here rather
+// than left to timing: a minimal stat check, a file staged at a fixed past second
+// (so Git records it as clean rather than smudging it), then edited and stamped
+// back to that second along with the index.
+describe("candidate-tree capture keeps Git's racily-clean check (#1679)", () => {
+  const STAGED_AT = new Date("2020-01-01T00:00:00Z");
+  let repo;
+
+  before(() => {
+    repo = mkdtempSync(join(tmpdir(), "gc-candidate-tree-racy-"));
+    git(repo, "init", "-q", "--initial-branch", "main");
+    git(repo, "config", "user.email", "t@example.test");
+    git(repo, "config", "user.name", "t");
+    git(repo, "config", "core.checkStat", "minimal");
+    git(repo, "config", "core.trustctime", "false");
+    writeFileSync(join(repo, "tracked.txt"), "one\n");
+    utimesSync(join(repo, "tracked.txt"), STAGED_AT, STAGED_AT);
+    git(repo, "add", "tracked.txt");
+    git(repo, "commit", "-q", "-m", "init");
+  });
+  after(() => rmSync(repo, { recursive: true, force: true }));
+
+  it("sees a same-size edit made within the index's timestamp", async () => {
+    const file = join(repo, "tracked.txt");
+    writeFileSync(file, "two\n");
+    utimesSync(file, STAGED_AT, STAGED_AT);
+    utimesSync(join(repo, ".git", "index"), STAGED_AT, STAGED_AT);
+
+    const oid = await captureCandidateTreeOid(repo);
+
+    assert.notEqual(oid, git(repo, "rev-parse", "HEAD^{tree}"), "the edit is part of the delivery");
+    assert.equal(git(repo, "cat-file", "-p", `${oid}:tracked.txt`), "two");
   });
 });
 

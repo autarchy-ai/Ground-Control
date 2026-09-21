@@ -43,6 +43,8 @@ const REVIEW_EVIDENCE = {
 const deliveryBindingDeps = {
   reviewEvidenceReader: async () => REVIEW_EVIDENCE,
   laneReader: async () => ({ ok: true, lane: "implement" }),
+  // No earlier synchronization on this branch; the settlement is derived fresh.
+  latestSyncRecordReader: async () => ({ ok: true, record: null }),
 };
 
 async function workspaceAuthorization() {
