@@ -6,6 +6,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { guardMigrationRepository, migrationGit } from "./migration_guard.mjs";
+import { committedEnvironmentBinding, migrationEnvironmentBinding } from "./source_binding.mjs";
 
 const NAME = /^[a-z][a-z0-9-]{0,47}$/;
 const KINDS = new Set(["clone", "bundle"]);
@@ -68,7 +69,8 @@ export function safeGitEnvironment(base = process.env) {
   });
   return environment;
 }
-export function buildSourcePacket({ kind, commit, repository, bundle = null }) {
+export function buildSourcePacket({ kind, commit, repository, bundle = null,
+  repositoryIdentity = null, environmentDigest = null }) {
   if (!KINDS.has(kind) || !COMMIT.test(commit)) throw new Error("source packet is invalid");
   if (kind === "clone" && (
     typeof repository !== "string" || !repository.startsWith("https://github.com/") || repository.includes("@")
@@ -77,8 +79,16 @@ export function buildSourcePacket({ kind, commit, repository, bundle = null }) {
   }
   if (kind === "clone" && bundle !== null) throw new Error("clone packet must not contain a bundle");
   if (kind === "bundle" && !Buffer.isBuffer(bundle)) throw new Error("bundle packet requires Git objects");
+  const binding = repositoryIdentity === null && environmentDigest === null ? {}
+    : { repository_identity: repositoryIdentity, environment_digest: environmentDigest };
+  if ((repositoryIdentity === null) !== (environmentDigest === null)
+      || (repositoryIdentity !== null && !/^[a-z0-9_.-]{1,100}\/[a-z0-9_.-]{1,100}$/.test(repositoryIdentity))
+      || (environmentDigest !== null && !/^[0-9a-f]{64}$/.test(environmentDigest))) {
+    throw new Error("source environment binding is invalid");
+  }
   const metadata = Buffer.from(JSON.stringify({
     schema: "gc.incus-sandbox.source/v1", kind, commit, ...(kind === "clone" ? { repository } : {}),
+    ...binding,
   }));
   const header = Buffer.alloc(8);
   PACKET_MAGIC.copy(header);
@@ -373,10 +383,19 @@ export function captureMigration(repository, rawSpec) {
     const identity = snapshotIdentity(before);
     const stateDigest = sha256(Buffer.from(stableJson(identity)));
     const migrationId = sha256(Buffer.from(`${stateDigest}:${sha256(handoff)}`)).slice(0, 32);
+    const remote = migrationGit(source, ["remote", "get-url", "origin"], environment, { allowStatus: [2] });
+    const binding = remote.status === 0
+      ? migrationEnvironmentBinding(
+        source, bufferOutput(remote).toString("utf8").trim(), environment, migrationGit,
+      ) : {};
     const metadata = {
       schema: MIGRATION_SCHEMA, migration_id: migrationId, commit: before.commit,
       branch: before.branch, state_digest: stateDigest, bundle_section: bundleSection,
       handoff_section: handoffSection, entries, sections,
+      ...(binding.repositoryIdentity ? {
+        repository_identity: binding.repositoryIdentity,
+        environment_digest: binding.environmentDigest,
+      } : {}),
     };
     const metadataBuffer = Buffer.from(stableJson(metadata));
     if (metadataBuffer.length > MAX_MIGRATION_METADATA_BYTES) throw new Error("migration metadata exceeds the limit");
@@ -426,7 +445,10 @@ function publishedSource(source, run, environment) {
   const remote = output(runChecked(run, GIT, ["-C", source.repository, "remote", "get-url", "origin"], {
     env: environment, encoding: "utf8",
   }));
-  return buildSourcePacket({ kind: "clone", commit, repository: remote });
+  return buildSourcePacket({
+    kind: "clone", commit, repository: remote,
+    ...committedEnvironmentBinding(source.repository, commit, remote, run, environment),
+  });
 }
 
 export function createSourceBundle({ objects, commit, scratch, bundlePath }, run, environment) {
@@ -449,7 +471,13 @@ function unpublishedSource(source, run, environment) {
   try {
     createSourceBundle({ objects, commit, scratch: join(temporary, "objects"), bundlePath }, run, environment);
     if (statSync(bundlePath).size > MAX_BUNDLE_BYTES) throw new Error("source bundle exceeds the transfer limit");
-    return buildSourcePacket({ kind: "bundle", commit, bundle: readFileSync(bundlePath) });
+    const remoteResult = run({
+      command: GIT, args: ["-C", source.repository, "remote", "get-url", "origin"],
+      options: { env: environment, encoding: "utf8" },
+    });
+    const binding = remoteResult?.status === 0
+      ? committedEnvironmentBinding(source.repository, commit, output(remoteResult), run, environment) : {};
+    return buildSourcePacket({ kind: "bundle", commit, bundle: readFileSync(bundlePath), ...binding });
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }

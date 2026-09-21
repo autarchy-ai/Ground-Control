@@ -122,6 +122,7 @@ We use [MADR](https://adr.github.io/madr/) (Markdown Any Decision Records). Each
 | [100](100-thin-quickfix-shared-mechanical-lane.md) | Thin Quickfix Lane over Shared Mechanical Modules | Accepted |
 | [101](101-isolated-incus-coding-vms.md) | Isolated Incus VMs for Local Coding Sessions | Accepted |
 | [102](102-automated-post-merge-delivery-finalization.md) | Automated Post-Merge Delivery Finalization | Accepted |
+| [103](103-repository-scoped-sandbox-task-environment.md) | Repository-Scoped Environment for Sandbox Task Processes | Accepted |
 
 Prior ADRs from the old project frame are archived in `archive/architecture/adrs/`.
 

@@ -24,7 +24,12 @@ class SetupContractTest(unittest.TestCase):
         self.assertIn("migration_guard.mjs", setup)
         self.assertIn("transfer.py", setup)
         self.assertIn("source.mjs", setup)
+        self.assertIn("task_environment.py", setup)
+        self.assertIn("task_launcher.py", setup)
+        self.assertIn("task_client.mjs", setup)
         self.assertIn("transfer.py *", setup)
+        self.assertIn("^(images:|local:)", setup)
+        self.assertNotIn("^(sha256:|images:)", setup)
 
     def test_dry_run_is_explicit_about_owned_resources_and_never_flushes_firewalls(self) -> None:
         root = Path(__file__).resolve().parents[2]
@@ -52,7 +57,7 @@ class SetupContractTest(unittest.TestCase):
         result = subprocess.run(["bash", str(root / "tools/incus_sandbox/setup.sh"), "--dry-run", "upgrade"],
                                 capture_output=True, text=True, check=True)
         self.assertIn("upgrade sandbox programs", result.stdout)
-        self.assertIn("config to v2", result.stdout)
+        self.assertIn("config to v3", result.stdout)
         self.assertNotIn("project delete", result.stdout)
 
     def test_upgrade_program_install_uses_its_payload_and_preserves_ownership(self) -> None:
@@ -65,6 +70,9 @@ class SetupContractTest(unittest.TestCase):
             rules_path, ownership = sandbox / "rules.nft", state_root / "setup-owned"
             sudoers, client = sandbox / "sudoers", sandbox / "bin/gc-incus-sandbox"
             source, guard = sandbox / "bin/source.mjs", sandbox / "bin/migration_guard.mjs"
+            task_client = sandbox / "bin/task_client.mjs"
+            repository_identity = sandbox / "bin/repository_identity.mjs"
+            source_binding = sandbox / "bin/source_binding.mjs"
             config_root.mkdir()
             state_root.mkdir()
             client.parent.mkdir(parents=True)
@@ -75,6 +83,9 @@ class SetupContractTest(unittest.TestCase):
             functions = functions.replace('/usr/local/bin/gc-incus-sandbox', str(client))
             functions = functions.replace('/usr/local/bin/source.mjs', str(source))
             functions = functions.replace('/usr/local/bin/migration_guard.mjs', str(guard))
+            functions = functions.replace('/usr/local/bin/task_client.mjs', str(task_client))
+            functions = functions.replace('/usr/local/bin/repository_identity.mjs', str(repository_identity))
+            functions = functions.replace('/usr/local/bin/source_binding.mjs', str(source_binding))
             functions = functions.replace('/etc/sudoers.d/gc-incus-sandbox', str(sudoers))
             functions = functions.replace('/var/log/gc-incus-sandbox', str(sandbox / "log"))
             harness = sandbox / "upgrade-harness.sh"

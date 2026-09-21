@@ -104,7 +104,9 @@ grndctl sandbox image           # pull ghcr.io/autarchy-ai/gc-sandbox-template:l
 
 The pull prints the `local:<fingerprint>` line to pin in
 `/etc/gc-incus-sandbox/config.json`. After that, `gc-incus-sandbox create`,
-`prepare`, `migrate`, and `attach` give an agent a private checkout in its own VM. See
+`prepare`, `migrate`, `task-start`, and `attach` give an agent a private checkout
+and an explicitly started task in its own VM. Repository-scoped task variables
+are opt-in; setup creates no shared or per-repository values. See
 [docs/operations/incus-sandbox.md](docs/operations/incus-sandbox.md).
 
 ## Developing Ground Control

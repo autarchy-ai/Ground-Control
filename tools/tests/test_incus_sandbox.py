@@ -153,13 +153,13 @@ class LifecycleBoundaryTest(SandboxTestCase):
         self.assertTrue(all(record["outcome"] == "success" for record in records))
         self.assertTrue(all("argv" not in record and "environment" not in record for record in records))
 
-    def test_attach_starts_tmux_in_the_guest_and_never_uses_a_host_shell(self) -> None:
+    def test_attach_joins_the_task_tmux_in_the_guest_and_never_uses_a_host_shell(self) -> None:
         self.helper.create("agent-1")
         self.commands.clear()
         self.helper.attach("agent-1")
         self.assertEqual(self.commands, [[
             "/usr/bin/incus", "exec", "agent-1", "--project", self.config.project, "--",
-            "su", "-", "sandbox", "-c", "exec tmux new-session -A -s coding",
+            "/usr/bin/tmux", "-S", "/run/gc-sandbox-task/control", "attach-session", "-t", "gc-task",
         ]])
         self.assertFalse(any(command[0] in {"sh", "bash"} for command in self.commands))
 
@@ -239,6 +239,37 @@ class LifecycleBoundaryTest(SandboxTestCase):
         self.helper.dispatch("list")
         self.assertIn(["/usr/bin/incus", "list", "--project", self.config.project, "--format", "json"], self.commands)
 
+    def test_vm_stop_and_delete_terminate_task_session_and_clear_redacted_state(self) -> None:
+        self.helper.create("agent-1")
+        task_path = self.config.state_dir / "tasks" / "agent-1.json"
+        task_path.parent.mkdir(parents=True)
+        task_path.write_text('{"redacted":true}', encoding="utf-8")
+        binding_path = self.config.state_dir / "source-bindings" / "agent-1.json"
+        binding_path.parent.mkdir(parents=True)
+        binding_path.write_text('{"binding":true}', encoding="utf-8")
+        self.commands.clear()
+        self.helper.stop("agent-1")
+        self.assertEqual(self.commands[0], [
+            "/usr/bin/incus", "exec", "agent-1", "--project", self.config.project, "--",
+            "/usr/bin/python3", "/usr/local/lib/gc-incus-sandbox/task-launcher.py", "stop",
+        ])
+        self.assertFalse(task_path.exists())
+        self.helper.start("agent-1")
+        task_path.write_text('{"redacted":true}', encoding="utf-8")
+        self.commands.clear()
+        self.helper.delete("agent-1", "agent-1")
+        self.assertEqual(self.commands[0][1], "exec")
+        self.assertFalse(task_path.exists())
+        self.assertFalse(binding_path.exists())
+
+    def test_attach_joins_only_the_explicit_task_session(self) -> None:
+        self.helper.create("agent-1")
+        self.commands.clear()
+        self.helper.attach("agent-1")
+        self.assertEqual(self.commands[0][-4:], [
+            "/usr/bin/tmux", "-S", "/run/gc-sandbox-task/control", "attach-session", "-t", "gc-task",
+        ][-4:])
+
     def test_local_observer_reports_named_nonnegative_host_facts(self) -> None:
         observed = observation()
         self.assertIn("fresh", observed)
@@ -264,10 +295,25 @@ class LifecycleBoundaryTest(SandboxTestCase):
 
     def test_status_normalizes_missing_guest_observations_instead_of_raw_incus_json(self) -> None:
         report = self.helper.normalized_observation("agent-1", None)
-        self.assertEqual(report["schema"], "gc.incus-sandbox.status/v1")
+        self.assertEqual(report["schema"], "gc.incus-sandbox.status/v2")
         self.assertEqual(report["observed_state"], "unavailable")
         self.assertEqual(report["observed"]["availability"], "unavailable")
         self.assertIn("admission_headroom", report)
+        self.assertEqual(report["task_environment"], {"state": "not_started", "variables": []})
+
+    def test_status_includes_only_redacted_task_environment_state(self) -> None:
+        path = self.config.state_dir / "tasks" / "agent-1.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({
+            "variables": [{"name": "TOKEN", "source": "secret", "state": "available"}],
+            "secret_ref": "must-not-render", "value": "secret-canary",
+        }), encoding="utf-8")
+        report = self.helper.normalized_observation("agent-1", {"status": "Running", "state": {}})
+        self.assertEqual(report["task_environment"], {
+            "state": "running",
+            "variables": [{"name": "TOKEN", "source": "secret", "state": "available"}],
+        })
+        self.assertNotIn("secret-canary", json.dumps(report))
 
     def test_status_normalizes_observed_guest_resource_facts(self) -> None:
         report = self.helper.normalized_observation("agent-1", {
