@@ -24,6 +24,7 @@ function tempGitDir() {
 function revision(overrides = {}) {
   return buildReviewRevision({
     headOid: HEAD,
+    candidateTreeOid: "d".repeat(40),
     baseOid: BASE,
     diffText: "diff --git a/a.js b/a.js\n+const secretName = true;",
     manifest: "1\t0\ta.js",
@@ -264,7 +265,9 @@ describe("retained review-result artifacts (#1632)", () => {
       return { stdout: `${BASE}\n` };
     };
     await assert.rejects(
-      captureReviewRevision({ repoRoot: "/repo", baseBranch: "dev", uncommitted: true, reviewDiff: diff }, { commandRunner: movingRef }),
+      captureReviewRevision({ repoRoot: "/repo", baseBranch: "dev", uncommitted: true, reviewDiff: diff }, {
+        commandRunner: movingRef, assertCheckoutConfiguration: async () => {},
+      }),
       (error) => error.code === "review_revision_changed_during_capture",
     );
 
@@ -274,6 +277,7 @@ describe("retained review-result artifacts (#1632)", () => {
       captureReviewRevision({ repoRoot: "/repo", baseBranch: "dev", uncommitted: true }, {
         commandRunner: stableRefs,
         computeDiff: async () => ({ ...diff, diffText: `diff-${++diffReads}` }),
+        assertCheckoutConfiguration: async () => {},
       }),
       (error) => error.code === "review_revision_changed_during_capture",
     );

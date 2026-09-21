@@ -71,14 +71,6 @@ export function sanitizedImplementGitEnvironment() {
   });
   return env;
 }
-export const IMPLEMENT_BASE_SYNC_SCHEMA = "gc.implement.remote-base-sync/v1";
-export const IMPLEMENT_BASE_SYNC_ACTIONS = Object.freeze(["start", "complete"]);
-export const IMPLEMENT_BASE_SYNC_OUTCOMES = Object.freeze([
-  "already_current",
-  "merged_clean",
-  "merged_conflicts_resolved",
-]);
-const IMPLEMENT_BASE_SYNC_MARKER_PREFIX = "<!-- gc:implement-base-sync";
 export const GIT_OBJECT_ID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const DEFAULT_PR_TITLE_TYPES = Object.freeze([
   "security", "added", "changed", "deprecated", "removed", "fixed",
@@ -105,71 +97,6 @@ export function implementNetworkGitEnvironment() {
   return env;
 }
 export const REQUIREMENT_UID_GATE_ENV_VAR = "ACES_REQUIREMENT_UID";
-export function newImplementSyncRecordId() {
-  return randomBytes(16).toString("hex");
-}
-export function buildImplementBaseSyncMarker(record) {
-  return [
-    IMPLEMENT_BASE_SYNC_MARKER_PREFIX,
-    `schema="${IMPLEMENT_BASE_SYNC_SCHEMA}"`,
-    `record="${record.recordId}"`,
-    `issue="${record.issueNumber}"`,
-    `branch="${record.branchName}"`,
-    `base="${record.baseBranch}"`,
-    `source="${record.remoteRef}"`,
-    `pre="${record.preSyncSha}"`,
-    `fetched="${record.fetchedBaseSha}"`,
-    `outcome="${record.outcome}"`,
-    `result="${record.resultingFeatureSha}"`,
-    `verified="${record.verifiedTreeSha}"`,
-    "-->",
-  ].join(" ");
-}
-export function parseImplementBaseSyncMarkers(commentBodies, issueNumber) {
-  const records = [];
-  const markerRe = /<!--\s*gc:implement-base-sync\s+([^>]*?)-->/g;
-  for (const body of Array.isArray(commentBodies) ? commentBodies : []) {
-    if (typeof body !== "string") continue;
-    let match;
-    while ((match = markerRe.exec(body)) !== null) {
-      const attrs = {};
-      const attrRe = /([a-z]+)="([^"]*)"/g;
-      let attr;
-      while ((attr = attrRe.exec(match[1])) !== null) attrs[attr[1]] = attr[2];
-      const parsedIssue = Number.parseInt(attrs.issue ?? "", 10);
-      if (
-        attrs.schema !== IMPLEMENT_BASE_SYNC_SCHEMA
-        || parsedIssue !== issueNumber
-        || !/^[0-9a-f]{32}$/.test(attrs.record ?? "")
-        || validateImplementBranchName(attrs.branch, issueNumber).ok !== true
-        || !isSafeGitRefName(attrs.base)
-        || attrs.source !== `refs/remotes/origin/${attrs.base}`
-        || !GIT_OBJECT_ID_RE.test(attrs.pre ?? "")
-        || !GIT_OBJECT_ID_RE.test(attrs.fetched ?? "")
-        || !IMPLEMENT_BASE_SYNC_OUTCOMES.includes(attrs.outcome)
-        || !GIT_OBJECT_ID_RE.test(attrs.result ?? "")
-        || !GIT_OBJECT_ID_RE.test(attrs.verified ?? "")
-      ) {
-        records.push({ valid: false, raw: match[0] });
-        continue;
-      }
-      records.push({
-        valid: true,
-        recordId: attrs.record,
-        issueNumber: parsedIssue,
-        branchName: attrs.branch,
-        baseBranch: attrs.base,
-        remoteRef: attrs.source,
-        preSyncSha: attrs.pre,
-        fetchedBaseSha: attrs.fetched,
-        outcome: attrs.outcome,
-        resultingFeatureSha: attrs.result,
-        verifiedTreeSha: attrs.verified,
-      });
-    }
-  }
-  return records;
-}
 export function validateImplementPrTitle(title, config = null) {
   if (typeof title !== "string" || title.includes("\n") || title.includes("\r")) {
     return { ok: false, message: "title must be a single-line string" };

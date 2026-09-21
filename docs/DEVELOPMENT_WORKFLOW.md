@@ -154,7 +154,9 @@ Config contract:
 
 ### User Touchpoint
 
-Per ADR-029, the workflow has **one** synchronous human touchpoint: PR review and merge to `dev`. Plans are posted to the GitHub issue thread as comments and the agent proceeds without waiting; review findings and decisions on findings are also recorded on the issue thread. Everything before merge is automated.
+Per ADR-029, the workflow has **one scheduled** synchronous human touchpoint: PR review and merge to `dev`. Plans are posted to the GitHub issue thread as comments and the agent proceeds without waiting; review findings and decisions on findings are also recorded on the issue thread. Everything before merge is automated.
+
+A run may still stop and ask on a documented **pause class** from `skills/implement/_development-principles.md` - an enforced cycle cap, an unresolved ambiguity, a significant architecture or security decision, unexpectedly material scope expansion, destructive or externally consequential authority, or a hard external dependency. ADR-099's review-cap question is one of these. An exception pause is an escalation, not a gate the workflow schedules, so it does not change the count (issue #1679). Work size, difficulty, elapsed time, context pressure, and inconvenience are never pause classes.
 
 ### High-level flow
 

@@ -35,9 +35,16 @@ has no MCP tool surface.
 4. Classify each finding as `one-off` or `class`. For a class finding, sweep
    the diff and adjacent code for every instance and repair the category rather
    than only the named site.
-5. Fix every real finding. There is no deferral disposition. `wontfix`
-   requires explicit user authorization; `not-applicable` requires a factual
-   rationale.
+5. Fix every real finding. There is no deferral disposition. `not-applicable`
+   requires a factual rationale. `wontfix` requires explicit user authorization,
+   and the authorization is verified against the repository, not taken from your
+   own words (issue #1679): a user with write access comments exactly
+   `/ground-control authorize-review-wontfix <finding-id>` on the issue after
+   the review ran (an approval posted before the run does not count for it), and
+   `user_authorization` is that comment's URL. Publication refuses
+   `review_wontfix_authorization_unverifiable` for anything else - prose, a
+   quotation, a report of someone's approval, or a URL to another issue - and
+   writes no record. Ask for the command; do not paraphrase an answer into one.
 6. **Fix locks itself.** For executable code or a runtime-consumed data contract,
    add or extend a regression test that fails when the named defect is reintroduced.
    Record the test file path and test-case or describe-block name.

@@ -10,6 +10,7 @@ import { GITHUB_ISSUE_COMMENT_BODY_MAX } from "./repo-vocabulary.js";
 import { readTrustedReviewPublicationProgress } from "./review-publication-evidence.js";
 import { buildReviewPublicationMarkerAttributes } from "./review-publication-markers.js";
 import { postStationReobservation } from "./station-observation-records.js";
+import { verifyReviewWontfixAuthorizations } from "./review-wontfix-authorization.js";
 import { publishReviewStationFailure } from "./review-failure-publication.js";
 import {
   captureReviewRevision,
@@ -30,12 +31,17 @@ function provenance(record, sanitizedDigest) {
     record.repository_id,
     record.issue_number,
     record.expected_cycle,
+    // The delivery identity is part of the publication's identity, so a marker
+    // cannot be reused under a different tree (issue #1679).
+    record.revision.candidate_tree_oid,
   ].join(":"), "utf8").digest("hex");
   return {
     publication_id: publicationId,
     original_digest: record.original_digest,
     revision_digest: record.revision.digest,
     sanitized_digest: sanitizedDigest,
+    candidate_tree_oid: record.revision.candidate_tree_oid,
+    findings_count: record.findings.length,
   };
 }
 
@@ -124,6 +130,7 @@ async function defaultPublishDecision({ repository, record, sanitized, proof, wo
   return runPostDecisionRecord({
     repoPath: repository.repoRoot,
     issueNumber: record.issue_number,
+    reviewStartedAt: record.created_at,
     cycle: record.expected_cycle,
     reviewer: "codex",
     verdict: sanitized.verdict,
@@ -193,6 +200,18 @@ export async function runGetReviewResult(input, overrides = {}) {
 async function prepareVerdictPublication(current, input, repository, overrides) {
   const checked = validateSanitizedReviewPublication(current, input.sanitized);
   if (!checked.ok) return { result: checked };
+  // Before any GitHub write: a `wontfix` closes a real finding without repairing
+  // it, so its authorization is verified against the repository rather than
+  // taken from the caller's own string (issue #1679).
+  const authorized = await verifyReviewWontfixAuthorizations({
+    repoRoot: repository.repoRoot,
+    owner: repository.owner,
+    name: repository.name,
+    issueNumber: current.issue_number,
+    reviewStartedAt: current.created_at,
+    findings: checked.value.findings,
+  }, { readComments: overrides.readComments, resolveTrust: overrides.resolveTrust });
+  if (!authorized.ok) return { result: authorized };
   if (current.publication_status === "published") {
     if (current.publication_receipt?.sanitized_digest !== checked.sanitized_digest) {
       return { result: fail("review_publication_retry_conflict", "This review handle was already published with different sanitized content.") };
@@ -201,6 +220,23 @@ async function prepareVerdictPublication(current, input, repository, overrides) 
   }
   if (current.publication_status !== "unpublished") {
     return { result: fail("review_result_not_publishable", `Review result status is ${current.publication_status}.`) };
+  }
+  // A zero-finding publication authorizes the candidate tree for delivery, and
+  // that tree stages untracked files while the reviewed diff carries only tracked
+  // ones. Publishing it while untracked paths went unreviewed would launder
+  // content no reviewer saw as reviewed, which is worse than the drift the
+  // binding was meant to catch. Stage everything and review again (issue #1679,
+  // core-F1). A finding-bearing cycle authorizes no tree, so it is unaffected.
+  if (current.findings.length === 0 && (current.revision.unreviewed_untracked_paths?.length ?? 0) > 0) {
+    return { result: fail(
+      "review_publication_unreviewed_paths_present",
+      "This cycle reported no findings, so publishing it would authorize its tree for delivery - and "
+      + `${current.revision.unreviewed_untracked_paths.length} untracked path(s) sit in that tree without `
+      + "being part of the reviewed diff. Publish stages them with `git add -A`, so they would ship "
+      + "unreviewed. Stage them and review again if they belong to this change; remove or ignore them if "
+      + "they do not.",
+      "stage_or_remove_the_unreviewed_paths_and_rerun_the_review",
+    ) };
   }
   const captureRevision = overrides.captureRevision ?? captureReviewRevision;
   let observed;
@@ -211,6 +247,11 @@ async function prepareVerdictPublication(current, input, repository, overrides) 
       uncommitted: true,
     });
   } catch (error) {
+    // A checkout that can execute its own code during staging is a refusal with
+    // its own cause, not a generic stage fault (issue #1679, security-F1).
+    if (error?.code === "review_checkout_configuration_unsafe") {
+      return { result: fail(error.code, error.message, "remove_the_caller_controlled_git_configuration_and_retry") };
+    }
     if (error?.code !== "review_revision_changed_during_capture") throw error;
     return { result: fail(error.code, "The review input moved while its publication revision was being captured.", "retry_after_the_tree_is_stable") };
   }
@@ -306,7 +347,35 @@ async function publishVerdictStages({ current, repository, identity, checked, pr
   return publishedEnvelope(published);
 }
 
+// Publication is a multi-stage remote operation, so a stage can fail for
+// ordinary operational reasons (a GitHub 5xx, a lost connection, a full disk).
+// Without this boundary the exception reached the thin MCP handler and became a
+// generic fault, losing the retained handle, the publication kind and the retry
+// action the caller needs to resume - even though partial remote progress is
+// already reconciled by readTrustedReviewPublicationProgress on the next
+// attempt (issue #1679). The cause is deliberately not echoed: it can carry
+// command output, URLs, artifact paths or reviewer prose.
+function publicationStageFailure(input, kind) {
+  return {
+    ok: false,
+    error: "review_publication_stage_failed",
+    message: "A publication stage did not complete. The retained review result is unchanged and the publication can be retried.",
+    review_handle: input?.reviewHandle ?? null,
+    publication_kind: kind,
+    next_action: "retry_review_publication",
+  };
+}
+
 export async function runPublishReviewResult(input, overrides = {}) {
+  const kind = input?.publicationKind === "non_verdict" ? "non_verdict" : "verdict";
+  try {
+    return await publishReviewResultUnderLock(input, overrides);
+  } catch {
+    return publicationStageFailure(input, kind);
+  }
+}
+
+async function publishReviewResultUnderLock(input, overrides = {}) {
   const resolveRepository = overrides.resolveRepository
     ?? ((repoPath) => resolveAuthorizedIssueRepository(repoPath, overrides.workspaceAuthorizationResolver));
   const repository = await resolveRepository(input?.repoPath);

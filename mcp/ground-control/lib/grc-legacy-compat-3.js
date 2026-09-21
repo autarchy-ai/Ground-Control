@@ -305,6 +305,9 @@ export async function readIssueCommentsWithAuthors(repoRoot, owner, name, issueN
       // `Bot` distinguishes a GitHub App identity from a user with the same-looking login,
       // which is what the repository-automation trust class keys on (issue #1671).
       authorType: c.user && typeof c.user.type === "string" ? c.user.type : null,
+      // When the comment was posted, so an authorization can be bound to the review
+      // run it answers rather than to any run it happens to name (issue #1679).
+      createdAt: typeof c.created_at === "string" ? c.created_at : null,
     }));
 }
 export async function getAuthenticatedGitHubLogin(repoRoot) {

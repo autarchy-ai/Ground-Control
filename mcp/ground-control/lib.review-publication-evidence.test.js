@@ -10,8 +10,13 @@ const proof = {
   original_digest: "b".repeat(64),
   revision_digest: "c".repeat(64),
   sanitized_digest: "d".repeat(64),
+  // Issue #1679: the tuple names the tree it reviewed and how many findings it
+  // carried, so a delivery can be bound to it.
+  candidate_tree_oid: "1".repeat(40),
+  findings_count: 0,
 };
-const attrs = `schema="gc.review-publication/v1" publication="${proof.publication_id}" original="${proof.original_digest}" revision="${proof.revision_digest}" sanitized="${proof.sanitized_digest}"`;
+const attrs = `schema="gc.review-publication/v2" publication="${proof.publication_id}" original="${proof.original_digest}" revision="${proof.revision_digest}" sanitized="${proof.sanitized_digest}" tree="${proof.candidate_tree_oid}" findings="${proof.findings_count}"`;
+const attrsV1 = `schema="gc.review-publication/v1" publication="${proof.publication_id}" original="${proof.original_digest}" revision="${proof.revision_digest}" sanitized="${proof.sanitized_digest}"`;
 
 function publicationComments() {
   return [
@@ -41,6 +46,27 @@ describe("trusted review-publication evidence (#1632)", () => {
     assert.equal(result.published, true);
     assert.equal(result.cycle, 1);
     assert.equal(result.comment_id, 12);
+    // The binding fields the PR and completion gates consume (issue #1679).
+    assert.equal(result.revision_digest, proof.revision_digest);
+    assert.equal(result.candidate_tree_oid, proof.candidate_tree_oid);
+    assert.equal(result.findings_count, 0);
+    assert.equal(result.branch, "x");
+  });
+
+  it("reads a pre-binding tuple for audit but refuses to let it authorize a delivery", async () => {
+    const legacy = publicationComments().map((comment) => ({
+      ...comment,
+      body: comment.body.replace(attrs, attrsV1),
+    }));
+    const result = await readTrustedReviewPublicationEvidence({
+      repoRoot: "/repo", owner: "fake", name: "repo", issueNumber: 1632,
+    }, {
+      readComments: async () => legacy,
+      resolveTrust: async () => ({ isTrusted: () => true }),
+    });
+    assert.equal(result.ok, true, "a historical marker is not malformed");
+    assert.equal(result.published, false);
+    assert.match(result.message, /predates revision binding/);
   });
 
   it("ignores forged tuples from untrusted authors", async () => {

@@ -23,7 +23,7 @@ import {
   DECISION_RECORD_DECISIONS,
   rejectReservedMarkerSequence,
 } from "./repo-vocabulary.js";
-export { buildReviewRevision, captureReviewRevision } from "./review-revision.js";
+export { buildReviewRevision, captureCandidateTreeOid, captureReviewRevision } from "./review-revision.js";
 
 export const REVIEW_RESULT_SCHEMA = "gc.review-result/v1";
 export const REVIEW_HANDLE_RE = /^rvw_[0-9a-f]{48}$/;
@@ -134,6 +134,8 @@ function validateRevision(revision) {
   return revision != null
     && GIT_OBJECT_ID_RE.test(String(revision.head_oid))
     && GIT_OBJECT_ID_RE.test(String(revision.base_oid))
+    // The identity a zero-finding review authorises for delivery (issue #1679).
+    && GIT_OBJECT_ID_RE.test(String(revision.candidate_tree_oid))
     && /^[0-9a-f]{64}$/.test(String(revision.digest))
     && Array.isArray(revision.unreviewed_untracked_paths)
     && revision.unreviewed_untracked_paths.every((path) => validBoundedString(path, 4096))

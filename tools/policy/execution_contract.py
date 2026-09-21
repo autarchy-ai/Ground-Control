@@ -311,7 +311,7 @@ def _check_pre_pr_sync_contract(root: Path) -> list[Violation]:
     )
     missing_pr = [token for token in pr_tokens if token not in step9]
     mcp_tokens = (
-        "gc.implement.remote-base-sync/v1",
+        "gc.implement.remote-base-sync/v2",
         "+refs/heads/",
         "refs/remotes/origin/",
         "runSynchronizeImplementBranch",

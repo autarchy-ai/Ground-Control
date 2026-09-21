@@ -93,12 +93,18 @@ function makeCompletionShimRepo({
     "repository-owner": "admin",
   },
 } = {}) {
+  // Issue #1679 (core-F2): completion binds to the head that was synchronized.
+  // Synchronization is independent of whether the review was published, so this
+  // record is present either way.
+  comments = [...comments,
+    { id: 8996, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:implement-base-sync schema="gc.implement.remote-base-sync/v2" record="${"4".repeat(32)}" issue="963" branch="963-branch" base="dev" source="refs/remotes/origin/dev" pre="${"e".repeat(40)}" fetched="${"f".repeat(40)}" outcome="merged_clean" result="${"a".repeat(40)}" verified="${"5".repeat(40)}" settled="${"1".repeat(40)}" review="${"a".repeat(64)}" revision="${"c".repeat(64)}" lane="implement" -->` },
+  ];
   if (publishedReview) {
-    const provenance = `schema="gc.review-publication/v1" publication="${"a".repeat(64)}" original="${"b".repeat(64)}" revision="${"c".repeat(64)}" sanitized="${"d".repeat(64)}"`;
+    const provenance = `schema="gc.review-publication/v2" publication="${"a".repeat(64)}" original="${"b".repeat(64)}" revision="${"c".repeat(64)}" sanitized="${"d".repeat(64)}" tree="${"1".repeat(40)}" findings="0"`;
     comments = [...comments,
       { id: 8997, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:review-publication stage="findings" reviewer="codex" issue="963" cycle="1" ${provenance} -->\n\n**gc_codex_review** — sanitized deferred publication` },
-      { id: 8998, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:codex-prepush-cycle issue="963" branch="x" cycle="1" ${provenance} -->\n\n_gc_codex_review pre-push cycle 1 complete` },
-      { id: 8999, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:decision-record reviewer="codex" cycle="1" issue="963" ${provenance} -->\n\n## Review decision record — codex cycle 1` },
+      { id: 8998, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:codex-prepush-cycle issue="963" branch="963-branch" cycle="1" ${provenance} -->\n\n_gc_codex_review pre-push cycle 1 complete` },
+    { id: 8999, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:decision-record reviewer="codex" cycle="1" issue="963" ${provenance} -->\n\n## Review decision record — codex cycle 1` },
     ];
   }
   // We need to handle multiple POSTs. Use a counter in a wrapper script.
@@ -112,6 +118,7 @@ function makeCompletionShimRepo({
   // PR's REST record, and gates on it being merged (issues #963, #1584).
   const restPull = restPullRequest({
     number: prNumber,
+    headRefName: "963-branch",
     state: prMerged ? "MERGED" : "OPEN",
     mergedAt: prMerged ? "2026-06-22T02:00:00Z" : null,
   });
@@ -285,9 +292,27 @@ describe("runAssertCompletion — pre_merge readiness report", () => {
       assert.equal(r.phase, "pre_merge");
       assert.ok(Array.isArray(r.assertions));
       assert.deepEqual(r.assertions, [{
+        name: "delivery_head_synchronized",
+        ok: true,
+        head_sha: "a".repeat(40),
+        settled_tree_oid: "1".repeat(40),
+        synchronization_record_id: "4".repeat(32),
+      }, {
         name: "codex_review_published",
         ok: true,
         comment_id: 8999,
+        // Issue #1679: the assertion names what the publication actually covered.
+        revision_digest: "c".repeat(64),
+        candidate_tree_oid: "1".repeat(40),
+        findings_count: 0,
+        branch: "963-branch",
+      }, {
+        // Issue #1679: the record and the publication are asserted as one chain,
+        // not as two independent checks.
+        name: "delivery_binding_current",
+        ok: true,
+        review_publication_id: "a".repeat(64),
+        review_revision_digest: "c".repeat(64),
       }]);
       assert.equal(r.final_report, null);
       assert.ok(r.readiness_report != null);

@@ -24,6 +24,26 @@ Accepted
 > result is never issue-thread gate evidence and cannot satisfy readiness or
 > completion.
 
+> **Amended by issue #1679 (2026-09-21):** The `/quickfix` review waiver is now
+> read from the run's own recorded lane, not from an argument. It used to be
+> granted by a bare `lane` argument on the PR-creation call, so nothing recorded
+> the choice and an `/implement` run could take the waiver at its last step. A
+> lane is now a property of the run: the MCP server writes a pickup record under
+> its own identity when a branch is bootstrapped, and the branch's lane is the
+> lane of the newest such record. Switching lanes is itself recorded - when the
+> maintainer tells an agent to move on without a review, the agent bootstraps the
+> same branch as `/quickfix` and the thread says so. Synchronization, PR creation,
+> readiness and both completion phases all read the lane from that record and
+> refuse a caller that states a different one. The waiver still relaxes the
+> review-publication requirement and nothing else: head synchronization applies
+> to every lane, and a requirement-backed issue still cannot use `/quickfix`.
+> **No further human signal is required, by the maintainer's decision.** Choosing
+> the lane is the maintainer's instruction to the agent; the durable pickup
+> record, and the PR body's "review not run" attestation, make that choice
+> visible at merge - the single human touchpoint - instead of putting a ceremony
+> in front of it. An authorization comment and an issue label were both built and
+> removed during this issue.
+
 > **Amended by ADR-099 (2026-09-17):** The dedicated test-quality reviewer,
 > Step 6.6, its MCP tools, configuration, markers, and policy contract are
 > removed. The Codex cap bounds additional review iterations; after all known
@@ -77,11 +97,24 @@ and decisions on findings.
 
 ### Touchpoints
 
-- **PR merge** is the only synchronous human gate. The user reviews the issue
-  thread (plan + findings + decisions) and the PR diff, then merges.
+- **PR merge** is the only *scheduled* synchronous human gate. The user reviews
+  the issue thread (plan + findings + decisions) and the PR diff, then merges.
+  Every other step runs to completion without waiting for a person.
 - **No plan-approval gate.** The `/implement` skill posts the plan to the
   GitHub issue as a comment via `gh issue comment` and proceeds directly to
   TDD. No `EnterPlanMode` call. No synchronous user-approval wait.
+- **Exception-path pauses are not scheduled gates** (issue #1679). A run stops
+  and asks only on a documented pause class from
+  `skills/implement/_development-principles.md` - an enforced cycle cap, an
+  unresolved ambiguity, a significant architecture or security decision,
+  unexpectedly material scope expansion, destructive or externally consequential
+  authority, or a hard external dependency. The review cap that ADR-099 §1 puts
+  at the last in-cap cycle is one of these: it does not occur on a clean run, it
+  asks a bounded binary question, and declining it advances the workflow. Work
+  size, difficulty, elapsed time, context pressure, and inconvenience are never
+  pause classes. "One human touchpoint" counts the gates the workflow schedules,
+  not the exceptions it escalates; a contract that admitted no escalation at all
+  would force an agent to guess at exactly the decisions a person should make.
 
 ### Issue thread as durable record
 
@@ -90,8 +123,8 @@ comment on the GitHub issue:
 
 - **Plan**: posted as a comment when `/implement` enters Phase A. Includes
   context, approach, files-to-change, verification steps, risks.
-- **Review findings**: every finding from codex review, refactor review,
-  test-quality review, and SonarCloud is posted to its native location (PR
+- **Review findings**: every finding from codex review, refactor review, and
+  SonarCloud is posted to its native location (PR
   review comment for codex; issue comment summary for review aggregates).
   The issue thread carries a summary linking back to the PR comments.
 - **Decisions on findings**: for every finding, the agent records its
@@ -208,6 +241,11 @@ the pre-push cap key; those are audit context or post-push direct-caller
 defense-in-depth context, not reset levers for the canonical Step 6.5 cap.
 
 ### Test-quality review uses the same decision-record contract
+
+> **Superseded by ADR-099 (2026-09-17).** The dedicated test-quality reviewer,
+> its MCP tools, marker family, configuration, and Step 6.6 were removed. This
+> section is retained as provenance for why the decision-record contract is
+> shaped the way it is; nothing in it is current operating guidance.
 
 The test-quality review step (Step 6.6 per the #906 amendment; formerly
 Step 13) via the `gc_test_quality_review` MCP tool records every cycle on

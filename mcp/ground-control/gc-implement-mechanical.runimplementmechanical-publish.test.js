@@ -332,6 +332,10 @@ describe("runImplementMechanical publish", () => {
     [".env.local", true],
     ["config/credentials.json", true],
     ["app/credentials/credentials.py", true],
+    // A shell script named `credentials.sh` is a credential loader far more often
+    // than it is an ordinary module, and `git add -A` would stage it untracked.
+    ["scripts/credentials.sh", true],
+    ["deploy/credentials.bash", true],
     [".env.example", false],
     ["app/auth/credentials.py", false],
   ]) {

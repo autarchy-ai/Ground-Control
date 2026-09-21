@@ -8,6 +8,30 @@ Accepted
 
 2026-07-28
 
+> **Amended by issue #1679 (2026-09-21):** Two corrections to the every-run
+> contract below. (1) **Discovery stays open for the registration window.** The
+> watch used to freeze its run set the moment the first run for the head
+> registered, so a workflow that registered seconds later was never observed and
+> never gated anything. It now re-lists by the bound head on every poll until the
+> existing registration deadline, unions newly discovered runs, and reports
+> success only once discovery has closed and every discovered run has succeeded;
+> a failure still returns immediately. Discovery closes on a **listing taken at or
+> after** the deadline rather than on the clock alone, so a run that registered
+> between the previous poll and the deadline - inside the window the watch
+> promised to cover - is still observed. The cost is bounded by
+> `run_registration_timeout_seconds` (default 300) and is paid only when every
+> run finishes inside that window - on a repository whose CI outruns it, nothing
+> changes. A caller that wants a shorter window passes a smaller value. (2)
+> **A CI head identity is the provider's full 40-character SHA.** Run selection
+> compares GitHub's `headSha` by exact equality, so the tool's former
+> `[0-9a-f]{7,40}` input could only ever produce a confusing "no run registered"
+> refusal; one provider-specific predicate now guards both the Zod schema and the
+> library, kept separate from the repository's generic 40/64-character Git
+> object-id predicate. The `/integrate` adapter is corrected in the same issue: a
+> watch that cannot answer for the bound head, or a run that observed nothing, is
+> a blocking `unverified` result rather than an allowed `skipped` one, because
+> GC-O011(c) requires the CI signal to be watched before a PR is marked ready.
+
 ## Context
 
 The CI workflow ran its verification jobs as a chain. `policy` gated `build`,

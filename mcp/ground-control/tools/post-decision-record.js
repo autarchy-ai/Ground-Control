@@ -10,6 +10,7 @@ import {
   FINAL_REPORT_PLAIN_ENGLISH_OUTCOME_MAX,
   FINAL_REPORT_REVIEW_SUMMARY_MAX,
   FINAL_REPORT_SUMMARY_MAX,
+  GITHUB_HEAD_SHA_RE,
   ASYNC_JOB_IDEMPOTENCY_KEY_MAX,
   ASYNC_JOB_IDEMPOTENCY_KEY_RE,
   PR_BODY_CHANGE_CLASSES,
@@ -73,7 +74,7 @@ function _registerGcGetReviewResult(server) {
 function _registerGcPublishReviewResult(server) {
   server.tool(
     "gc_publish_review_result",
-    "Publish one retained Codex result. For a verdict, the server verifies the retained verdict, complete sanitized finding-id mapping, classifications, and caller dispositions, then posts provenance-bound findings, cycle, and decision records. For publication_kind=non_verdict, no reviewer prose is accepted; it posts only closed-code station-observation opened/escalated records, consumes no cycle, and remains an unobserved gate. Both paths reject stale revisions and reconcile retries without rerunning the reviewer.",
+    "Publish one retained Codex result. For a verdict, the server verifies the retained verdict, complete sanitized finding-id mapping, classifications, and caller dispositions, then posts provenance-bound findings, cycle, and decision records. For publication_kind=non_verdict, no reviewer prose is accepted; it posts only closed-code station-observation opened/escalated records, consumes no cycle, and remains an unobserved gate. Both paths reject stale revisions and reconcile retries without rerunning the reviewer. A finding dispositioned wontfix must carry a user_authorization URL resolving to an exact '/ground-control authorize-review-wontfix <finding-id>' comment from a repository writer on this issue, posted after the review ran, so an approval for one review run cannot close a finding in a later one; it is verified at the repository boundary before the first write, and anything else refuses with review_wontfix_authorization_unverifiable. The published records name the candidate tree the review read and the cycle's finding count, which is what binds a later delivery to this review.",
     {
       repo_path: z.string(),
       review_handle: z.string().regex(REVIEW_HANDLE_RE),
@@ -111,7 +112,7 @@ function _registerGcPublishReviewResult(server) {
 function _registerGcPostDecisionRecord(server) {
   server.tool(
     "gc_post_decision_record",
-    "Post the canonical review-cycle decision record as a comment on the GitHub issue (per ADR-029, the issue thread is the durable record). Renders the verdict envelope (verdict, architectural_read, blocking, notes) into the standard decision-record Markdown layout; rejects 'defer' decisions and any body containing detected secrets. Replaces free-prose decision comments from the Step 6.5 review loop. The verdict + architectural_read fields are optional for back-compat; new callers (issue #931) populate them. Returns the posted comment's URL and id. A GitHub update gives exactly what's needed — not more, not less. No restating context the reader already has, no padding sections, no hedging prose.",
+    "Post the canonical review-cycle decision record as a comment on the GitHub issue (per ADR-029, the issue thread is the durable record). Renders the verdict envelope (verdict, architectural_read, blocking, notes) into the standard decision-record Markdown layout; rejects 'defer' decisions and any body containing detected secrets. Replaces free-prose decision comments from the Step 6.5 review loop. The verdict + architectural_read fields are optional for back-compat; new callers (issue #931) populate them. Returns the posted comment's URL and id. A 'wontfix' disposition is refused here with review_wontfix_requires_publication: its authorization must name the review run it answers, which only gc_publish_review_result knows. A GitHub update gives exactly what's needed — not more, not less. No restating context the reader already has, no padding sections, no hedging prose.",
     {
       repo_path: z.string(),
       issue_number: z.number().int().positive(),
@@ -133,8 +134,9 @@ function _registerGcPostDecisionRecord(server) {
         // Required at runtime when decision === "wontfix" — see ADR-029. The
         // Zod object cannot conditionally require a field, so the validator in
         // lib.js performs the conditional check; expose the field here so MCP
-        // callers can supply it. Pass a URL to the user's authorization
-        // comment on the issue thread OR a verbatim quote with comment id.
+        // callers can supply it. It must be the URL of a repository writer's
+        // exact `/ground-control authorize-review-wontfix <finding-id>` comment
+        // on this issue; a quotation is no longer authority (issue #1679).
         user_authorization: z.string().optional(),
         location: z.string().optional(),
         comment_url: z.string().optional(),
@@ -384,12 +386,12 @@ function _registerGcGetIssueThread(server) {
 function _registerGcWatchCiRun(server) {
   server.tool(
     "gc_watch_ci_run",
-    "Poll a GitHub Actions run to a terminal state server-side and return one compact terminal envelope (conclusion, failed steps, bounded log summary). Designed for the /implement Step 10 monitor: the agent makes one tool call; the MCP server holds the connection while polling so the agent's context is not burned by per-poll turns. Defaults: queued cap 5 min, total cap 45 min, poll every 15s. The queued cap applies per run to the time it has waited for its first runner, measured from its latest attempt's start, so a run that has started any job (including one reading `queued` between jobs) is subject only to the total cap. On queued-too-long or timeout the tool returns ok=true with conclusion='queued_too_long' or 'timed_out' so the caller can decide policy. If run_id is omitted, the watch binds to one head commit - expected_head_sha when supplied, otherwise the branch tip read from GitHub - and watches every run that commit triggered, waiting up to 5 minutes for those runs to register rather than accepting an earlier commit's green run. A run pinned by run_id that ran on a different commit than expected_head_sha is refused. run_id, status, and url always describe the one run the conclusion is about; a success over several runs sets run_id and url to null, and `runs` lists every watched run. Raw CI logs stay server-side; only a bounded UTF-8 summary (default 4096 bytes from the tail of `--log-failed`) reaches the caller.",
+    "Poll a GitHub Actions run to a terminal state server-side and return one compact terminal envelope (conclusion, failed steps, bounded log summary). Designed for the /implement Step 10 monitor: the agent makes one tool call; the MCP server holds the connection while polling so the agent's context is not burned by per-poll turns. Defaults: queued cap 5 min, total cap 45 min, poll every 15s. The queued cap applies per run to the time it has waited for its first runner, measured from its latest attempt's start, so a run that has started any job (including one reading `queued` between jobs) is subject only to the total cap. On queued-too-long or timeout the tool returns ok=true with conclusion='queued_too_long' or 'timed_out' so the caller can decide policy. If run_id is omitted, the watch binds to one head commit - expected_head_sha when supplied, otherwise the branch tip read from GitHub - and watches every run that commit triggered, waiting up to 5 minutes for those runs to register rather than accepting an earlier commit's green run. Discovery stays open for that whole registration window, so a workflow that registers after the first one still joins the watch and success is reported only once every discovered run has succeeded; a failure returns immediately. expected_head_sha must be a full 40-character GitHub commit SHA because run selection compares headSha by exact equality. A run pinned by run_id that ran on a different commit than expected_head_sha is refused. run_id, status, and url always describe the one run the conclusion is about; a success over several runs sets run_id and url to null, and `runs` lists every watched run. Raw CI logs stay server-side; only a bounded UTF-8 summary (default 4096 bytes from the tail of `--log-failed`) reaches the caller.",
     {
       repo_path: z.string(),
       branch: z.string().min(1),
       run_id: z.number().int().positive().nullable().optional(),
-      expected_head_sha: z.string().regex(/^[0-9a-f]{7,40}$/).nullable().optional(),
+      expected_head_sha: z.string().regex(GITHUB_HEAD_SHA_RE).nullable().optional(),
       queued_timeout_seconds: z.number().int().positive().optional(),
       total_timeout_seconds: z.number().int().positive().optional(),
       poll_interval_seconds: z.number().int().positive().optional(),

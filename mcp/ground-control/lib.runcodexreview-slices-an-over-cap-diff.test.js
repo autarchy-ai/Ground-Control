@@ -317,7 +317,16 @@ process.stdin.on("end", () => {
     // The compact envelope is the orchestrator's contract — surfacing the
     // signal only on the direct result would leave /implement blind, which is
     // the observability half of #1414.
-    const shim = makeOverCapRepo({ codexTails: [cleanTail("Reviewed this slice.")] });
+    //
+    // Finding-bearing on purpose. This fixture keeps an unreviewed untracked file
+    // in the repository, and issue #1679 refuses to publish a *clean* cycle in
+    // that state: a zero-finding publication authorizes its candidate tree for
+    // delivery, and that tree would carry a file the reviewed diff never
+    // contained. A finding-bearing cycle authorizes no tree, so it publishes and
+    // still reports the same coverage, which is what this test is about.
+    const shim = makeOverCapRepo({
+      codexTails: [findingTail("Reviewed this slice.", "alpha.txt", 1, "Alpha problem")],
+    });
     try {
       await withShimPath(shim.binDir, async () => {
         const result = await runCodexReviewCycle({
@@ -326,7 +335,7 @@ process.stdin.on("end", () => {
           uncommitted: true,
         }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.ok, true);
-        assert.equal(result.status, "clean");
+        assert.equal(result.status, "findings");
         assert.equal(result.diff_mode, "manifest");
         assert.equal(result.review_coverage.chunks_total, 3);
         assert.equal(result.review_coverage.chunks_completed, 3);
