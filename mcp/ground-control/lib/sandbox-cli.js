@@ -8,11 +8,11 @@ import { fileURLToPath } from "node:url";
 
 const SUDO = "/usr/bin/sudo";
 const PYTHON = "/usr/bin/python3";
-const SETUP_VERBS = new Set(["install", "refresh", "rollback"]);
+const SETUP_VERBS = new Set(["install", "upgrade", "refresh", "rollback"]);
 const USAGE = `usage: grndctl sandbox <command>
 
 commands:
-  setup <install|refresh|rollback>   run the privileged sandbox setup shipped with this package
+  setup <install|upgrade|refresh|rollback>  run the privileged sandbox setup shipped with this package
   image [REFERENCE]                  fetch the published guest template from the registry (default)
   build-image <BASE> [ALIAS]         build the guest template locally from a pinned base image
   push-image <REFERENCE> <FINGERPRINT>  publish a built template; reads a registry token on stdin
@@ -31,7 +31,9 @@ export function sandboxPayloadDirectory(moduleUrl = import.meta.url) {
 export function sandboxCommand(args, directory) {
   const [command, ...rest] = args;
   if (command === "setup") {
-    if (rest.length !== 1 || !SETUP_VERBS.has(rest[0])) throw new Error("usage: grndctl sandbox setup <install|refresh|rollback>");
+    if (rest.length !== 1 || !SETUP_VERBS.has(rest[0])) {
+      throw new Error("usage: grndctl sandbox setup <install|upgrade|refresh|rollback>");
+    }
     return [SUDO, "--", "/usr/bin/bash", `${directory}setup.sh`, rest[0]];
   }
   if (command === "image") {

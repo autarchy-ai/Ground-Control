@@ -36,3 +36,17 @@ test("routes preparation through the closed source-transfer path", () => {
   assert.equal(calls.at(-1).args[2], "agent-1");
   assert.equal(calls.at(-1).args[3], "clone");
 });
+
+test("deletion requires the exact sandbox name as an explicit confirmation", () => {
+  const calls = [];
+  runClient(["delete", "agent-1", "--confirm", "agent-1"], (command, args, options) => {
+    calls.push({ command, args, options });
+    return { status: 0 };
+  });
+  assert.deepEqual(calls[0].args, [
+    "--", "/usr/local/lib/gc-incus-sandbox/helper.py", "delete", "agent-1", "agent-1",
+  ]);
+  assert.throws(() => runClient(["delete", "agent-1"], () => ({ status: 0 })), /confirmation/);
+  assert.throws(() => runClient(["delete", "agent-1", "--confirm", "agent-2"], () => ({ status: 0 })),
+    /confirmation/);
+});

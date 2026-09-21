@@ -24,7 +24,7 @@ commands:
                    (--dry-run; --non-interactive with every value as a flag, e.g. --project, --github-repo)
   doctor           check this host and repository
   finalize-merged-pr  finish Phase E for an already-merged Ground Control delivery PR (--pr <number>)
-  sandbox          local Incus sandbox: setup <install|refresh|rollback>, image [REFERENCE], build-image, push-image, path
+  sandbox          local Incus sandbox: setup <install|upgrade|refresh|rollback>, image [REFERENCE], build-image, push-image, path
   --version        print the installed version
 `;
 

@@ -13,6 +13,9 @@ test("the sandbox front end delegates only its closed verbs through sudo", () =>
   assert.deepEqual(sandboxCommand(["setup", "install"], DIRECTORY), [
     "/usr/bin/sudo", "--", "/usr/bin/bash", `${DIRECTORY}setup.sh`, "install",
   ]);
+  assert.deepEqual(sandboxCommand(["setup", "upgrade"], DIRECTORY), [
+    "/usr/bin/sudo", "--", "/usr/bin/bash", `${DIRECTORY}setup.sh`, "upgrade",
+  ]);
   assert.deepEqual(sandboxCommand(["build-image", "images:almalinux/10/cloud"], DIRECTORY), [
     "/usr/bin/sudo", "--", "/usr/bin/python3", `${DIRECTORY}build_image.py`, "images:almalinux/10/cloud",
   ]);
@@ -28,8 +31,8 @@ test("the sandbox front end delegates only its closed verbs through sudo", () =>
   ]);
   assert.throws(() => sandboxCommand(["image", "a", "b"], DIRECTORY), /image \[REFERENCE\]/);
   assert.throws(() => sandboxCommand(["push-image", "ghcr.io/owner/name:tag"], DIRECTORY), /push-image/);
-  assert.throws(() => sandboxCommand(["setup", "reinstall"], DIRECTORY), /install\|refresh\|rollback/);
-  assert.throws(() => sandboxCommand(["setup"], DIRECTORY), /install\|refresh\|rollback/);
+  assert.throws(() => sandboxCommand(["setup", "reinstall"], DIRECTORY), /install\|upgrade\|refresh\|rollback/);
+  assert.throws(() => sandboxCommand(["setup"], DIRECTORY), /install\|upgrade\|refresh\|rollback/);
   assert.throws(() => sandboxCommand(["build-image"], DIRECTORY), /BASE/);
   assert.throws(() => sandboxCommand(["attach", "agent-1"], DIRECTORY), /usage/);
 });
