@@ -38,6 +38,7 @@ _ACTIONS = {"create", "list", "attach", "stop", "start", "delete", "status", "di
 _INCUS = "/usr/bin/incus"
 _IP = "/usr/sbin/ip"
 _INVALID_ALLOCATION = "allocation state is invalid"
+_INVALID_OPERATOR = "caller is not the configured sandbox operator"
 
 
 def _run(argv: list[str]) -> dict[str, int]:
@@ -178,7 +179,7 @@ class LifecycleHelper(object):
         if not self._aggregate_fits(records):
             raise AdmissionError("aggregate allocation is insufficient")
         if self.caller_uid != self.config.operator_uid:
-            raise UsageError("caller is not the configured sandbox operator")
+            raise UsageError(_INVALID_OPERATOR)
 
     def _admit(self, name: str, fresh: bool) -> tuple[
         int, dict[str, dict[str, int]], dict[str, int | bool], dict[str, int] | None,
@@ -200,7 +201,7 @@ class LifecycleHelper(object):
 
     def _require_owner(self, name: str) -> None:
         if self.caller_uid != self.config.operator_uid:
-            raise UsageError("caller is not the configured sandbox operator")
+            raise UsageError(_INVALID_OPERATOR)
         fd, records = self._locked_allocations()
         try:
             record = records.get(name)
@@ -213,7 +214,7 @@ class LifecycleHelper(object):
         """Admit transfer only to this operator's active, still-isolated sandbox."""
         name = self._name(name)
         if self.caller_uid != self.config.operator_uid:
-            raise UsageError("caller is not the configured sandbox operator")
+            raise UsageError(_INVALID_OPERATOR)
         if not self.network_checker(self.config):
             raise AdmissionError("sandbox network isolation observation is stale")
         fd, records = self._locked_allocations()

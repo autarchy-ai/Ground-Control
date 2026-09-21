@@ -65,6 +65,36 @@ function rejectFilters(repository, environment) {
   }
 }
 
+function rejectIntentToAdd(repository, environment) {
+  const status = output(migrationGit(
+    repository, ["status", "--porcelain=v2", "-z", "--untracked-files=no"], environment,
+  ));
+  if (records(status, "status").some((row) => row.toString("utf8").startsWith("1 .A "))) {
+    throw new Error("unsupported_intent_to_add: stage or remove intent-to-add entries before migration");
+  }
+}
+
+function rejectIndexExtensions(repository, environment) {
+  for (const option of ["core.sparseCheckout", "core.splitIndex"]) {
+    const configured = migrationGit(repository, ["config", "--bool", "--get", option], environment, {
+      allowStatus: [1],
+    });
+    if (configured.status === 0 && output(configured).toString("utf8").trim() === "true") {
+      throw new Error(`unsupported_index_extension: disable ${option} before migration`);
+    }
+  }
+}
+
+function rejectUnsupportedStages(repository, environment) {
+  const staged = output(migrationGit(repository, ["ls-files", "--stage", "-z"], environment));
+  for (const row of records(staged, "index")) {
+    const match = /^(\d{6}) [0-9a-f]{40,64} ([0-3])\t[\s\S]*$/.exec(row.toString("utf8"));
+    if (!match) throw new Error("source index entry is invalid");
+    if (match[1] === "160000") throw new Error("unsupported_submodule: restore the submodule inside the guest");
+    if (match[2] !== "0") throw new Error("unsupported_unmerged_index: resolve the index before migration");
+  }
+}
+
 export function guardMigrationRepository(repository, environment) {
   if (OPERATION_MARKERS.some((marker) => gitPathExists(repository, marker, environment))) {
     throw new Error("unsupported_git_operation: finish or abort the Git operation before migration");
@@ -74,26 +104,7 @@ export function guardMigrationRepository(repository, environment) {
   }
   rejectIndexFlags(repository, environment);
   rejectFilters(repository, environment);
-  const status = output(migrationGit(
-    repository, ["status", "--porcelain=v2", "-z", "--untracked-files=no"], environment,
-  ));
-  for (const row of records(status, "status")) {
-    if (row.toString("utf8").startsWith("1 .A ")) {
-      throw new Error("unsupported_intent_to_add: stage or remove intent-to-add entries before migration");
-    }
-  }
-  for (const option of ["core.sparseCheckout", "core.splitIndex"]) {
-    const configured = migrationGit(repository, ["config", "--bool", "--get", option], environment, {
-      allowStatus: [1],
-    });
-    if (configured.status === 0 && output(configured).toString("utf8").trim() === "true") {
-      throw new Error(`unsupported_index_extension: disable ${option} before migration`);
-    }
-  }
-  for (const row of records(output(migrationGit(repository, ["ls-files", "--stage", "-z"], environment)), "index")) {
-    const match = /^(\d{6}) [0-9a-f]{40,64} ([0-3])\t[\s\S]*$/.exec(row.toString("utf8"));
-    if (!match) throw new Error("source index entry is invalid");
-    if (match[1] === "160000") throw new Error("unsupported_submodule: restore the submodule inside the guest");
-    if (match[2] !== "0") throw new Error("unsupported_unmerged_index: resolve the index before migration");
-  }
+  rejectIntentToAdd(repository, environment);
+  rejectIndexExtensions(repository, environment);
+  rejectUnsupportedStages(repository, environment);
 }

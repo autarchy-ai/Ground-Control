@@ -20,6 +20,7 @@ class SetupContractTest(unittest.TestCase):
         setup = (root / "tools/incus_sandbox/setup.sh").read_text(encoding="utf-8")
         self.assertIn("guest_bootstrap.py", setup)
         self.assertIn("migration.py", setup)
+        self.assertIn("migration_packet.py", setup)
         self.assertIn("migration_guard.mjs", setup)
         self.assertIn("transfer.py", setup)
         self.assertIn("source.mjs", setup)

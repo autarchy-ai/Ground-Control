@@ -225,6 +225,7 @@ class TransferCommandTest(unittest.TestCase):
         self.assertIn("/usr/bin/incus", rendered)
         self.assertIn("guest-bootstrap.py", rendered)
         self.assertIn("migration.py", rendered)
+        self.assertIn("migration_packet.py", rendered)
         self.assertIn("source.gcs", rendered)
         self.assertNotIn("/home/operator", rendered)
         self.assertTrue(all(command[0] == "/usr/bin/incus" for command in commands))
@@ -237,7 +238,7 @@ class TransferCommandTest(unittest.TestCase):
         self.assertEqual([argument for argument in commands[0] if argument.startswith("/home")],
                          ["/home/sandbox/.local", "/home/sandbox/.local/bin", "/home/sandbox/.gc-transfer"])
         self.assertTrue(all(command[4].startswith("agent-1/home/sandbox/")
-                            for command in commands[1:4]))
+                            for command in commands[1:5]))
         # The bootstrap is root-owned and run by the unprivileged guest user.
         self.assertIn("--mode=0755", commands[1])
 

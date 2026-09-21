@@ -138,6 +138,7 @@ install_files() {
   run install -m 0640 "$PAYLOAD_ROOT/observations.py" "$INSTALL_ROOT/observations.py"
   run install -m 0644 "$PAYLOAD_ROOT/guest_bootstrap.py" "$INSTALL_ROOT/guest-bootstrap.py"
   run install -m 0644 "$PAYLOAD_ROOT/migration.py" "$INSTALL_ROOT/migration.py"
+  run install -m 0644 "$PAYLOAD_ROOT/migration_packet.py" "$INSTALL_ROOT/migration_packet.py"
   run install -m 0644 "$PAYLOAD_ROOT/migration_guard.mjs" /usr/local/bin/migration_guard.mjs
   run install -m 0750 "$PAYLOAD_ROOT/helper.py" "$INSTALL_ROOT/helper.py"
   run install -m 0750 "$PAYLOAD_ROOT/transfer.py" "$INSTALL_ROOT/transfer.py"

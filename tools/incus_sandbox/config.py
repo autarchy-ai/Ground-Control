@@ -77,6 +77,8 @@ _HOST_FIELDS = (
 )
 _MIGRATION_FIELDS = ("max_packet_bytes", "max_file_count", "max_file_bytes", "max_handoff_bytes")
 _MIN_EVENT_BYTES = 512
+_SCHEMA_V1 = "gc.incus-sandbox/v1"
+_SCHEMA_V2 = "gc.incus-sandbox/v2"
 _DEFAULT_MIGRATION = {
     "max_packet_bytes": 1024 * 1024 * 1024,
     "max_file_count": 2048,
@@ -138,8 +140,8 @@ def _read_document(path: Path) -> dict[str, object]:
 def _check_top_level(doc: dict[str, object]) -> None:
     """Verify the closed versioned configuration vocabulary."""
     schema = doc.get("schema")
-    expected = _TOP_LEVEL if schema == "gc.incus-sandbox/v1" else _TOP_LEVEL_V2
-    if schema not in {"gc.incus-sandbox/v1", "gc.incus-sandbox/v2"} or set(doc) != expected:
+    expected = _TOP_LEVEL if schema == _SCHEMA_V1 else _TOP_LEVEL_V2
+    if schema not in {_SCHEMA_V1, _SCHEMA_V2} or set(doc) != expected:
         raise ConfigError("configuration keys do not match the declared gc.incus-sandbox schema")
 
 
@@ -165,6 +167,24 @@ def _limits(doc: dict[str, object], fields: tuple[str, ...], label: str) -> tupl
     return tuple(_positive(section[field], f"{label}.{field}") for field in fields)
 
 
+def _migration_limits(doc: dict[str, object]) -> MigrationLimits | None:
+    """Validate v2 migration bounds against the installed guest validator."""
+    if doc["schema"] != _SCHEMA_V2:
+        return None
+    migration = MigrationLimits(*_limits(doc, _MIGRATION_FIELDS, "migration"))
+    limits = (
+        migration.max_packet_bytes <= _DEFAULT_MIGRATION["max_packet_bytes"],
+        migration.max_file_count <= _DEFAULT_MIGRATION["max_file_count"],
+        migration.max_file_bytes <= _DEFAULT_MIGRATION["max_file_bytes"],
+        migration.max_handoff_bytes <= _DEFAULT_MIGRATION["max_handoff_bytes"],
+        migration.max_file_bytes <= migration.max_packet_bytes,
+        migration.max_handoff_bytes <= migration.max_packet_bytes,
+    )
+    if not all(limits):
+        raise ConfigError("migration limits exceed the installed guest validator")
+    return migration
+
+
 def _build_config(doc: dict[str, object]) -> SandboxConfig:
     """Build the typed policy object after individual fields are validated."""
     vm = VmLimits(*_limits(doc, _VM_FIELDS, "vm"))
@@ -174,17 +194,7 @@ def _build_config(doc: dict[str, object]) -> SandboxConfig:
     event_max_bytes = _positive(doc["event_max_bytes"], "event_max_bytes")
     if event_max_bytes < _MIN_EVENT_BYTES:
         raise ConfigError(f"event_max_bytes must be at least {_MIN_EVENT_BYTES}")
-    migration = None
-    if doc["schema"] == "gc.incus-sandbox/v2":
-        values = _limits(doc, _MIGRATION_FIELDS, "migration")
-        migration = MigrationLimits(*values)
-        if (migration.max_packet_bytes > 1024 * 1024 * 1024
-                or migration.max_file_count > 2048
-                or migration.max_file_bytes > 64 * 1024 * 1024
-                or migration.max_handoff_bytes > 64 * 1024
-                or migration.max_file_bytes > migration.max_packet_bytes
-                or migration.max_handoff_bytes > migration.max_packet_bytes):
-            raise ConfigError("migration limits exceed the installed guest validator")
+    migration = _migration_limits(doc)
     return SandboxConfig(
         project=_name(doc, "project"), profile=_name(doc, "profile"),
         pool=_name(doc, "pool"), bridge=_name(doc, "bridge"), image=_image(doc),
@@ -212,9 +222,9 @@ def upgrade_config(path: Path, *, expected_uid: int = 0) -> bool:
     document = _read_document(path)
     _check_top_level(document)
     _build_config(document)
-    if document["schema"] == "gc.incus-sandbox/v2":
+    if document["schema"] == _SCHEMA_V2:
         return False
-    upgraded = {**document, "schema": "gc.incus-sandbox/v2", "migration": _DEFAULT_MIGRATION}
+    upgraded = {**document, "schema": _SCHEMA_V2, "migration": _DEFAULT_MIGRATION}
     _check_top_level(upgraded)
     _build_config(upgraded)
     temporary: Path | None = None

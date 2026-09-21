@@ -92,7 +92,9 @@ function sha256(value) {
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value !== null && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+    const keys = Object.keys(value).toSorted((left, right) => left.localeCompare(right));
+    const fields = keys.map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`);
+    return `{${fields.join(",")}}`;
   }
   return JSON.stringify(value);
 }
@@ -131,8 +133,11 @@ export function parseMigrationSpec(input) {
     throw new Error("migration request is invalid JSON");
   }
   const fields = ["schema", "checkpoint_acknowledged", "source_agent_stopped", "selected_untracked", "handoff"];
+  const actualFields = spec === null || typeof spec !== "object" ? []
+    : Object.keys(spec).toSorted((left, right) => left.localeCompare(right));
+  const expectedFields = fields.toSorted((left, right) => left.localeCompare(right));
   if (spec === null || typeof spec !== "object" || Array.isArray(spec)
-      || Object.keys(spec).sort().join("\0") !== fields.sort().join("\0")) {
+      || actualFields.join("\0") !== expectedFields.join("\0")) {
     throw new Error("migration request fields are invalid");
   }
   if (spec.schema !== REQUEST_SCHEMA || spec.checkpoint_acknowledged !== true) {
@@ -148,7 +153,8 @@ export function parseMigrationSpec(input) {
   });
   if (new Set(selected).size !== selected.length) throw new Error("selected untracked paths must be unique");
   if (spec.handoff === null || typeof spec.handoff !== "object" || Array.isArray(spec.handoff)
-      || Object.keys(spec.handoff).sort().join("\0") !== "task\0unfinished") {
+      || Object.keys(spec.handoff).toSorted((left, right) => left.localeCompare(right)).join("\0")
+        !== "task\0unfinished") {
     throw new Error("migration handoff fields are invalid");
   }
   boundedText(spec.handoff.task, "task");
@@ -195,7 +201,7 @@ function indexEntry(repository, path, environment) {
   if (exact.length === 0) return { path, deleted: true };
   if (exact.length !== 1) throw new Error("unsupported_unmerged_index: resolve the index before migration");
   const match = /^(\d{6}) ([0-9a-f]{40,64}) ([0-3])\t([\s\S]*)$/.exec(exact[0]);
-  if (!match || match[3] !== "0" || match[4] !== path || !MODES.has(match[1])) {
+  if (match?.[3] !== "0" || match[4] !== path || !MODES.has(match[1])) {
     throw new Error("source index entry is unsupported");
   }
   const content = bufferOutput(migrationGit(repository, ["cat-file", "blob", match[2]], environment));
@@ -207,8 +213,12 @@ function containedTarget(repository, path) {
   const components = path.split("/");
   for (const component of components.slice(0, -1)) {
     current = join(current, component);
-    try { if (lstatSync(current).isSymbolicLink()) throw new Error("migration path parent is a link"); }
-    catch (error) { if (error?.code === "ENOENT") return join(repository, ...components); throw error; }
+    try {
+      if (lstatSync(current).isSymbolicLink()) throw new Error("migration path parent is a link");
+    } catch (error) {
+      if (error?.code === "ENOENT") return join(repository, ...components);
+      throw error;
+    }
   }
   return join(repository, ...components);
 }
@@ -249,7 +259,8 @@ function worktreeEntry(repository, path) {
 
 function rejectLfs(repository, paths, environment) {
   if (paths.length === 0) return;
-  const values = nulPaths(bufferOutput(migrationGit(repository, ["check-attr", "-z", "filter", "--", ...paths], environment)));
+  const result = migrationGit(repository, ["check-attr", "-z", "filter", "--", ...paths], environment);
+  const values = nulPaths(bufferOutput(result));
   for (let index = 0; index < values.length; index += 3) {
     if (values[index + 2] === "lfs") throw new Error("unsupported_lfs: restore LFS objects inside the guest");
   }
@@ -260,15 +271,17 @@ function selectedUntracked(repository, selected, environment) {
   for (const path of selected) {
     try {
       const details = lstatSync(resolve(repository, path));
-      if (!details.isFile() && !details.isSymbolicLink()) throw new Error("migration rejects sockets and special files");
+      if (!details.isFile() && !details.isSymbolicLink()) {
+        throw new Error("migration rejects sockets and special files");
+      }
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
     }
   }
   const actual = nulPaths(bufferOutput(migrationGit(
     repository, ["ls-files", "--others", "--exclude-standard", "-z", "--", ...selected], environment,
-  ))).sort();
-  const expected = [...selected].sort();
+  ))).toSorted((left, right) => left.localeCompare(right));
+  const expected = selected.toSorted((left, right) => left.localeCompare(right));
   if (actual.length !== expected.length || actual.some((path, index) => path !== expected[index])) {
     throw new Error("selected untracked paths must name exact non-ignored files");
   }
@@ -281,10 +294,10 @@ function snapshot(repository, spec, environment) {
   guardMigrationRepository(repository, environment);
   const indexPaths = nulPaths(bufferOutput(migrationGit(
     repository, ["diff", "--no-ext-diff", "--cached", "--name-only", "-z", "--no-renames", "HEAD", "--"], environment,
-  ))).sort();
+  ))).toSorted((left, right) => left.localeCompare(right));
   const worktreePaths = nulPaths(bufferOutput(migrationGit(
     repository, ["diff", "--no-ext-diff", "--name-only", "-z", "--no-renames", "--"], environment,
-  ))).sort();
+  ))).toSorted((left, right) => left.localeCompare(right));
   const untrackedPaths = selectedUntracked(repository, spec.selected_untracked, environment);
   const allPaths = [...new Set([...indexPaths, ...worktreePaths, ...untrackedPaths])];
   allPaths.forEach(rejectSensitivePath);
@@ -380,7 +393,9 @@ export function captureMigration(repository, rawSpec) {
   }
 }
 
-export function transferMigration(sandbox, packet, run = ({ command, args, options }) => spawnSync(command, args, options)) {
+export function transferMigration(
+  sandbox, packet, run = ({ command, args, options }) => spawnSync(command, args, options),
+) {
   if (!NAME.test(sandbox)) throw new Error("sandbox name is invalid");
   if (!Buffer.isBuffer(packet) || packet.length === 0 || packet.length > MAX_BUNDLE_BYTES) {
     throw new Error("migration packet is invalid");
