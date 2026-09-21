@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import {
   deriveReviewDecision,
   fetchCommitCheckRollup,
+  ghRestJson,
   listIssueCrossReferencedPullNumbers,
   listPullRequestsForHead,
   normalizeRestPullRequest,
@@ -155,5 +156,29 @@ describe("parseClosingIssueReferences", () => {
     const body = "Closes #12\nfixes: #13\nResolved o/r#14\nRefs #15\ncloses other/r#16\nfix #12";
     assert.deepEqual(parseClosingIssueReferences(body, "o", "r"), [12, 13, 14]);
     assert.deepEqual(parseClosingIssueReferences(null, "o", "r"), []);
+  });
+});
+
+describe("ghRestJson field modes and empty bodies (issue #1673)", () => {
+  const capture = (stdout) => {
+    const seen = [];
+    return {
+      seen,
+      execFile: async (bin, args) => { seen.push(args); return { stdout }; },
+    };
+  };
+
+  it("sends typed fields with -F and string fields with -f", async () => {
+    const { seen, execFile } = capture("{}");
+    await ghRestJson("/repo", "/repos/o/r/issues/1/dependencies/blocked_by", {
+      method: "POST", typedFields: { issue_id: 2020 }, fields: { note: "text" }, execFile,
+    });
+    // `gh api -f` stringifies its value; GitHub rejects a stringified issue_id with 422.
+    assert.deepEqual(seen[0].slice(-4), ["-f", "note=text", "-F", "issue_id=2020"]);
+  });
+
+  it("reads an empty response body as null rather than throwing", async () => {
+    const { execFile } = capture("");
+    assert.equal(await ghRestJson("/repo", "/repos/o/r/x", { method: "DELETE", execFile }), null);
   });
 });

@@ -59,11 +59,16 @@ function runsApi(run) {
   };
 }
 
+// The shape GitHub actually returns for this workflow's trigger (issue #1683). A run is
+// associated with OPEN pull requests only, and Phase E runs on `pull_request: closed`, so
+// `pull_requests` is empty for every real merge — observed on run 35546735055 for PR #1682.
+// The run name the pinned workflow sets is what binds the run to its pull request.
 const GOOD_RUN = {
   path: PHASE_E_WORKFLOW_PATH,
   event: "pull_request",
   repository: { full_name: "autarchy-ai/Ground-Control" },
-  pull_requests: [{ number: PR }],
+  pull_requests: [],
+  display_title: `Ground Control Phase E for PR ${PR}`,
 };
 
 function find(comments, { run = GOOD_RUN } = {}) {
@@ -123,10 +128,18 @@ describe("trusted final-report marker", () => {
     assert.equal(result.found, false);
   });
 
+  // Both bindings have to name another pull request. Varying only the association would
+  // leave the run name still matching, so the case would stop demonstrating anything.
   it("rejects a bot marker whose run is bound to a different pull request", async () => {
     const result = await find(
       [botComment(reportWithRun(ISSUE, PR, RUN))],
-      { run: { ...GOOD_RUN, pull_requests: [{ number: 4242 }] } },
+      {
+        run: {
+          ...GOOD_RUN,
+          pull_requests: [{ number: 4242 }],
+          display_title: "Ground Control Phase E for PR 4242",
+        },
+      },
     );
     assert.equal(result.found, false);
   });
@@ -156,6 +169,39 @@ describe("trusted final-report marker", () => {
 
 describe("finalizer run provenance", () => {
   const dispatch = (overrides = {}) => ({ ...GOOD_RUN, event: "workflow_dispatch", pull_requests: [], ...overrides });
+  const verify = (run, prNumber = PR) => verifyFinalizerRunProvenance(
+    { repoRoot: "/repo", owner: "autarchy-ai", name: "Ground-Control", prNumber, runId: RUN },
+    { ghJson: runsApi(run) },
+  );
+
+  // The reported defect (issue #1683): the merged-pull-request trigger is the only path
+  // this feature serves, and GitHub never associates its run with the pull request.
+  it("accepts a merged-pull-request run bound by the name the workflow gave it", async () => {
+    assert.equal(await verify(GOOD_RUN), true);
+  });
+
+  it("prefers the association GitHub supplies when there is one", async () => {
+    const associated = { ...GOOD_RUN, pull_requests: [{ number: PR }], display_title: "Ground Control Phase E" };
+    assert.equal(await verify(associated), true);
+  });
+
+  it("rejects a merged-pull-request run that names a different pull request", async () => {
+    assert.equal(await verify({ ...GOOD_RUN, display_title: "Ground Control Phase E for PR 4242" }), false);
+  });
+
+  it("rejects a merged-pull-request run whose name binds it to nothing", async () => {
+    assert.equal(await verify({ ...GOOD_RUN, display_title: "Ground Control Phase E", name: null }), false);
+  });
+
+  it("does not let a longer number satisfy a shorter one on the merged-pull-request path", async () => {
+    assert.equal(await verify({ ...GOOD_RUN, display_title: "Ground Control Phase E for PR 1680" }, 168), false);
+  });
+
+  // The workflow declares exactly two triggers. Anything else has no binding contract, and
+  // inheriting this one silently is the mistake that produced the defect above.
+  it("gives no name binding to an event outside the workflow's two triggers", async () => {
+    assert.equal(await verify({ ...GOOD_RUN, event: "schedule" }), false);
+  });
 
   it("accepts a maintainer-started dispatch run bound by the name the workflow gave it", async () => {
     const ok = await verifyFinalizerRunProvenance(

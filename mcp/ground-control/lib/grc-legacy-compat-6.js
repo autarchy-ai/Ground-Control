@@ -11,6 +11,7 @@ import { detectSensitiveBodyContent, extractGhErrorMessage } from "./grc-legacy-
 import { buildExecutionObligationBody, hasVerifiedStructuredWontfixAuthorization, readIssueCommentsWithAuthors, resolveExecutionObligationTrust } from "./grc-legacy-compat-3.js";
 import { authorizeImplementRepoRoot, ensureGitRepo, readTrustedExecutionObligationState, resolveMcpLaunchWorkspaceAuthorization, runSingleCodexReview } from "./grc-legacy-compat-4.js";
 import { REVIEW_NOTES_MAX, parseCodexReviewFindingsTail } from "./grc-legacy-compat-5.js";
+import { IMPLEMENT_IN_PROGRESS_LABEL } from "./constants.js";
 import { GITHUB_ISSUE_COMMENT_BODY_MAX, rejectReservedMarkerSequence } from "./repo-vocabulary.js";
 import { execFile, formatCommandFailure } from "./runtime-primitives.js";
 
@@ -42,7 +43,7 @@ export async function runMarkImplementIssuePickedUp(input, {
   );
   if (!repoAuthorization.ok) return repoAuthorization;
   const { owner, name } = repoAuthorization;
-  const labelPath = `/repos/${owner}/${name}/labels/in-progress`;
+  const labelPath = `/repos/${owner}/${name}/labels/${IMPLEMENT_IN_PROGRESS_LABEL}`;
   try {
     await execFile("gh", ["api", "--method", "GET", labelPath], { cwd: repoRoot });
   } catch (error) {
@@ -59,7 +60,7 @@ export async function runMarkImplementIssuePickedUp(input, {
           "POST",
           `/repos/${owner}/${name}/labels`,
           "-f",
-          "name=in-progress",
+          `name=${IMPLEMENT_IN_PROGRESS_LABEL}`,
           "-f",
           "color=FBCA04",
           "-f",
@@ -84,7 +85,7 @@ export async function runMarkImplementIssuePickedUp(input, {
         "POST",
         `/repos/${owner}/${name}/issues/${input.issueNumber}/labels`,
         "-f",
-        "labels[]=in-progress",
+        `labels[]=${IMPLEMENT_IN_PROGRESS_LABEL}`,
       ],
       { cwd: repoRoot },
     );
@@ -116,7 +117,7 @@ export async function runMarkImplementIssuePickedUp(input, {
       ok: true,
       issue_number: input.issueNumber,
       branch: input.branchName,
-      label: "in-progress",
+      label: IMPLEMENT_IN_PROGRESS_LABEL,
       comment_url: response?.html_url ?? null,
     };
   } catch (error) {

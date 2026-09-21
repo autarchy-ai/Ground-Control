@@ -9,10 +9,10 @@
 // So provenance is verified rather than asserted. A record that claims to come from the
 // finalizer names its `GITHUB_RUN_ID`, and that run must resolve through the Actions API to
 // THIS repository's pinned finalizer workflow, bound to the pull request the record names.
-// A `workflow_dispatch` run carries no `pull_requests` association, so it is bound through
-// the run name the workflow sets instead. Accepting a dispatch run on the strength of its
-// event alone would be no binding at all: run ids are public, so one real dispatch run would
-// vouch for any issue and pull request a comment cared to name.
+// The binding is the run's `pull_requests` association where GitHub supplies one, and
+// otherwise the pull-request number the pinned workflow puts in its own run name. Accepting
+// a run on the strength of its event alone would be no binding at all: run ids are public,
+// so one real run would vouch for any issue and pull request a comment cared to name.
 //
 // A forged run id fails the lookup. A workflow that merely echoes attacker-controlled text
 // cannot produce a finalizer run bound to the pull request that text names.
@@ -26,6 +26,12 @@ export const PHASE_E_WORKFLOW_PATH = ".github/workflows/ground-control-phase-e.y
 // The GitHub Actions service identity. Repository automation speaks as exactly this login;
 // a fork pull request receives a read-only token and cannot post as it at all.
 export const GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]";
+
+// Exactly the two triggers the Phase E workflow declares. A third one would need to state
+// its own binding, so it is listed here deliberately rather than left to a default: silently
+// inheriting a binding meant for another trigger is how this check came to be unsatisfiable
+// on its primary path (issue #1683).
+const TITLE_BOUND_EVENTS = new Set(["pull_request", "workflow_dispatch"]);
 
 // The workflow's `run-name:` renders as the run's `display_title`. Matching the number with
 // a boundary on both sides keeps PR #16 from satisfying a record that names PR #1.
@@ -54,9 +60,16 @@ export async function verifyFinalizerRunProvenance(
   if (run?.path !== PHASE_E_WORKFLOW_PATH) return false;
   const fullName = `${owner}/${name}`.toLowerCase();
   if ((run.repository?.full_name ?? "").toLowerCase() !== fullName) return false;
-  // A pull-request-triggered run is bound by its own association. A dispatch run has none,
-  // so it is bound by the name the workflow gave it.
+  // A matching association is the strongest binding, so it wins when GitHub supplies one.
+  // It cannot be required: a run is associated with OPEN pull requests only, and this
+  // workflow triggers on `pull_request: closed`, so the merged delivery it exists to
+  // finalize never has one. Requiring it made this check unsatisfiable on its only real
+  // path — the report was posted and the close then refused it (issue #1683). Both triggers
+  // therefore fall back to the run name, which is evidence only because the pinned workflow
+  // builds it from `github.event.pull_request.number || inputs.pr`; `tools/policy/
+  // phase_e_automation.py` pins that expression, because GitHub uses the pull-request title
+  // when `run-name:` is absent and attacker-authored text must never bind a run.
   if ((run.pull_requests ?? []).some((pr) => pr?.number === prNumber)) return true;
-  if (run.event !== "workflow_dispatch") return false;
+  if (!TITLE_BOUND_EVENTS.has(run.event)) return false;
   return runNameBindsPr(run.display_title ?? run.name ?? null, prNumber);
 }

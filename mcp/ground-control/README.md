@@ -123,7 +123,7 @@ takes effect on the next server start.
 
 ## Tool surface
 
-The server registers **34 tools**. They are the `/implement`, `/quickfix`,
+The server registers **36 tools**. They are the `/implement`, `/quickfix`,
 `/integrate`, and `/review` workflow mechanics plus the coding-agent/reviewer separation - there is
 no entity CRUD surface and no ad-hoc REST escape hatch, because there is no
 backend behind them to read. Requirements and ADRs are read and written as repo
@@ -149,6 +149,7 @@ The complete keep/delete and placement record is in
 | `gc_get_repo_ground_control_context` | Read and validate the repo's `.ground-control.yaml`; returns workflow commands, routing, docs paths, and inlined plan rules |
 | `gc_create_github_issue` | Create a GitHub issue from a repo-local requirement and link it back |
 | `gc_update_issue_requirements` | Set the in-scope requirement UID list in an existing issue's `## Requirements` section; `add` unions, `remove` needs a repository writer's authorization comment, nothing else in the body moves |
+| `gc_issue_dependency` | `read`, `add`, or `remove` an issue's GitHub "blocked by" dependencies. Callers pass issue numbers; the tool resolves the blocking issue's REST id, which the endpoints key on, and sends it as a typed field. Idempotency is decided from the current relationship set, so a replay is `already_satisfied` and a failed write whose state now holds is `reconciled` rather than a claimed change. A dependency naming another repository keeps its repository and number and has the rest redacted, so the edge stays visible without the host credential serving content from outside the authorized checkout |
 | `gc_remember` | Capture a knowledge-base entry under the repo's configured knowledge directory |
 | `gc_post_implementation_plan` | Post the Step 4 plan to the issue thread; requires the preflight marker |
 | `gc_close_issue_after_merge` | Idempotent post-merge issue close, gated on the PR actually being merged |
