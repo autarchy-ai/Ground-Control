@@ -31,8 +31,8 @@ Accepted
 > publication writes only closed-code station-observation opening and
 > escalation records; no decision record or cycle is consumed. `automatic`
 > pre-push mode composes the same executor and publisher. An unpublished local
-> result is never issue-thread gate evidence and cannot satisfy readiness or
-> completion.
+> result is never issue-thread gate evidence. Publication remains
+> observational and does not satisfy or block readiness or completion.
 
 > **Amended by issue #1679 (2026-09-21):** The `/quickfix` review waiver is now
 > read from the run's own recorded lane, not from an argument. It used to be
