@@ -38,6 +38,7 @@ _ACTIONS = {"create", "list", "attach", "stop", "start", "delete", "status", "di
 _INCUS = "/usr/bin/incus"
 _IP = "/usr/sbin/ip"
 _INVALID_ALLOCATION = "allocation state is invalid"
+_INVALID_OPERATOR = "caller is not the configured sandbox operator"
 
 
 def _run(argv: list[str]) -> dict[str, int]:
@@ -178,7 +179,7 @@ class LifecycleHelper(object):
         if not self._aggregate_fits(records):
             raise AdmissionError("aggregate allocation is insufficient")
         if self.caller_uid != self.config.operator_uid:
-            raise UsageError("caller is not the configured sandbox operator")
+            raise UsageError(_INVALID_OPERATOR)
 
     def _admit(self, name: str, fresh: bool) -> tuple[
         int, dict[str, dict[str, int]], dict[str, int | bool], dict[str, int] | None,
@@ -200,12 +201,27 @@ class LifecycleHelper(object):
 
     def _require_owner(self, name: str) -> None:
         if self.caller_uid != self.config.operator_uid:
-            raise UsageError("caller is not the configured sandbox operator")
+            raise UsageError(_INVALID_OPERATOR)
         fd, records = self._locked_allocations()
         try:
             record = records.get(name)
             if record is None or record["owner_uid"] != self.caller_uid:
                 raise UsageError("sandbox is not owned by this operator")
+        finally:
+            self._unlock(fd)
+
+    def require_active_owner(self, name: str) -> None:
+        """Admit transfer only to this operator's active, still-isolated sandbox."""
+        name = self._name(name)
+        if self.caller_uid != self.config.operator_uid:
+            raise UsageError(_INVALID_OPERATOR)
+        if not self.network_checker(self.config):
+            raise AdmissionError("sandbox network isolation observation is stale")
+        fd, records = self._locked_allocations()
+        try:
+            record = records.get(name)
+            if record is None or record["owner_uid"] != self.caller_uid or not record["active"]:
+                raise UsageError("migration target is not an active sandbox owned by this operator")
         finally:
             self._unlock(fd)
 
@@ -378,8 +394,10 @@ class LifecycleHelper(object):
         name = self._name(name)
         self._mutate("stop", name, [[_INCUS, "stop", name, "--project", self.config.project]], release=True)
 
-    def delete(self, name: str) -> None:
+    def delete(self, name: str, confirmation: str | None = None) -> None:
         name = self._name(name)
+        if confirmation != name:
+            raise UsageError("delete requires the exact sandbox name as confirmation")
         command = [_INCUS, "delete", name, "--force", "--project", self.config.project]
         self._mutate("delete", name, [command], release=True)
         self._forget(name)
@@ -400,7 +418,7 @@ class LifecycleHelper(object):
     def diagnose(self, name: str) -> None:
         self._query(name, "diagnose")
 
-    def dispatch(self, action: str, name: str | None = None) -> None:
+    def dispatch(self, action: str, name: str | None = None, confirmation: str | None = None) -> None:
         if action not in _ACTIONS:
             raise UsageError("unsupported lifecycle action")
         if action == "list":
@@ -410,6 +428,11 @@ class LifecycleHelper(object):
             return
         if name is None:
             raise UsageError("lifecycle action requires a sandbox name")
+        if action == "delete":
+            self.delete(name, confirmation)
+            return
+        if confirmation is not None:
+            raise UsageError("confirmation is accepted only for delete")
         getattr(self, action)(name)
 
 
@@ -417,8 +440,8 @@ def main(argv: list[str]) -> int:
     """Run the fixed root helper entry point invoked by its sudo rule."""
     if os.geteuid() != 0:
         raise UsageError("the helper must run as root through its fixed sudo rule")
-    if len(argv) not in (2, 3):
-        raise UsageError("usage: gc-incus-helper ACTION [SANDBOX]")
+    if len(argv) not in (2, 3, 4):
+        raise UsageError("usage: gc-incus-helper ACTION [SANDBOX [CONFIRMATION]]")
     config_path = Path("/etc/gc-incus-sandbox/config.json")
     config = load_config(config_path)
     sudo_uid = os.environ.get("SUDO_UID")
@@ -426,7 +449,7 @@ def main(argv: list[str]) -> int:
         raise UsageError("the helper requires sudo to preserve the calling operator identity")
     helper = LifecycleHelper(config, event_writer=EventWriter(config.event_log, config.event_max_bytes),
                              caller_uid=int(sudo_uid))
-    helper.dispatch(argv[1], argv[2] if len(argv) == 3 else None)
+    helper.dispatch(argv[1], argv[2] if len(argv) >= 3 else None, argv[3] if len(argv) == 4 else None)
     return 0
 
 

@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-09-19
+- **Amended:** 2026-09-21 for existing-session migration (#1645)
 - **Issue:** #1643
 - **Requirement:** none
 - **Supersedes:** none
@@ -75,7 +76,46 @@ new guest. Preparation materializes source and nothing else: every tool and
 credential, including Codex and Ground Control, is installed by the operator in
 the guest session, so a host-initiated transfer never fetches and runs a moving
 network package beside private source.
-Dirty worktrees remain unsupported. Checkout,
+### Existing-session dirty-work migration
+
+The same source-packet endpoint also accepts the closed
+`gc.incus-sandbox.migration/v1` variant. Its unprivileged exporter requires one
+explicit checkout, one destination sandbox, an acknowledged operator
+checkpoint, confirmation that the old agent stopped, an exact
+selected-untracked list, and a bounded reviewed handoff. It records the
+immutable HEAD plus branch, canonical index, staged and unstaged tracked state,
+and selected untracked regular files or inside-only links. A before/after
+digest makes source quiescence a checked fact.
+
+The packet never carries raw `.git` metadata, remotes, hooks, reflogs, locks,
+worktree pointers, credential/config homes, provider histories, sockets,
+caches, ignored trees, or arbitrary archives. Submodules, LFS-managed changed
+paths, unfinished Git operations, active filters, unmerged or intent-to-add
+indexes, assume-unchanged or skip-worktree entries, sparse/split indexes,
+escaping paths/links, special files, and root-policy limit violations fail
+closed with recovery instructions. `gc.incus-sandbox/v2` owns packet, file-count,
+per-file, and handoff bounds; existing v1 policy continues committed-source
+preparation but cannot admit dirty migration.
+
+The guest revalidates the packet, constructs fresh private Git metadata in a
+staging directory, restores and verifies the index, worktree, and selected
+untracked state, then atomically exposes the workspace. Import is idempotent by
+migration and state digest; interrupted staging is replaceable, while a
+different completed workspace is never overwritten. The private result and
+handoff stay inside the guest. The single lifecycle event stream records only
+a bounded transfer outcome. Disconnect, timeout, import failure, and
+verification failure retain both source and guest. Cutover records one guest
+as task owner; it does not move a live tmux or provider process and does not
+authorize source cleanup or credential revocation.
+
+No qualified native conversation adapter ships in this decision, so the
+supported continuity mode is a new guest session from the reviewed handoff.
+Future native resume support must extend the discriminated packet and
+validator; it may not copy a provider home or raw history store.
+
+Deletion requires the exact sandbox name as a separate confirmation for every
+guest because the root helper deliberately cannot inspect private work to
+decide whether it is unpublished. Checkout,
 tool installation, hooks, tests, reviewers, builds, Docker use, and publication
 run in the guest. Every guest owns its checkout, Git metadata, home, runtime
 state, credentials, and Docker daemon; host homes, checkouts, credential stores,
@@ -241,7 +281,7 @@ synthetic secret/argv canaries proving the event stream carries none of either.
   capacity claim from the inspected host observations.
 - No reuse of historical dashboard, console, GRC, or workflow telemetry as a VM
   control plane or source of VM health.
-- No dirty-worktree migration, copied Codex credential cache, host GitHub
+- No copied Codex credential cache, host GitHub
   credential, host Docker socket, arbitrary transfer path at the root boundary,
   or host-side fallback for a denied guest publication.
 

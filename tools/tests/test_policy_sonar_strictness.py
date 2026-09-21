@@ -7,6 +7,11 @@ from tools.policy.core import REPO_ROOT
 
 
 class SonarStrictnessContractTest(unittest.TestCase):
+    def test_sandbox_coverage_includes_every_javascript_test_module(self):
+        workflow = (REPO_ROOT / ".github/workflows/sonarcloud.yml").read_text(encoding="utf-8")
+
+        self.assertIn("node --test tools/incus_sandbox/*.test.mjs", workflow)
+
     def test_repository_enforces_zero_open_issues_after_quality_gate(self):
         self.assertEqual(run_sonar_strictness_contract(REPO_ROOT), [])
 

@@ -33,10 +33,11 @@ jobs:
         working-directory: mcp/ground-control
         run: npx --yes c8@10 --reporter=lcovonly --reports-dir=coverage npm test
       - name: Incus sandbox JS coverage (c8 -> lcov)
+        # Keep every sandbox test module in the coverage run as migration features add suites.
         run: >-
           npx --yes c8@10 --reporter=lcovonly
           --reports-dir=tools/incus_sandbox/coverage
-          node --test tools/incus_sandbox/client.test.mjs tools/incus_sandbox/source.test.mjs
+          node --test tools/incus_sandbox/*.test.mjs
       - name: Python coverage (coverage.py -> xml)
         run: |
           python3 -m pip install --user coverage PyYAML
