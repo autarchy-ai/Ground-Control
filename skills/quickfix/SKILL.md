@@ -96,10 +96,17 @@ Render the body with `gc_render_pr_body`, passing `lane: "quickfix"`, no
 requirement UIDs, and `pre_push_reviews: "completed"` only when `--review` ran;
 otherwise pass `"not_run"`. Create the PR with
 `gc_create_synchronized_implement_pr`, passing `lane: "quickfix"` and the
-synchronization record returned by `publish`. That lane input waives the
-review-publication tuple and nothing else; the waiver is refused for a
-requirement-backed issue, so omitting it on the default lane refuses with
-`implement_pr_review_publication_missing`. The body links the issue with `Closes #<issue>`; on an integration
+synchronization record returned by `publish`. The lane input is an assertion, not
+authority (issue #1679): the server reads the branch's lane from the newest
+pickup record it wrote, which Q1 created, and refuses a lane that disagrees with
+`implement_pr_lane_mismatch`. Readiness and finalize apply the same rule.
+
+To take an in-progress `/implement` branch onto this lane - for example when the
+maintainer says to move on without a review - run Q1 on that same branch. The
+server records the switch on the issue, and every later gate reads the new lane
+from there. Nothing else is needed. The waiver covers the
+review-publication tuple and nothing else, and it is refused for a
+requirement-backed issue. The body links the issue with `Closes #<issue>`; on an integration
 branch that is a cross-reference, not the close mechanism.
 
 ### Q6. Monitor once per published head

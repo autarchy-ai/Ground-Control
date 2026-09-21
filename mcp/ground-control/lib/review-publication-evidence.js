@@ -143,9 +143,23 @@ function latestPublicationEvidence(tuples) {
   if (evidence.decision.marker.cycle !== latestConsumedCycle) {
     return { ok: true, published: false };
   }
+  // A v1 tuple names no candidate tree, so nothing ties it to the work being
+  // delivered. It stays readable for audit but cannot authorize a delivery; the
+  // run publishes a current cycle instead (issue #1679).
+  if (evidence.decision.marker.candidate_tree_oid == null) {
+    return { ok: true, published: false,
+      message: "The latest trusted review publication predates revision binding and cannot authorize a delivery. "
+        + "Run and publish a review cycle on the current revision." };
+  }
   return { ok: true, published: true, cycle: evidence.decision.marker.cycle,
     comment_id: evidence.decision.comment.id ?? null,
-    publication_id: evidence.decision.marker.publication_id };
+    publication_id: evidence.decision.marker.publication_id,
+    // Carried, not dropped: the gates below bind a delivery to what was reviewed.
+    revision_digest: evidence.decision.marker.revision_digest,
+    candidate_tree_oid: evidence.decision.marker.candidate_tree_oid,
+    findings_count: evidence.decision.marker.findings_count,
+    // Only the cycle marker records the branch a review ran on.
+    branch: evidence.cycle.marker.branch ?? null };
 }
 
 export async function readTrustedReviewPublicationEvidence(

@@ -56,7 +56,7 @@ Otherwise:
 
 ## Review loop rules (apply to every review phase below)
 
-Every review phase (Codex cross-model, test quality review) follows the **same loop**:
+The Codex cross-model review phase follows this loop:
 
 1. **Invoke the review.**
 2. **Read the FULL output.** Do not stop after the first few findings.
@@ -79,7 +79,7 @@ For every cycle, after applying fixes, commit and push BEFORE re-running the rev
    - `base_branch`: `dev`
    - `pr_number`: the PR number from step 2
 4. The tool returns `{pr_number, finding_count, comments: [{comment_id, thread_id, reviewer, path, line, title, html_url}, ...], reviewers, core_review_text, security_review_text}`. Each comment carries a `reviewer` field (`core` or `security`) so you can triage attention, but the fix/verify loop below is the same regardless. Codex has already posted each finding as an inline PR review comment - you do NOT need to post anything yourself.
-5. If `finding_count` is 0, skip to Phase 5 (Test Quality Review).
+5. If `finding_count` is 0, skip to Phase 6 (Final CI re-verification).
 6. Otherwise, for EACH entry in `comments`, run the following fix/verify loop:
    1. Read the comment body if needed: `gh api /repos/<owner>/<repo>/pulls/comments/<comment_id>`.
    2. Fix the finding locally. Apply the same "fix every finding, no triage, ask user permission if you will not fix" rules from the **Review loop rules** section above.
@@ -92,21 +92,22 @@ For every cycle, after applying fixes, commit and push BEFORE re-running the rev
 
 **Tool shape**: `gc_codex_verify_finding` accepts only `repo_path`, `pr_number`, and `comment_id`. It reads the comment directly from GitHub; do not try to paraphrase the finding or pass additional context through the tool.
 
-## Phase 5: Test Quality Review
+## Phase 5: (retired)
 
-**CRITICAL: You MUST use the Skill tool to invoke the review-tests skill.**
-
-1. Call the Skill tool with `skill="review-tests"` to invoke the test quality review.
-2. Apply the **Review loop rules** above: fix every finding, ask user permission for anything you will not fix (warnings included - there is no triage bucket), re-invoke `skill="review-tests"` after each fix cycle, cap at 5 cycles.
+The dedicated test-quality review was removed by ADR-099, along with its MCP
+tools and the `review-tests` skill this phase used to invoke. Test design is an
+implementation responsibility, checked through the normal implementation,
+targeted-test, CI, SonarCloud and human-review surfaces. The phase number is kept
+so the numbering below does not move.
 
 ## Phase 6: Final CI re-verification
 
-After both review phases (4-5) have reported zero findings (or you have documented user-approved exceptions):
+After the review phase has reported zero findings (or you have documented user-approved exceptions):
 
 1. Verify the branch is pushed with the latest fix commits.
 2. Re-run Phase 2 (CI Monitor) to confirm CI is still green after the review fixes.
 3. Re-run Phase 3 (SonarCloud) - or skip again if `sonarcloud` was null.
-4. If either re-check fails, loop back through the appropriate review phase - the cycle cap (5) applies per review phase, not total.
+4. If either re-check fails, loop back through the review phase - the cycle cap (5) applies to that phase.
 
 ## Phase 7: Report (DO NOT MERGE)
 

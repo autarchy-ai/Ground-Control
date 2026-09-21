@@ -167,7 +167,7 @@ function prepareDeps(overrides = {}) {
     acquireIntegrationLock: lockFake.acquireIntegrationLock,
     lockFake,
     writeHaltLedger: overrides.writeHaltLedger ?? (() => {}),
-    runCiWatcher: overrides.runCiWatcher ?? (async () => ({ conclusion: "skipped" })),
+    runCiWatcher: overrides.runCiWatcher ?? (async () => ({ conclusion: "success" })),
     runSonarWatcher: overrides.runSonarWatcher ?? (async () => ({ conclusion: "skipped" })),
     // Deterministic run ID.
     now: overrides.now ?? (() => 1748000000000),
@@ -237,7 +237,7 @@ function mergeDeps(overrides = {}) {
     acquireIntegrationLock: lockFake.acquireIntegrationLock,
     lockFake,
     writeHaltLedger: overrides.writeHaltLedger ?? (() => {}),
-    runCiWatcher: overrides.runCiWatcher ?? (async () => ({ conclusion: "skipped" })),
+    runCiWatcher: overrides.runCiWatcher ?? (async () => ({ conclusion: "success" })),
     runSonarWatcher: overrides.runSonarWatcher ?? (async () => ({ conclusion: "skipped" })),
     now: overrides.now ?? (() => 1748000000000),
     randomId: overrides.randomId ?? (() => "abc123"),

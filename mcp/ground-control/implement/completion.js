@@ -5,6 +5,7 @@
 
 import { failure, requireField } from "./gate-helpers.js";
 import { mapCompletion } from "./publish.js";
+import { assertDeliveryBindingCurrent, deliveredHeadRefusal, laneClaimRefusal } from "../lib.js";
 
 // Record the delivery handoff against the pull-request head whose required hosted checks
 // were verified, so Phase E can never replay a payload that describes a different tree.
@@ -45,6 +46,56 @@ async function quickfixReadiness(args, deps, action) {
       hosted.next_action ?? "repair_or_wait_for_current_head_hosted_checks",
       { hosted },
     );
+  }
+  // The waiver belongs to the run, not to the call. The branch comes from the pull
+  // request GitHub just reported, so neither side of the check is caller text
+  // (issue #1679).
+  const lane = await deps.readRunLane({
+    repoPath: args.repoPath,
+    issueNumber: args.issueNumber,
+    branchName: hosted.branch,
+  });
+  if (!lane.ok) {
+    return failure(action, lane.error, lane.message, lane.next_action ?? "repair_run_lane_evidence_and_retry", { hosted });
+  }
+  const refusal = laneClaimRefusal(lane, "quickfix");
+  if (refusal) {
+    return failure(
+      action,
+      "readiness_lane_mismatch",
+      refusal.message,
+      "record_readiness_for_the_lane_this_run_was_picked_up_under",
+      { hosted },
+    );
+  }
+  // The waiver relaxes the review and nothing else, so the head being made ready
+  // must still be the head that was synchronized, under a quickfix record
+  // (issue #1679). Without this a commit pushed after PR creation could be bound
+  // to the handoff and finalized unsynchronized.
+  const synced = await deps.readSyncRecord({
+    repoPath: args.repoPath, issueNumber: args.issueNumber, branchName: hosted.branch,
+  });
+  if (!synced?.ok) {
+    return failure(
+      action,
+      synced?.error ?? "readiness_synchronization_unverifiable",
+      synced?.message ?? "The trusted synchronization record for this delivery could not be read.",
+      synced?.next_action ?? "return_to_the_synchronization_boundary",
+      { hosted },
+    );
+  }
+  const headRefusal = deliveredHeadRefusal({
+    record: synced.record, headSha: hosted.head_sha, branchName: hosted.branch, issueNumber: args.issueNumber,
+  });
+  if (headRefusal) {
+    return failure(action, "readiness_delivery_head_unsynchronized", headRefusal,
+      "return_to_the_synchronization_boundary", { hosted });
+  }
+  const bound = assertDeliveryBindingCurrent({
+    record: synced.record, evidence: null, branchName: hosted.branch, lane: "quickfix",
+  });
+  if (!bound.ok) {
+    return failure(action, bound.error, bound.message, bound.next_action, { hosted });
   }
   const handoff = await recordHandoff(args, deps, action, { lane: "quickfix", headSha: hosted.head_sha });
   if (!handoff.ok) return handoff;

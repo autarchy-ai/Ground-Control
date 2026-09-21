@@ -39,7 +39,7 @@ The Codex review loop is a single pre-push pass (Step 6.5) hard-capped per issue
 
 When `workflow.review_disposition.enabled` is true, `gc_review_cap_disposition` may automate the Codex cap-boundary choice after findings are fixed and verified. `proceed` advances to Phase C, `one_more_cycle` authorizes exactly one marker-bound over-cap Codex cycle, and `escalate_to_human` presents the normal binary choice. The hard `max_auto_overrides` ceiling bounds automation; it does not turn a clean verdict into a delivery gate.
 
-The workflow shall have exactly one human touchpoint: PR merge. Plan, review findings, and decisions on findings (fix / wontfix / not-applicable, each with a one-line rationale) shall be recorded as comments on the GitHub issue thread so the durable record survives PR merge/close. Agent silence on a finding is a process violation. `defer` is not a valid decision: all reviewer findings shall be fixed before the PR is presented; deferring a finding violates the workflow contract. All other gates are automated and enforced by the agent toolchain.
+The workflow shall have exactly one *scheduled* human touchpoint: PR merge. Bounded exception-path pauses on a documented pause class (an enforced cycle cap, an unresolved ambiguity, a significant architecture or security decision, unexpectedly material scope expansion, destructive or externally consequential authority, or a hard external dependency) are escalations rather than scheduled gates and do not add a touchpoint (issue #1679). Plan, review findings, and decisions on findings (fix / wontfix / not-applicable, each with a one-line rationale) shall be recorded as comments on the GitHub issue thread so the durable record survives PR merge/close. Agent silence on a finding is a process violation. `defer` is not a valid decision: all reviewer findings shall be fixed before the PR is presented; deferring a finding violates the workflow contract. All other gates are automated and enforced by the agent toolchain.
 
 The requirement-free `/quickfix` lane shall be a thin caller of the shared
 `gc_implement_mechanical` bootstrap, publish, monitor, and post-merge finalize
@@ -48,7 +48,7 @@ before branch mutation. Publish shall retain the configured pre-commit boundary,
 including secret scanning before commit and push. AI review shall be off by
 default; when explicitly requested, exactly one Codex cycle may run and the lane
 shall continue after its findings are fixed without requiring a clean verdict or
-a second cycle. The lane shall run no test-quality review, permit at most one
+a second cycle. The lane shall permit at most one
 automatic Sonar repair and re-analysis round, report rather than recursively
 implement unrelated concerns, and combine its trusted final record and issue
 close in one merge-gated finalizer. It shall record the same neutral delivery

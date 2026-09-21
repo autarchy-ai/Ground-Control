@@ -1,7 +1,94 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { copyFileSync, rmSync, statSync, utimesSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { GIT_OBJECT_ID_RE } from "./codex-workflow.js";
-import { computeReviewDiff } from "./grc-legacy-compat-4.js";
+import { runImplementGit } from "./codex-workflow-2.js";
+import { assertSafeImplementCheckoutConfiguration, computeReviewDiff } from "./grc-legacy-compat-4.js";
 import { execFile } from "./runtime-primitives.js";
+
+/**
+ * The Git tree `git add -A` would stage — exactly what the publish action commits.
+ *
+ * This is the identity that survives the commit, so it is the one a zero-finding
+ * review can authorise (issue #1679). The review digest cannot serve: it binds
+ * the head OID and the uncommitted diff text, both of which necessarily change
+ * once the work is committed.
+ *
+ * Two properties make this staging safe and faithful, and both were review
+ * findings against the first version of it:
+ *
+ * `git add -A` runs configured clean and process filters, so it executes
+ * checkout-controlled code. Every other staging site in the workflow sits behind
+ * the executable-configuration guard; this one must too, on every caller path,
+ * because review reaches it directly and publication reaches it again later
+ * (security-F1). The shared Git helper disables hooks and fsmonitor but not
+ * filters, so the helper alone is not the guard.
+ *
+ * The temporary index is seeded from the repository's **current** index, not from
+ * HEAD. The publisher stages against that index, so a path force-added from an
+ * ignored location is tracked there and is committed; a HEAD-seeded index would
+ * treat it as ignored and drop it, and the candidate tree would then differ from
+ * the delivered tree for content nobody changed (core-F3).
+ *
+ * The caller's own index and working tree are untouched, and no file content
+ * reaches argv.
+ */
+export async function captureCandidateTreeOid(repoRoot, {
+  commandRunner = execFile,
+  assertCheckoutConfiguration = assertSafeImplementCheckoutConfiguration,
+} = {}) {
+  try {
+    await assertCheckoutConfiguration(repoRoot);
+  } catch (error) {
+    throw Object.assign(
+      new Error(`refusing to stage a candidate tree in this checkout: ${error.message}`),
+      { code: "review_checkout_configuration_unsafe" },
+    );
+  }
+  const { stdout: gitDirOut } = await runImplementGit(repoRoot, ["rev-parse", "--absolute-git-dir"], commandRunner);
+  const indexFile = join(tmpdir(), `gc-candidate-tree-${randomBytes(12).toString("hex")}.index`);
+  const run = (argv) => runImplementGit(repoRoot, argv, commandRunner, { GIT_INDEX_FILE: indexFile });
+  try {
+    await seedCandidateIndex(gitDirOut.trim(), indexFile, run);
+    await run(["add", "-A"]);
+    const { stdout } = await run(["write-tree"]);
+    const oid = stdout.trim();
+    if (!GIT_OBJECT_ID_RE.test(oid)) {
+      throw Object.assign(new Error("candidate tree capture did not produce an object id"),
+        { code: "review_candidate_tree_unavailable" });
+    }
+    return oid;
+  } finally {
+    rmSync(indexFile, { force: true });
+    rmSync(`${indexFile}.lock`, { force: true });
+  }
+}
+
+// Git writes its index atomically through a lockfile and rename, so a plain copy
+// reads one whole version of it. A repository that has no index yet has nothing
+// staged, so HEAD is the same starting point.
+//
+// The copy keeps the index's own timestamps. Git re-reads any file modified no
+// earlier than the index was written ("racily clean"), because its stat data
+// cannot tell such an edit apart. A fresh mtime on the copy would switch that
+// check off and miss a same-size edit made within the index's timestamp, so the
+// captured tree would differ from what `git add -A` stages. Date carries whole
+// milliseconds, truncating downward, which can only widen the check.
+async function seedCandidateIndex(gitDir, indexFile, run) {
+  const source = join(gitDir, "index");
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are derived from git rev-parse and a random temp name
+    copyFileSync(source, indexFile);
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- same derived path as the copy above
+    const { atime, mtime } = statSync(source);
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- the random temp name created above
+    utimesSync(indexFile, atime, mtime);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    await run(["read-tree", "HEAD"]);
+  }
+}
 
 function lengthDelimited(parts) {
   return parts.map((part) => {
@@ -13,6 +100,7 @@ function lengthDelimited(parts) {
 export function buildReviewRevision({
   headOid,
   baseOid,
+  candidateTreeOid,
   diffText,
   manifest,
   unreviewedUntrackedPaths = [],
@@ -20,6 +108,9 @@ export function buildReviewRevision({
 }) {
   if (!GIT_OBJECT_ID_RE.test(String(headOid)) || !GIT_OBJECT_ID_RE.test(String(baseOid))) {
     throw new TypeError("review revision requires canonical HEAD and base object ids");
+  }
+  if (!GIT_OBJECT_ID_RE.test(String(candidateTreeOid))) {
+    throw new TypeError("review revision requires the candidate tree object id");
   }
   if (typeof diffText !== "string" || typeof manifest !== "string") {
     throw new TypeError("review revision requires diffText and manifest strings");
@@ -43,6 +134,10 @@ export function buildReviewRevision({
   return {
     head_oid: headOid,
     base_oid: baseOid,
+    // Not folded into `digest`: the digest binds what the reviewers received,
+    // while this binds what a delivery would carry. They are different questions
+    // and the gates ask them separately (issue #1679).
+    candidate_tree_oid: candidateTreeOid,
     digest,
     unreviewed_untracked_paths: paths,
     tracked_symlinks: symlinks,
@@ -65,7 +160,12 @@ export async function captureReviewRevision({
   baseBranch,
   uncommitted,
   reviewDiff = null,
-}, { commandRunner = execFile, computeDiff = computeReviewDiff } = {}) {
+}, {
+  commandRunner = execFile,
+  computeDiff = computeReviewDiff,
+  captureCandidateTree = captureCandidateTreeOid,
+  assertCheckoutConfiguration = assertSafeImplementCheckoutConfiguration,
+} = {}) {
   const capture = async (providedDiff = null) => {
     const beforeHead = await resolveObjectId(repoRoot, ["HEAD"], commandRunner);
     const diff = providedDiff ?? await computeDiff(repoRoot, baseBranch, uncommitted);
@@ -86,6 +186,7 @@ export async function captureReviewRevision({
     return { revision: buildReviewRevision({
       headOid: afterHead,
       baseOid: afterBase,
+      candidateTreeOid: await captureCandidateTree(repoRoot, { commandRunner, assertCheckoutConfiguration }),
       diffText: diff.diffText,
       manifest: diff.manifest,
       unreviewedUntrackedPaths: diff.unreviewedUntrackedPaths,
@@ -95,7 +196,10 @@ export async function captureReviewRevision({
   if (reviewDiff != null) return capture(reviewDiff);
   const first = await capture();
   const second = await capture();
-  if (first.revision.digest !== second.revision.digest) {
+  // The candidate tree is compared too: it is not part of `digest`, and it is the
+  // only identity that notices a change to untracked file *content* (issue #1679).
+  if (first.revision.digest !== second.revision.digest
+    || first.revision.candidate_tree_oid !== second.revision.candidate_tree_oid) {
     throw Object.assign(new Error("review input changed during capture"), { code: "review_revision_changed_during_capture" });
   }
   return second;

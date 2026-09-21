@@ -96,6 +96,9 @@ const syncRecordReader = async () => ({
     recordId: RECORD, issueNumber: ISSUE, branchName: BRANCH, baseBranch: "dev",
     remoteRef: "refs/remotes/origin/dev", preSyncSha: PRE, fetchedBaseSha: BASE,
     outcome: "merged_clean", resultingFeatureSha: RESULT, verifiedTreeSha: TREE,
+    // The delivery binding the record carries (issue #1679). This lane publishes
+    // no review, so it names none.
+    settledTreeSha: TREE, reviewPublicationId: "-", reviewRevisionDigest: "-", lane: "quickfix",
   },
 });
 
@@ -115,6 +118,9 @@ function create(lane, issueBody, deps = {}, reference = undefined) {
     issueThreadReader: async () => ({ ok: true, body: issueBody }),
     syncRecordReader,
     reviewEvidenceReader: async () => ({ ok: true, published: false }),
+    // The lane is derived from the run's own pickup record (issue #1679); each
+    // case states which run it is modelling.
+    laneReader: async () => ({ ok: true, lane: lane === null ? "implement" : lane }),
     ...deps,
   });
 }

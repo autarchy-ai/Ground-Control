@@ -50,7 +50,6 @@ and required CI unless a row says otherwise.
 | Repository identity drift | Configured repository identity matches the canonical tracked identity. | No ambient-repository override. Prevents privileged tools or policy from targeting a sibling repository. |
 | Workflow-routing contract | Advisory stage ids, tiers, and providers match skill/config vocabulary. | Routing may be disabled; malformed enabled config fails. Kept for driver compatibility, never used as gate-result authority. |
 | `/implement` execution contract | Skill/steps retain the immutable principles, ordering, MCP boundaries, and tombstones. | No driver-specific prose escape. Structural scan cost is small and prevents workflow weakening. |
-| Test-quality decision-record contract | Reviewer separation and durable decision-record instructions stay aligned. | Human-authorized dispositions remain explicit; missing anchors fail. |
 | Scan floor | Structural scanners must inspect a non-zero governed surface. | No “green because nothing was scanned” path. This is the common fail-closed floor. |
 | Documentation-coverage anchors | Runtime/config surface changes name current docs and required outcome evidence. | Release PR body exemption does not exempt changed-file documentation coverage. |
 | Sonar strictness | Sonar workflow/config retain strict quality-gate and issue behavior. | Repository without Sonar config is outside this repo's current declaration; malformed config fails. |

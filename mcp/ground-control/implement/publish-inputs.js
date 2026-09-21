@@ -20,10 +20,14 @@ export const SENSITIVE_STAGED_PATH_RE =
 // a credential artifact (issue #1649). Only source extensions are listed, so
 // `credentials.json`, `credentials.yaml` and a bare `credentials` entry stay
 // sensitive; secrets *inside* a source file remain the secret scanner's job.
+// Command-script extensions are deliberately absent (issue #1679): a
+// `credentials.sh` is idiomatically a `source`-me credential loader rather than
+// an application module, and the publisher stages untracked files with
+// `git add -A`, so exempting the basename would carry it into the commit.
 const SOURCE_MODULE_EXTENSIONS = new Set([
   "js", "jsx", "mjs", "cjs", "ts", "tsx", "py", "pyi", "rb", "go",
   "rs", "java", "kt", "kts", "cs", "php", "swift", "scala", "c", "cc",
-  "cpp", "h", "hpp", "sh", "bash",
+  "cpp", "h", "hpp",
 ]);
 function isCredentialSourceModule(basename) {
   const [stem, extension, ...rest] = basename.toLowerCase().split(".");
