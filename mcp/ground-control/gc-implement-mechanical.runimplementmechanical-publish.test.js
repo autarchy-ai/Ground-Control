@@ -1,135 +1,19 @@
 import { _resetAsyncJobsForTest } from "./lib/async-job-registry.js";
-import { beforeEach } from "node:test";
-beforeEach(_resetAsyncJobsForTest);
-// Split from gc-implement-mechanical.test.js under issue #1467 for the 500-LOC limit
-// (docs/CODING_STANDARDS.md). Test bodies are unchanged.
-
-import { describe, it } from "node:test";
+import { beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { runImplementMechanical } from "./gc-implement-mechanical.js";
-import { requestedRequirementUidAuthorization } from "./lib.js";
+import {
+  SHA_A,
+  SHA_B,
+  RECORD_ID,
+  baseDeps,
+  publishExec,
+} from "./gc-implement-mechanical.mechanical-fixtures.js";
 
-const SHA_A = "a".repeat(40);
-
-const SHA_B = "b".repeat(40);
-
-const RECORD_ID = "c".repeat(32);
-
-function context() {
-  return {
-    status: "ok",
-    project: "ground-control",
-    workflow: { base_branch: "dev", completion_command: "make check" },
-  };
-}
-
-function baseDeps(overrides = {}) {
-  const deps = {
-    authorizeRepo: async (path) => ({ ok: true, repoRoot: path }),
-    getContext: async () => context(),
-    prepareBranch: async () => ({
-      ok: true,
-      repo_path: "/repo",
-      branch: "1426-script-phases",
-    }),
-    getIssueThread: async () => ({
-      ok: true,
-      title: "Script phases",
-      body: "## Requirements\n- GC-O007\n",
-      labels: ["enhancement"],
-      comments: [],
-      url: "https://github.test/issues/1426",
-      hash: "thread-hash",
-    }),
-    getRequirement: async (uid) => ({
-      id: `id-${uid}`,
-      uid,
-      title: "Requirement",
-      statement: "The system shall work.",
-      status: "DRAFT",
-      wave: 1,
-    }),
-    getTraceabilityByArtifact: async () => [{ id: "link-1" }],
-    markPickedUp: async () => ({ ok: true, comment_url: "https://github.test/pickup" }),
-    synchronize: async () => ({ ok: true, status: "complete", recordId: RECORD_ID }),
-    remoteSnapshot: async () => ({ ok: true, head_sha: "a".repeat(40), branch: "1426-script-phases", failures: [], passed: true }),
-    // Readiness binds the delivery handoff to the head whose hosted checks it read (#1671).
-    readRemoteGates: async () => ({ ok: true, passed: true, state: "OPEN", head_sha: "a".repeat(40) }),
-    recordDeliveryReadiness: async () => ({ ok: true, record_comment_id: 4242 }),
-    monitorSleep: async () => new Promise((resolve) => setImmediate(resolve)),
-    watchCi: async () => ({ ok: true, conclusion: "success" }),
-    watchSonar: async () => ({
-      ok: true,
-      quality_gate: "OK",
-      issues_summary: { open_count: 0 },
-      hotspots_summary: { open_count: 0 },
-    }),
-    assertCompletion: async ({ phase }) => ({
-      ok: true,
-      phase,
-      readiness_report: phase === "pre_merge" ? "ready" : undefined,
-    }),
-    closeIssue: async () => ({ ok: true, closed: true }),
-    execFile: async () => ({ stdout: "", stderr: "" }),
-    // Mechanical-publish recovery seams (issue #1495): stubbed so the publish
-    // tests exercise staging/commit/sync without touching a real filesystem lease.
-    resolvePublishGitDir: async () => "/repo/.git",
-    acquirePublishLock: async () => async () => {},
-    reconcileInterruptedPublish: async () => ({ proceed: true }),
-    writePublishJournal: () => {},
-    removePublishJournal: () => {},
-  };
-  Object.assign(deps, overrides);
-  // Mirrors the production wiring: the authorizer binds the requested UID to
-  // the same issue thread the rest of the run reads.
-  deps.authorizeRequirementUid ??= async ({ requestedRequirementUid }) => {
-    const thread = await deps.getIssueThread({});
-    return requestedRequirementUidAuthorization(thread.body, requestedRequirementUid);
-  };
-  deps.runGit ??= async (repoRoot, argv, commandRunner) =>
-    commandRunner("git", ["-C", repoRoot, ...argv], { cwd: repoRoot });
-  deps.preCommit ??= async (repoRoot, commandRunner, context) =>
-    commandRunner(
-      "bash",
-      ["-c", context?.workflow?.precommit_command ?? "pre-commit run --hook-stage pre-commit"],
-      { cwd: repoRoot },
-    );
-  return deps;
-}
-
-function publishExec({ paths = ["src/change.js"] } = {}) {
-  const calls = [];
-  return {
-    calls,
-    execFile: async (file, argv) => {
-      calls.push([file, ...argv]);
-      if (file === "git" && argv.includes("--show-current")) {
-        return { stdout: "1426-script-phases\n", stderr: "" };
-      }
-      if (file === "git" && argv.includes("-z")) {
-        if (argv.includes("--cached") || argv.includes("--others")) {
-          return { stdout: "", stderr: "" };
-        }
-        return { stdout: paths.map((path) => `${path}\0`).join(""), stderr: "" };
-      }
-      if (file === "git" && argv.includes("--cached") && argv.includes("--name-only")) {
-        return { stdout: paths.join("\n"), stderr: "" };
-      }
-      return { stdout: "", stderr: "" };
-    },
-  };
-}
-
-function completionInput() {
-  return {
-    requirements: [],
-    files: { modified: ["src/change.js"] },
-    reviews: [{ reviewer: "review-cycle", summary: "passed" }],
-    ci_status: "green",
-    sonar_status: "passed",
-    plain_english_outcome: "Mechanical workflow stages now run without model turns.",
-  };
-}
+beforeEach(_resetAsyncJobsForTest);
+// Split from gc-implement-mechanical.test.js under issue #1467 for the 500-LOC
+// limit (docs/CODING_STANDARDS.md); shared fixtures extracted under #1692. Test
+// bodies are unchanged.
 
 describe("runImplementMechanical publish", () => {
   it("refuses an unauthorized checkout before any Git or hook command", async () => {
@@ -431,78 +315,5 @@ describe("runImplementMechanical publish", () => {
     assert.equal(resumed.ok, true);
     assert.equal(completionCall.action, "complete");
     assert.equal(completionCall.recordId, RECORD_ID);
-  });
-});
-
-describe("runImplementMechanical monitor and completion", () => {
-  it("waits for CI and Sonar and returns compact successful status", async () => {
-    const result = await runImplementMechanical({
-      action: "monitor",
-      repoPath: "/repo",
-      issueNumber: 1426,
-      branchName: "1426-script-phases",
-      prNumber: 99,
-    }, baseDeps());
-
-    assert.equal(result.ok, true);
-    assert.equal(result.ci_status, "green");
-    assert.equal(result.sonar_status, "passed");
-  });
-
-  it("starts Sonar concurrently with CI and returns an actionable failure", async () => {
-    let sonarCalls = 0;
-    const result = await runImplementMechanical({
-      action: "monitor",
-      repoPath: "/repo",
-      issueNumber: 1426,
-      branchName: "1426-script-phases",
-      prNumber: 99,
-    }, baseDeps({
-      remoteSnapshot: async () => ({ ok: true, head_sha: "a".repeat(40), branch: "1426-script-phases", failures: [], passed: true }),
-    monitorSleep: async () => new Promise((resolve) => setImmediate(resolve)),
-    watchCi: async () => ({ ok: true, conclusion: "failure", log_summary: "lint failed" }),
-      watchSonar: async () => {
-        sonarCalls += 1;
-        return { ok: true, skipped: true };
-      },
-    }));
-
-    assert.equal(result.agent_required, true);
-    assert.equal(result.failed_stage, "ci");
-    assert.equal(sonarCalls, 1);
-  });
-
-  it("runs post-merge close without waiting on additional hosted actions", async () => {
-    const calls = [];
-    const deps = baseDeps({
-      watchCi: async () => { throw new Error("finalize must not wait for post-merge CI"); },
-      watchSonar: async () => { throw new Error("finalize must not wait for post-merge Sonar"); },
-      assertCompletion: async ({ phase }) => {
-        calls.push(phase);
-        return { ok: true, readiness_report: "ready", head_sha: "a".repeat(40) };
-      },
-      closeIssue: async () => {
-        calls.push("close");
-        return { ok: true, closed: true };
-      },
-    });
-    const readiness = await runImplementMechanical({
-      action: "readiness",
-      repoPath: "/repo",
-      issueNumber: 1426,
-      prNumber: 99,
-      completion: completionInput(),
-    }, deps);
-    const finalized = await runImplementMechanical({
-      action: "finalize",
-      repoPath: "/repo",
-      issueNumber: 1426,
-      prNumber: 99,
-      completion: completionInput(),
-    }, deps);
-
-    assert.equal(readiness.ok, true);
-    assert.equal(finalized.ok, true);
-    assert.deepEqual(calls, ["pre_merge", "post_merge", "close"]);
   });
 });
