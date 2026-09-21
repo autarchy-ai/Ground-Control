@@ -35,6 +35,20 @@ describe("Phase E workflow template", () => {
     assert.equal(PHASE_E_WORKFLOW_PATH, ".github/workflows/ground-control-phase-e.yml");
   });
 
+  // Consumer repositories install this template, and their finalizer runs bind to a pull
+  // request through the number it puts in the run name — the merged-pull-request trigger
+  // supplies no association (issue #1683). GitHub uses the pull-request TITLE when
+  // `run-name:` is absent, so a template that lost this line would quietly make
+  // attacker-authored text the binding evidence in every repository that installed it.
+  it("carries the run name both triggers bind through", () => {
+    const runName = renderPhaseEWorkflow("2.5.1")
+      .split("\n")
+      .find((line) => line.startsWith("run-name:"));
+    assert.ok(runName, "the template must set an explicit run name");
+    assert.match(runName, /github\.event\.pull_request\.number/);
+    assert.match(runName, /inputs\.pr/);
+  });
+
   it("pins an exact grndctl version rather than a moving tag", () => {
     const rendered = renderPhaseEWorkflow("2.5.1");
     assert.match(rendered, /npx --yes grndctl@2\.5\.1 finalize-merged-pr/);

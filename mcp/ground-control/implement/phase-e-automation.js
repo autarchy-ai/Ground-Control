@@ -198,6 +198,10 @@ export async function runAutomatedPhaseE({ repoPath, prNumber, automationRunId =
     pr_number: prNumber,
     lane: readiness.record.lane,
     already_reported: finalized.completion?.already_reported === true,
-    closed: finalized.close?.closed === true || finalized.close?.already_closed === true,
+    // The terminal state, not whether this call did the closing. `runCloseIssueAfterMerge`
+    // reports that as `already_closed` and returns no `closed` field at all, so reading one
+    // made a successful close report `closed: false` — true only when the run did nothing
+    // (issue #1683). Its ok:true means the issue is closed either way.
+    closed: finalized.close?.ok === true,
   };
 }

@@ -23,7 +23,13 @@ from .core import REPO_ROOT, Violation
 WORKFLOW_PATH = Path(".github/workflows/ground-control-phase-e.yml")
 TRUST_ANCHOR_PATH = Path("mcp/ground-control/lib/automation-provenance.js")
 MERGE_GUARD = "github.event.pull_request.merged == true"
-RUN_NAME_RE = re.compile(r"^run-name:.*inputs\.pr", re.MULTILINE)
+# Both halves, because both triggers bind through the run name. The merged-pull-request run
+# never carries a `pull_requests` association (issue #1683), so the number in this line is
+# the binding evidence, and GitHub substitutes the pull-request title when `run-name:` is
+# absent — a half-pinned expression is a path from attacker-authored text to a trusted bind.
+RUN_NAME_RE = re.compile(
+    r"^run-name:(?=.*github\.event\.pull_request\.number)(?=.*inputs\.pr)", re.MULTILINE
+)
 HEAD_REFERENCE_RE = re.compile(r"pull_request\.head\.(?:sha|ref)")
 WRITE_PERMISSION_RE = re.compile(r"^\s*([a-z-]+):\s*write\s*$", re.MULTILINE)
 
@@ -121,7 +127,10 @@ def _run_name_violations(text: str) -> list[Violation]:
         _violation(
             "phase-e-workflow-run-name",
             "The Phase E workflow must name the pull request it finalizes.",
-            ["`run-name:` must include the dispatch input, or a dispatch run binds to nothing"],
+            [
+                "`run-name:` must carry both `github.event.pull_request.number` and "
+                "`inputs.pr`, or a run of that trigger binds to nothing"
+            ],
         )
     ]
 

@@ -116,11 +116,31 @@ class PhaseEAutomationContractTest(unittest.TestCase):
         )
 
     def test_dropping_the_run_name_binding_is_reported(self) -> None:
-        """A dispatch run is bound to its pull request only through the run name."""
+        """A run is bound to its pull request through the run name when GitHub supplies no
+        association, which for the merged-pull-request trigger is always."""
         drifted = "\n".join(
             line for line in self.workflow_text.splitlines() if not line.startswith("run-name:")
         )
         self.assertIn("phase-e-workflow-run-name", self._codes_for(drifted))
+
+    def test_a_run_name_missing_either_half_of_the_expression_is_reported(self) -> None:
+        """Both triggers bind through the run name, so both halves have to be pinned.
+
+        Issue #1683: the merged-pull-request trigger never carries a `pull_requests`
+        association, so `github.event.pull_request.number` is load-bearing evidence, not a
+        convenience. GitHub uses the pull-request title when `run-name:` is absent, so a
+        half-pinned expression is a path from attacker-authored text to a trusted binding.
+        """
+        for replacement in (
+            "run-name: Ground Control Phase E for PR ${{ inputs.pr }}",
+            "run-name: Ground Control Phase E for PR ${{ github.event.pull_request.number }}",
+        ):
+            with self.subTest(replacement=replacement):
+                drifted = "\n".join(
+                    replacement if line.startswith("run-name:") else line
+                    for line in self.workflow_text.splitlines()
+                )
+                self.assertIn("phase-e-workflow-run-name", self._codes_for(drifted))
 
     def test_unparseable_workflow_is_reported_distinctly(self) -> None:
         """A broken file is a different problem from a missing one."""
