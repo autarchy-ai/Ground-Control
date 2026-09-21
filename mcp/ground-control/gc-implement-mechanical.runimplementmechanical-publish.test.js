@@ -327,11 +327,19 @@ describe("runImplementMechanical publish", () => {
     assert.ok(git.calls.some(([file, ...argv]) => file === "git" && argv.includes("push")));
   });
 
-  // A credential basename is sensitive as an artifact, not as source code (#1649).
+  // A credential basename is sensitive as an artifact, not as source code (#1649);
+  // a `credential(s)` directory name alone no longer marks a source file sensitive
+  // (#1692), but a non-source artifact under one, and a secret directory, still do.
   for (const [path, refused] of [
     [".env.local", true],
     ["config/credentials.json", true],
-    ["app/credentials/credentials.py", true],
+    // A non-source artifact under a `credentials` directory is still a credential
+    // location; a recognized source module under one is ordinary code (#1692).
+    ["config/credentials/prod.json", true],
+    ["app/credentials/credentials.py", false],
+    ["frontend/src/features/credentials/AccessCredentialsPage.tsx", false],
+    // A source module inside a secret directory stays sensitive by location.
+    ["app/.secret/token_loader.ts", true],
     // A shell script named `credentials.sh` is a credential loader far more often
     // than it is an ordinary module, and `git add -A` would stage it untracked.
     ["scripts/credentials.sh", true],
