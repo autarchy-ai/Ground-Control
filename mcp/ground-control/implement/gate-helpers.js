@@ -3,7 +3,7 @@
 // The module had reached 1,231 lines against the repo's 500-LOC limit
 // (docs/CODING_STANDARDS.md). gc-implement-mechanical.js remains the tool entry point.
 
-import { detectSensitiveBodyContent, extractInScopeRequirementUids, requestedRequirementUidAuthorization } from "../lib.js";
+import { currentPickupLane, detectSensitiveBodyContent, extractInScopeRequirementUids, getAuthenticatedGitHubLogin, requestedRequirementUidAuthorization } from "../lib.js";
 import { z } from "zod";
 
 export { execFile as execFileAsync } from "../lib/runtime-primitives.js";
@@ -168,12 +168,18 @@ async function loadIssueRequirementContext(args, deps, context, requirementUids,
 // or a bounded failure envelope; both carry `ok`, so the caller branches on it.
 async function ensureIssuePickup(args, deps, thread, branch, action) {
   const lane = args.lane === "quickfix" ? "quickfix" : "implement";
-  const pickupAlreadyRecorded = (thread.comments ?? []).some((comment) =>
-    typeof comment?.body === "string"
-    && comment.body.includes(`Picked up by /${lane}`)
-    && comment.body.includes(`\`${branch}\``),
+  // The run's lane is the lane of the newest pickup this server wrote for the
+  // branch, so a pickup is reused only when that newest record already names the
+  // requested lane. Anything else - no record, a record by someone else, or a
+  // record in the other lane - writes a fresh one, which is how a switch between
+  // lanes is recorded on the issue before it takes effect (issue #1679).
+  const login = await (deps.authenticatedLogin ?? getAuthenticatedGitHubLogin)(args.repoPath);
+  const current = currentPickupLane(
+    (thread.comments ?? []).map((comment) => ({ id: comment?.id, body: comment?.body, authorLogin: comment?.author })),
+    login,
+    branch,
   );
-  if (pickupAlreadyRecorded) {
+  if (current === lane) {
     return { ok: true, reused: true };
   }
   const pickup = await deps.markPickedUp({

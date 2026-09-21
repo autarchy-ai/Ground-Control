@@ -16,7 +16,7 @@ describe("gc_integration_manager — Sonar watcher mapping", () => {
     return prepareDeps({
       prs: prs ?? [makePr(1)],
       yaml: yaml ?? validYaml(),
-      runCiWatcher: async () => ({ conclusion: "skipped" }),
+      runCiWatcher: async () => ({ conclusion: "success" }),
       runSonarWatcher: fakeSonarWatcher,
     });
   }

@@ -43,13 +43,18 @@ function commitReqRepo(uid, content) {
 // the REST issue timeline and PR record (PR merged, merge_commit_sha=<oid>, base ref), the issue body
 // (with a Requirements section), an empty comments page, and the final-report POST.
 function writeGhShim(dir, { oid, issueBody, issueNumber, comments = [] }) {
+  // The branch a run works on is named for its issue, and completion binds to the
+  // head that was synchronized on it (issue #1679).
+  const branchName = `${issueNumber}-branch`;
   const restPull = restPullRequest({
     number: 42, state: "MERGED", mergedAt: "2026-09-03T00:00:00Z", baseRefName: "dev", mergeCommitOid: oid,
+    headRefName: branchName,
   });
-  const provenance = `schema="gc.review-publication/v1" publication="${"a".repeat(64)}" original="${"b".repeat(64)}" revision="${"c".repeat(64)}" sanitized="${"d".repeat(64)}"`;
+  const provenance = `schema="gc.review-publication/v2" publication="${"a".repeat(64)}" original="${"b".repeat(64)}" revision="${"c".repeat(64)}" sanitized="${"d".repeat(64)}" tree="${"1".repeat(40)}" findings="0"`;
   const publication = [
     { id: 8997, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:review-publication stage="findings" reviewer="codex" issue="${issueNumber}" cycle="1" ${provenance} -->\n\n**gc_codex_review** — sanitized deferred publication` },
-    { id: 8998, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:codex-prepush-cycle issue="${issueNumber}" branch="x" cycle="1" ${provenance} -->\n\n_gc_codex_review pre-push cycle 1 complete` },
+    { id: 8998, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:codex-prepush-cycle issue="${issueNumber}" branch="${branchName}" cycle="1" ${provenance} -->\n\n_gc_codex_review pre-push cycle 1 complete` },
+    { id: 8996, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:implement-base-sync schema="gc.implement.remote-base-sync/v2" record="${"4".repeat(32)}" issue="${issueNumber}" branch="${branchName}" base="dev" source="refs/remotes/origin/dev" pre="${"e".repeat(40)}" fetched="${"f".repeat(40)}" outcome="merged_clean" result="${"a".repeat(40)}" verified="${"5".repeat(40)}" settled="${"1".repeat(40)}" review="${"a".repeat(64)}" revision="${"c".repeat(64)}" lane="implement" -->` },
     { id: 8999, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:decision-record reviewer="codex" cycle="1" issue="${issueNumber}" ${provenance} -->\n\n## Review decision record — codex cycle 1` },
   ];
   const cfg = { oid, issueBody, issueNumber, restPull, comments: [...comments, ...publication] };

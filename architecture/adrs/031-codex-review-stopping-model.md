@@ -8,6 +8,49 @@ Proposed
 
 2026-05-09
 
+> **Amended by issue #1679 (2026-09-21):** A publication now names the delivery
+> it can authorize, and `wontfix` authority is verified rather than asserted.
+> The review revision gains a **candidate tree**: the Git tree `git add -A` would
+> stage, captured through a temporary index seeded from the repository's current
+> index, which is exactly what the publish action commits and therefore the one
+> identity that survives the commit. Seeding from HEAD instead would drop a path
+> force-added from an ignored location, which the publisher does commit. Because
+> staging runs configured clean and process filters, the capture applies the same
+> executable-Git-configuration guard the other staging paths use, on every caller
+> path; this is the first operation on the review path that reads untracked file
+> contents rather than only their names. The
+> publication marker family moves to `gc.review-publication/v2`, carrying that
+> tree and the cycle's finding count alongside the existing digests; v1 markers
+> stay readable for audit but cannot authorize a delivery.
+> `readTrustedReviewPublicationEvidence` surfaces the revision digest, candidate
+> tree, finding count and reviewed branch instead of discarding them, and the
+> synchronization record carries the binding forward. Enforcement is placed where
+> the evidence to enforce it exists: the **tree** binding is checked at the
+> synchronization boundary and again at PR creation, which are the two points
+> that hold the settled tree, and **both completion phases** check that the
+> authorizing review ran on the branch the pull request delivers and record the
+> revision it covered. Recording a binding is not checking one - the first
+> version of this change reported the fields at completion without comparing
+> them, which left a publication from another branch acceptable. The binding is
+> asymmetric on purpose: a **zero-finding**
+> cycle had nothing to repair, so the delivered tree must be the tree it read,
+> while a **finding-bearing** cycle is expected to be followed by repairs under
+> ADR-099, so its settled tree is recorded without claiming Codex reviewed it.
+> Requiring equality in both cases would reverse ADR-099 into a clean-verdict
+> requirement. Separately, a `wontfix` disposition is accepted only when
+> `user_authorization` resolves to an issue comment on this repository and issue
+> whose body is exactly `/ground-control authorize-review-wontfix <finding-id>`,
+> the same shape the repository already uses for execution-obligation wontfix.
+> Finding ids are positional and recur in every cycle, so the approval is bound to
+> its review run by time rather than by anything the person types: it counts only
+> for a review run already under way when it was posted, and an older approval
+> can never close a newer run's finding. The direct
+> decision-record surface has no review run to bind a `wontfix` to and refuses
+> it; such dispositions are recorded through `gc_publish_review_result`. The
+> authorizing comment's author must have effective write permission, and the
+> check runs at the repository boundary before the first publication write. The cap, severity
+> rubric, and stopping semantics are unchanged.
+
 > **Amended by issue #1632 (2026-09-18):** Executing a deferred review does not
 > consume a cycle. The cycle is consumed only when the exact reviewed revision's
 > sanitized record is published, after the server proves a complete one-to-one

@@ -14,7 +14,7 @@ import {
   writeSync,
 } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { GIT_OBJECT_ID_RE } from "./codex-workflow.js";
 import { validateDecisionRecordInput } from "./decision-records.js";
 import { REVIEW_FAILURE_CAUSES } from "./review-failure-diagnostics.js";
@@ -23,7 +23,7 @@ import {
   DECISION_RECORD_DECISIONS,
   rejectReservedMarkerSequence,
 } from "./repo-vocabulary.js";
-export { buildReviewRevision, captureReviewRevision } from "./review-revision.js";
+export { buildReviewRevision, captureCandidateTreeOid, captureReviewRevision } from "./review-revision.js";
 
 export const REVIEW_RESULT_SCHEMA = "gc.review-result/v1";
 export const REVIEW_HANDLE_RE = /^rvw_[0-9a-f]{48}$/;
@@ -134,6 +134,8 @@ function validateRevision(revision) {
   return revision != null
     && GIT_OBJECT_ID_RE.test(String(revision.head_oid))
     && GIT_OBJECT_ID_RE.test(String(revision.base_oid))
+    // The identity a zero-finding review authorises for delivery (issue #1679).
+    && GIT_OBJECT_ID_RE.test(String(revision.candidate_tree_oid))
     && /^[0-9a-f]{64}$/.test(String(revision.digest))
     && Array.isArray(revision.unreviewed_untracked_paths)
     && revision.unreviewed_untracked_paths.every((path) => validBoundedString(path, 4096))
@@ -264,9 +266,16 @@ function reviewResultDirectory(gitDir) {
   return directory;
 }
 
+// The handle arrives as a tool argument, so it is validated as the exact string
+// used to build the path (a non-string could stringify differently twice), and
+// the resolved path must still sit directly inside the results directory.
 function recordPath(gitDir, handle) {
-  if (!REVIEW_HANDLE_RE.test(String(handle))) throw Object.assign(new Error("invalid review handle"), { code: "review_result_handle_invalid" });
-  return join(reviewResultDirectory(gitDir), `${handle}.json`);
+  const invalid = () => Object.assign(new Error("invalid review handle"), { code: "review_result_handle_invalid" });
+  if (typeof handle !== "string" || !REVIEW_HANDLE_RE.test(handle)) throw invalid();
+  const directory = reviewResultDirectory(gitDir);
+  const path = resolve(directory, `${handle}.json`);
+  if (!path.startsWith(`${directory}${sep}`)) throw invalid();
+  return path;
 }
 
 function assertRegularTarget(path) {

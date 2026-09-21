@@ -190,22 +190,48 @@ describe("runImplementMechanical bootstrap", () => {
     assert.equal(pickupCalls, 1);
   });
 
+  // The pickup record is what the trusted lane reader derives a run's lane from,
+  // so reuse must key on a record this server actually wrote, parsed exactly
+  // (issue #1679, core-F5).
+  const serverPickup = (lane, branch, author = "gc-bot") => ({
+    author,
+    body: `🛠️ Picked up by /${lane} - driver codex, branch \`${branch}\`, 2026-09-21T00:00:00.000Z.`,
+  });
+
+  async function bootstrapWithComments(comments, { lane, onPickup }) {
+    return runImplementMechanical({
+      action: "bootstrap",
+      repoPath: "/repo",
+      invocationRoot: "/repo",
+      issueNumber: 1426,
+      branchName: "1426-script-phases",
+      driver: "codex",
+      ...(lane ? { lane } : {}),
+    }, baseDeps({
+      getIssueThread: async () => ({ ok: true, title: "Script phases", body: "", comments }),
+      authenticatedLogin: async () => "gc-bot",
+      markPickedUp: async () => { onPickup(); return { ok: true }; },
+    }));
+  }
+
   it("does not duplicate an existing pickup record for the same branch", async () => {
     let pickupCalls = 0;
-    const deps = baseDeps({
-      getIssueThread: async () => ({
-        ok: true,
-        title: "Script phases",
-        body: "",
-        comments: [{
-          body: "Picked up by /implement on branch `1426-script-phases`",
-        }],
-      }),
-      markPickedUp: async () => {
-        pickupCalls += 1;
-        return { ok: true };
-      },
-    });
+    const result = await bootstrapWithComments(
+      [serverPickup("implement", "1426-script-phases")],
+      { onPickup: () => { pickupCalls += 1; } },
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.pickup.reused, true);
+    assert.equal(pickupCalls, 0);
+  });
+
+  // Issue #1679: the run's lane is the newest pickup this server wrote for the
+  // branch. When the maintainer says to move on without a review, the agent
+  // bootstraps the same branch as /quickfix, and that must write a record - it is
+  // the only place the switch is recorded before any gate reads it.
+  it("records a switch from /implement to /quickfix on the same branch", async () => {
+    let pickupLane = null;
     const result = await runImplementMechanical({
       action: "bootstrap",
       repoPath: "/repo",
@@ -213,12 +239,66 @@ describe("runImplementMechanical bootstrap", () => {
       issueNumber: 1426,
       branchName: "1426-script-phases",
       driver: "codex",
-    }, deps);
+      lane: "quickfix",
+    }, baseDeps({
+      getIssueThread: async () => ({
+        ok: true, title: "Script phases", body: "",
+        comments: [{ id: 1, ...serverPickup("implement", "1426-script-phases") }],
+      }),
+      authenticatedLogin: async () => "gc-bot",
+      markPickedUp: async (input) => { pickupLane = input.lane; return { ok: true }; },
+    }));
 
     assert.equal(result.ok, true);
-    assert.equal(result.pickup.reused, true);
+    assert.equal(pickupLane, "quickfix", "the switch must be written, not folded into the old record");
+  });
+
+  it("reuses the pickup when the branch's newest record is already this lane", async () => {
+    let pickupCalls = 0;
+    const result = await runImplementMechanical({
+      action: "bootstrap",
+      repoPath: "/repo",
+      invocationRoot: "/repo",
+      issueNumber: 1426,
+      branchName: "1426-script-phases",
+      driver: "codex",
+      lane: "quickfix",
+    }, baseDeps({
+      getIssueThread: async () => ({
+        ok: true, title: "Script phases", body: "",
+        comments: [
+          { id: 1, ...serverPickup("implement", "1426-script-phases") },
+          { id: 2, ...serverPickup("quickfix", "1426-script-phases") },
+        ],
+      }),
+      authenticatedLogin: async () => "gc-bot",
+      markPickedUp: async () => { pickupCalls += 1; return { ok: true }; },
+    }));
+
+    assert.equal(result.ok, true);
     assert.equal(pickupCalls, 0);
   });
+
+  for (const [label, comments] of [
+    ["prose that merely quotes the pickup text", [{
+      author: "someone-else",
+      body: "Picked up by /implement on branch `1426-script-phases` — is this still going?",
+    }]],
+    ["an exact record posted by somebody other than this server", [
+      serverPickup("implement", "1426-script-phases", "someone-else"),
+    ]],
+    ["this server's record for a different branch", [
+      serverPickup("implement", "1426-other-branch"),
+    ]],
+  ]) {
+    it(`still writes an attributable record when the thread carries ${label}`, async () => {
+      let pickupCalls = 0;
+      const result = await bootstrapWithComments(comments, { onPickup: () => { pickupCalls += 1; } });
+
+      assert.equal(result.ok, true);
+      assert.equal(pickupCalls, 1, "without its own record the lane can never be derived");
+    });
+  }
 
   for (const [label, uid, expected] of [
     ["an invalid", "DSL-437; rm -rf /", "implement_requested_requirement_uid_invalid"],

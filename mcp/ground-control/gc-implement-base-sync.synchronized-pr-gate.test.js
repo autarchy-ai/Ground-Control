@@ -30,6 +30,27 @@ const RECORD = "4".repeat(32);
 
 const TREE = "5".repeat(40);
 
+// Issue #1679: the gate re-checks that the recorded review publication is still
+// the one the issue carries, ran on this branch, and — for a zero-finding review
+// — still names the tree being delivered.
+const REVIEW_EVIDENCE = {
+  ok: true,
+  published: true,
+  cycle: 1,
+  comment_id: 12,
+  publication_id: "a".repeat(64),
+  revision_digest: "c".repeat(64),
+  candidate_tree_oid: TREE,
+  findings_count: 0,
+  branch: BRANCH,
+};
+const DELIVERY_BINDING = {
+  settledTreeSha: TREE,
+  reviewPublicationId: REVIEW_EVIDENCE.publication_id,
+  reviewRevisionDigest: REVIEW_EVIDENCE.revision_digest,
+  lane: "implement",
+};
+
 function renderedPrBody() {
   return [
     "## Summary", "", "summary", "",
@@ -202,7 +223,8 @@ describe("synchronized PR gate", () => {
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
-      reviewEvidenceReader: async () => ({ ok: true, published: true }),
+      reviewEvidenceReader: async () => REVIEW_EVIDENCE,
+      laneReader: async () => ({ ok: true, lane: "implement" }),
       syncRecordReader: async () => ({
         ok: true,
         record: {
@@ -217,6 +239,7 @@ describe("synchronized PR gate", () => {
           outcome: "merged_clean",
           resultingFeatureSha: RESULT,
           verifiedTreeSha: TREE,
+          ...DELIVERY_BINDING,
         },
       }),
     });
@@ -240,6 +263,7 @@ describe("synchronized PR gate", () => {
       commandRunner: async (command, args) => { calls.push([command, args]); return { stdout: "" }; },
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
+      laneReader: async () => ({ ok: true, lane: "implement" }),
       reviewEvidenceReader: async () => ({ ok: true, published: false }),
     });
     assert.equal(result.ok, false);
@@ -283,7 +307,8 @@ describe("synchronized PR gate", () => {
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
-      reviewEvidenceReader: async () => ({ ok: true, published: true }),
+      reviewEvidenceReader: async () => REVIEW_EVIDENCE,
+      laneReader: async () => ({ ok: true, lane: "implement" }),
       syncRecordReader: async () => ({
         ok: true,
         record: {
@@ -297,6 +322,7 @@ describe("synchronized PR gate", () => {
           outcome: "merged_clean",
           resultingFeatureSha: RESULT,
           verifiedTreeSha: TREE,
+          ...DELIVERY_BINDING,
         },
       }),
     });
@@ -349,7 +375,8 @@ describe("synchronized PR gate", () => {
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
-      reviewEvidenceReader: async () => ({ ok: true, published: true }),
+      reviewEvidenceReader: async () => REVIEW_EVIDENCE,
+      laneReader: async () => ({ ok: true, lane: "implement" }),
       syncRecordReader: async () => ({
         ok: true,
         record: {
@@ -363,6 +390,7 @@ describe("synchronized PR gate", () => {
           outcome: "already_current",
           resultingFeatureSha: RESULT,
           verifiedTreeSha: TREE,
+          ...DELIVERY_BINDING,
         },
       }),
     });
@@ -407,7 +435,8 @@ describe("synchronized PR gate", () => {
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
-      reviewEvidenceReader: async () => ({ ok: true, published: true }),
+      reviewEvidenceReader: async () => REVIEW_EVIDENCE,
+      laneReader: async () => ({ ok: true, lane: "implement" }),
       syncRecordReader: async () => ({
         ok: true,
         record: {
@@ -421,6 +450,7 @@ describe("synchronized PR gate", () => {
           outcome: "merged_clean",
           resultingFeatureSha: RESULT,
           verifiedTreeSha: TREE,
+          ...DELIVERY_BINDING,
         },
       }),
     });

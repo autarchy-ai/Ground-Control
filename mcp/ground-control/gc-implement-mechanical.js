@@ -11,6 +11,8 @@ import {
   runGetIssueThread,
   runSynchronizeImplementBranch,
   runWatchCiRun,
+  resolveTrustedRunLane,
+  resolveLatestTrustedImplementSyncRecord,
   runWatchSonarAnalysis,
   runAssertCompletion,
   runCloseIssueAfterMerge,
@@ -134,6 +136,11 @@ const defaultDeps = {
   // completion payload to the head whose hosted checks it just read.
   readRemoteGates: readRemoteGateSnapshot,
   recordDeliveryReadiness: runRecordDeliveryReadiness,
+  // Which lane this run actually belongs to, from the server's own pickup record
+  // rather than the caller's argument (issue #1679).
+  readRunLane: resolveTrustedRunLane,
+  // The synchronization record quickfix readiness binds its head to (issue #1679).
+  readSyncRecord: resolveLatestTrustedImplementSyncRecord,
   // Mechanical-publish recovery seams (issue #1495). Injected so tests can stub
   // the filesystem lease/journal while production holds the real per-worktree lease.
   resolvePublishGitDir,

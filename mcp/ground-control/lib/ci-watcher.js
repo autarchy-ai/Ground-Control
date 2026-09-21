@@ -10,6 +10,14 @@ import { authorizeWatcherRepoRead } from "./watcher-repo-authorization.js";
 import { buildCiWatchGhArgs } from "./doc-coverage.js";
 import { execFile } from "./runtime-primitives.js";
 
+// GitHub run selection compares `headSha` by exact equality, so a CI head
+// identity is the provider's full 40-character SHA-1 - never a Git abbreviation
+// that local Git would happily resolve. Deliberately separate from the
+// repository's generic `GIT_OBJECT_ID_RE`, which also admits 64-character
+// SHA-256 object ids: a future GitHub object-format change gets this one seam
+// rather than a hunt through every caller (issue #1679).
+export const GITHUB_HEAD_SHA_RE = /^[0-9a-f]{40}$/;
+
 export async function _resolveBranchHeadSha(repoRoot, repoSlug, branch) {
   // The branch tip, read from GitHub rather than from the newest run gh
   // reports. The newest run is exactly what cannot be trusted here: right after
@@ -74,6 +82,31 @@ export function selectCiRunsForHeadSha(runs, headSha) {
     return [];
   }
   return runs.filter((run) => run?.headSha === headSha);
+}
+
+// The run ids GitHub currently lists for the bound head. Returns a failure
+// envelope instead of ids when the lookup itself could not answer, so an
+// unobservable head can never read as an empty - and therefore passing - set.
+async function discoverRunIdsForHead({ resolveRuns, repoRoot, repoSlug, branch, boundHeadSha }) {
+  let listed;
+  try {
+    listed = await resolveRuns(repoRoot, repoSlug, branch, boundHeadSha);
+  } catch (e) {
+    return {
+      ok: false,
+      error: "ci_watch_run_lookup_failed",
+      message: e?.message ?? "gh run list failed",
+      branch,
+      head_sha: boundHeadSha,
+    };
+  }
+  return {
+    ok: true,
+    ids: listed
+      .map((run) => (typeof run.databaseId === "number" ? run.databaseId : null))
+      .filter((id) => id !== null),
+    listedCount: listed.length,
+  };
 }
 
 export async function runWatchCiRun({
@@ -173,7 +206,26 @@ export async function runWatchCiRun({
   let boundHeadSha = typeof expectedHeadSha === "string" && expectedHeadSha.length > 0
     ? expectedHeadSha
     : null;
-  if (runId !== null && runId !== undefined) {
+  // An abbreviation never matches a listed run, so accepting one only ever
+  // produced a misleading "no run registered" refusal further down. Name the
+  // real problem at the boundary instead (issue #1679).
+  if (boundHeadSha !== null && !GITHUB_HEAD_SHA_RE.test(boundHeadSha)) {
+    return {
+      ok: false,
+      error: "ci_watch_head_sha_invalid",
+      message:
+        "expected_head_sha must be a full 40-character GitHub commit SHA; "
+        + "run selection compares GitHub's headSha by exact equality",
+      branch,
+    };
+  }
+  // Discovery stays open for this long so a workflow that registers after the
+  // first one still joins the watch (ADR-091; issue #1679). A pinned run_id
+  // watches exactly that run and opens no discovery window.
+  const registrationSeconds = Math.min(runRegistrationTimeoutSeconds, totalTimeoutSeconds);
+  const discoveryDeadlineMs = startMs + registrationSeconds * 1000;
+  const pinnedRun = runId !== null && runId !== undefined;
+  if (pinnedRun) {
     watchedRunIds = [runId];
   } else {
     if (boundHeadSha === null) {
@@ -191,7 +243,7 @@ export async function runWatchCiRun({
     // Failing closed is the point: with no commit to bind to there is no run
     // set this watch could honestly report on. The shape is checked because a
     // lookup that answered with something other than a commit did not answer.
-    if (typeof boundHeadSha !== "string" || !/^[0-9a-f]{7,40}$/.test(boundHeadSha)) {
+    if (typeof boundHeadSha !== "string" || !GITHUB_HEAD_SHA_RE.test(boundHeadSha)) {
       return {
         ok: false,
         error: "ci_watch_head_sha_unresolved",
@@ -202,27 +254,20 @@ export async function runWatchCiRun({
     // GitHub registers a push's runs seconds to minutes after the push, so an
     // empty set means "not yet", not "never". Wait, bounded by the smaller of
     // the registration cap and what is left of the total cap.
-    const registrationSeconds = Math.min(runRegistrationTimeoutSeconds, totalTimeoutSeconds);
-    const registrationDeadline = startMs + registrationSeconds * 1000;
-    let selected = [];
+    let listedCount = 0;
     while (true) {
-      try {
-        selected = await resolveRuns(repoRoot, repoSlug, branch, boundHeadSha);
-      } catch (e) {
-        return {
-          ok: false,
-          error: "ci_watch_run_lookup_failed",
-          message: e?.message ?? "gh run list failed",
-          branch,
-          head_sha: boundHeadSha,
-        };
-      }
-      if (selected.length > 0) break;
-      const remainingMs = registrationDeadline - now();
+      const discovered = await discoverRunIdsForHead({
+        resolveRuns, repoRoot, repoSlug, branch, boundHeadSha,
+      });
+      if (!discovered.ok) return discovered;
+      watchedRunIds = discovered.ids;
+      listedCount = discovered.listedCount;
+      if (listedCount > 0) break;
+      const remainingMs = discoveryDeadlineMs - now();
       if (remainingMs <= 0) break;
       await sleep(Math.min(pollIntervalSeconds * 1000, remainingMs));
     }
-    if (selected.length === 0) {
+    if (listedCount === 0) {
       return {
         ok: false,
         error: "ci_watch_no_run_for_head_sha",
@@ -233,9 +278,6 @@ export async function runWatchCiRun({
         head_sha: boundHeadSha,
       };
     }
-    watchedRunIds = selected
-      .map((run) => (typeof run.databaseId === "number" ? run.databaseId : null))
-      .filter((id) => id !== null);
     if (watchedRunIds.length === 0) {
       return {
         ok: false,
@@ -248,7 +290,27 @@ export async function runWatchCiRun({
   }
   const firstQueuedObservedMs = new Map();
   let observed = [];
+  // A pinned run_id watches exactly that run and opens no discovery window.
+  let discoveryClosed = pinnedRun;
   while (true) {
+    // Re-list while the registration window is open so a workflow that
+    // registered after the first one joins the watch rather than being reported
+    // on by silence (ADR-091; issue #1679).
+    if (!discoveryClosed) {
+      // Read the clock before the listing: the window closes on a listing taken
+      // at or after the deadline, never on the clock alone. Stopping at the
+      // deadline would drop a run that registered between the previous poll and
+      // it - inside the window the watch promised to cover (core-F2).
+      const atOrPastDeadline = now() >= discoveryDeadlineMs;
+      const discovered = await discoverRunIdsForHead({
+        resolveRuns, repoRoot, repoSlug, branch, boundHeadSha,
+      });
+      if (!discovered.ok) return discovered;
+      for (const id of discovered.ids) {
+        if (!watchedRunIds.includes(id)) watchedRunIds.push(id);
+      }
+      if (atOrPastDeadline) discoveryClosed = true;
+    }
     observed = [];
     for (const id of watchedRunIds) {
       let snapshot;
@@ -296,7 +358,12 @@ export async function runWatchCiRun({
     // read as another run's stuck queue (issue #1581).
     const pending = observed.filter((run) => run.snapshot?.status !== "completed");
     if (pending.length === 0) {
-      break;
+      // Every run *so far* is green. That is not the head's verdict until the
+      // registration window has closed over the whole set (issue #1679); a
+      // failure still returns above without waiting.
+      if (discoveryClosed) break;
+      await sleep(Math.min(pollIntervalSeconds * 1000, Math.max(1, discoveryDeadlineMs - nowMs)));
+      continue;
     }
     let timedOut = null;
     for (const run of pending) {

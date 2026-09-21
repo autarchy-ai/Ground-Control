@@ -10,6 +10,7 @@ import { REVIEW_NOTES_MAX, REVIEW_VERDICTS } from "./grc-legacy-compat-5.js";
 import { checkVerdictBlockingConsistency } from "./grc-legacy-compat.js";
 import { DECISION_RECORD_CLASSIFICATIONS, DECISION_RECORD_DECISIONS, DECISION_RECORD_REVIEWERS, GITHUB_ISSUE_COMMENT_BODY_MAX, buildDecisionRecordMarker, rejectReservedMarkerSequence } from "./repo-vocabulary.js";
 import { execFile } from "./runtime-primitives.js";
+import { verifyReviewWontfixAuthorizations } from "./review-wontfix-authorization.js";
 
 function validateDecisionHeader({ issueNumber, cycle, reviewer, verdict, architectural_read }) {
   const errors = [];
@@ -89,13 +90,14 @@ function validateFindingDecision(f, i) {
     errors.push(`findings[${i}].rationale must be a non-empty string`);
   }
   // `wontfix` requires explicit user authorization per ADR-029 — the agent
-  // cannot self-authorize closing a finding as wontfix. Require a non-empty
-  // user_authorization field that quotes the user's approval (a URL to the
-  // issue-thread comment authorizing it, or a verbatim quote with an
-  // issue/comment id). Validated at the tool boundary so the durable record
-  // cannot carry a `wontfix` without evidence of authorization.
+  // cannot self-authorize closing a finding as wontfix. This is the shape check;
+  // the authority check runs at the repository boundary in
+  // verifyReviewWontfixAuthorizations, because whether a string is authorization
+  // is a fact about the issue thread, not about the string (issue #1679).
+  // Validated at the tool boundary so the durable record cannot carry a
+  // `wontfix` without evidence of authorization.
   if (f.decision === "wontfix" && (typeof f.user_authorization !== "string" || f.user_authorization.trim() === "")) {
-    errors.push(`findings[${i}].decision='wontfix' requires a non-empty user_authorization field (URL to the issue-thread comment OR a verbatim quote with the comment id)`);
+    errors.push(`findings[${i}].decision='wontfix' requires a user_authorization field: the URL of a repository writer's exact '/ground-control authorize-review-wontfix ${f.id ?? "<finding-id>"}' comment on this issue`);
   }
   return errors;
 }
@@ -322,7 +324,8 @@ export function prepareDecisionRecordBody({ issueNumber, cycle, reviewer, findin
 }
 
 export async function runPostDecisionRecord(
-  { repoPath, issueNumber, cycle, reviewer, findings, verdict, architectural_read, notes, provenance = null },
+  { repoPath, issueNumber, cycle, reviewer, findings, verdict, architectural_read, notes, provenance = null,
+    reviewStartedAt = null },
   { workspaceAuthorizationResolver = undefined } = {},
 ) {
   const prepared = prepareDecisionRecordBody({ issueNumber, cycle, reviewer, findings,
@@ -334,6 +337,15 @@ export async function runPostDecisionRecord(
     return issueRepositoryNotAuthorized("decision_record", repository, { issue_number: issueNumber });
   }
   const { repoRoot, owner, name } = repository;
+  // The publication path verifies this before its first write; a direct caller
+  // reaches the same gate here, so neither surface can record a self-authorized
+  // `wontfix` (issue #1679).
+  // Publication passes when the retained run began; the direct tool has no run,
+  // so a `wontfix` arriving there is refused rather than bound to nothing.
+  const authorized = await verifyReviewWontfixAuthorizations({
+    repoRoot, owner, name, issueNumber, reviewStartedAt, findings,
+  });
+  if (!authorized.ok) return { ...authorized, issue_number: issueNumber };
   let apiResponse = null;
   try {
     const { stdout } = await execFile(

@@ -144,27 +144,22 @@ the colon per issue #1593 (no compound `security/docs:` prefixes)
 and a lowercase-leading subject (`^[a-z].*$`, uppercase acronyms reshaped).
 The body renderer and the title validator are independent concerns living in
 the same Step 9; the renderer is an MCP tool, the title rule is a local
-predicate the agent re-applies on every reshape.** Step 6.5 calls `gc_post_decision_record` for every cycle; **Step 6.6
-calls `gc_test_quality_review`** (per #884 v2; the prior `Skill("review-tests")`
-boundary returned prose findings that the autoregressive parent agent
-kept echoing back to the user instead of fixing in-turn, defeating the
-SKILL.md prose rule; the MCP tool returns a structured envelope with
-`next_action` that the agent reads as a directive). Issue #906 moved this
-call pre-push (former Step 13 → new Step 6.6) so the PR opens with both
-AI-assisted reviewers clean; the same #906 amendment dropped the default
-pre-push cap for both reviewers from 3 to 1, configurable per repo via
-`workflow.codex_review.pre_push_cap` and `workflow.test_quality_review.pre_push_cap`.
-The MCP tool itself is unchanged; only its workflow placement and default
-cap value shifted. After Step 6.6's
-cycle the parent calls `gc_post_decision_record` with the
-`fix`/`wontfix`/`not-applicable` dispositions (cycle counter, durable
-record); a clean cycle is the structured advance-to-Phase-C signal once
-that post returns `ok: true` (the string was `..._advance_to_step_14`
-before issue #906 collapsed Step 14 into Step 10's existing CI watch;
-new MCP envelope returns `..._advance_to_phase_c`). See
-`architecture/notes/test-quality-review-engine.md` for the full MCP
-tool mechanism (claude CLI exec, `ANTHROPIC_API_KEY` strip / OAuth,
-cycle markers, failure modes). Step 19 calls `gc_post_final_report`.
+predicate the agent re-applies on every reshape.** Step 6.5 publishes every
+retained review with `gc_publish_review_result`, which posts the findings,
+cycle, and decision records with the `fix`/`wontfix`/`not-applicable`
+dispositions (cycle counter, durable record); a clean cycle is the structured
+advance-to-Phase-C signal once that publication returns `ok: true`. A `wontfix`
+is accepted only there, because only a published review names the run its
+authorization must postdate (ADR-031, issue #1679). Step 19 calls
+`gc_post_final_report`.
+
+> **Superseded in part by ADR-099 (2026-09-17), corrected here for issue #1679.**
+> This paragraph previously directed Step 6.6 to call `gc_test_quality_review`
+> and described `workflow.test_quality_review.pre_push_cap` as live
+> configuration. The dedicated test-quality reviewer, its MCP tools, its
+> configuration block, its marker family and Step 6.6 were all removed; the text
+> above now describes only what exists. The routing and durable-record contract
+> this ADR establishes is otherwise unchanged.
 
 ### Telemetry contract
 
@@ -377,11 +372,12 @@ which loops execute**.
      decision the cycle tool can record without user authorization). A
      subagent that has obtained user authorization for a wontfix calls
      `gc_post_decision_record` directly with the override AFTER the cycle.
-   - `gc_test_quality_review_cycle`: same shape as the codex wrapper, for
-     test-quality reviews. Both cycle wrappers share one parameterized
-     internal seam (`_runReviewCycleShared`) parameterized by reviewer and
-     cap source; there is exactly one cycle implementation, not one per
-     reviewer.
+   - `gc_test_quality_review_cycle` *(removed by ADR-099; retained here as a
+     record of what this ADR originally decided, not as a live tool)*: same
+     shape as the codex wrapper, for test-quality reviews. Both cycle wrappers
+     shared one parameterized internal seam (`_runReviewCycleShared`)
+     parameterized by reviewer and cap source; there was exactly one cycle
+     implementation, not one per reviewer.
    - `gc_watch_ci_run`: server-side GitHub Actions poller. Replaces the
      per-poll agent turn cost of /implement Step 10. Returns one terminal
      envelope `{conclusion, failed_steps[], log_summary}` after the run

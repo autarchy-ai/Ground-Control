@@ -19,7 +19,8 @@ function retainedFailure() {
     branch: "1632-review-failure",
     baseBranch: "dev",
     revision: buildReviewRevision({
-      headOid: "a".repeat(40), baseOid: "b".repeat(40),
+      headOid: "a".repeat(40),
+      candidateTreeOid: "d".repeat(40), baseOid: "b".repeat(40),
       diffText: "diff", manifest: "manifest",
     }),
     coverage: { complete: false },

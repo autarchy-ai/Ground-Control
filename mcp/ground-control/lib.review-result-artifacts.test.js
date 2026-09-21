@@ -24,6 +24,7 @@ function tempGitDir() {
 function revision(overrides = {}) {
   return buildReviewRevision({
     headOid: HEAD,
+    candidateTreeOid: "d".repeat(40),
     baseOid: BASE,
     diffText: "diff --git a/a.js b/a.js\n+const secretName = true;",
     manifest: "1\t0\ta.js",
@@ -140,6 +141,23 @@ describe("retained review-result artifacts (#1632)", () => {
     } finally {
       rmSync(gitDir, { recursive: true, force: true });
       rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  // The handle is a tool argument. Only the exact handle string may name a file,
+  // so a value that validates as one string and stringifies as another, or that
+  // tries to leave the results directory, never reaches the filesystem.
+  it("reads only by an exact handle string that stays inside the results directory", () => {
+    const gitDir = tempGitDir();
+    try {
+      const handle = `rvw_${"f".repeat(48)}`;
+      let reads = 0;
+      const shifting = { toString: () => (reads++ === 0 ? handle : "../../outside") };
+      assert.equal(readReviewResult(gitDir, shifting).error, "review_result_handle_invalid");
+      assert.equal(reads, 0, "a non-string handle is refused before it is stringified");
+      assert.equal(readReviewResult(gitDir, `../${handle}`).error, "review_result_handle_invalid");
+    } finally {
+      rmSync(gitDir, { recursive: true, force: true });
     }
   });
 
@@ -264,7 +282,9 @@ describe("retained review-result artifacts (#1632)", () => {
       return { stdout: `${BASE}\n` };
     };
     await assert.rejects(
-      captureReviewRevision({ repoRoot: "/repo", baseBranch: "dev", uncommitted: true, reviewDiff: diff }, { commandRunner: movingRef }),
+      captureReviewRevision({ repoRoot: "/repo", baseBranch: "dev", uncommitted: true, reviewDiff: diff }, {
+        commandRunner: movingRef, assertCheckoutConfiguration: async () => {},
+      }),
       (error) => error.code === "review_revision_changed_during_capture",
     );
 
@@ -274,6 +294,7 @@ describe("retained review-result artifacts (#1632)", () => {
       captureReviewRevision({ repoRoot: "/repo", baseBranch: "dev", uncommitted: true }, {
         commandRunner: stableRefs,
         computeDiff: async () => ({ ...diff, diffText: `diff-${++diffReads}` }),
+        assertCheckoutConfiguration: async () => {},
       }),
       (error) => error.code === "review_revision_changed_during_capture",
     );

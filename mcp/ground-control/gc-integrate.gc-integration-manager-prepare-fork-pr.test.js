@@ -175,7 +175,7 @@ describe("gc_integration_manager — prepare mixed queue fork and same-repo", ()
       acquireIntegrationLock: lockFake.acquireIntegrationLock,
       lockFake,
       writeHaltLedger: () => {},
-      runCiWatcher: async () => ({ conclusion: "skipped" }),
+      runCiWatcher: async () => ({ conclusion: "success" }),
       runSonarWatcher: async () => ({ conclusion: "skipped" }),
       now: () => 1748000000000,
       randomId: () => "abc123",
@@ -236,7 +236,7 @@ describe("gc_integration_manager — prepare watcher ordering: push before watch
       writeHaltLedger: () => {},
       runCiWatcher: async () => {
         callOrder.push("ci_watcher");
-        return { conclusion: "skipped" };
+        return { conclusion: "success" };
       },
       runSonarWatcher: async () => {
         callOrder.push("sonar_watcher");

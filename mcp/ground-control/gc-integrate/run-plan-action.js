@@ -179,6 +179,10 @@ async function rebasedHeadSha(tmpRef, worktreePath, execFile) {
 }
 
 // CI conclusions that block a PR, with the record each one produces.
+// `unverified` is the watcher declining to answer for the bound head, or
+// answering with a run that observed nothing. GC-O011(c) requires the CI signal
+// to be watched before a PR is ready, so it blocks rather than passing as a
+// skip (issue #1679).
 const CI_BLOCKERS = {
   queued_too_long: {
     failure_class: "ci_queued_too_long",
@@ -188,6 +192,19 @@ const CI_BLOCKERS = {
   timed_out: {
     failure_class: "ci_timed_out",
     summary: "CI run did not complete within the configured total timeout",
+    next_action: "check_ci_run",
+  },
+  unverified: {
+    failure_class: "ci_unverified_for_head",
+    summary: "CI was not observed for this pull request's head commit",
+    next_action: "check_ci_run",
+  },
+  // The production adapter no longer emits this, but the hook contract still
+  // carries the value; a gate that requires observation must refuse it at both
+  // layers rather than relying on one of them.
+  skipped: {
+    failure_class: "ci_unverified_for_head",
+    summary: "CI was not observed for this pull request's head commit",
     next_action: "check_ci_run",
   },
 };
@@ -232,12 +249,14 @@ async function runReadinessWatchers(pr, ctx, deps, cfg) {
   }
   const ciBlocker = CI_BLOCKERS[ciResult.conclusion];
   if (ciBlocker) {
+    const cause = ciResult.reason ? ` (watcher reported ${ciResult.reason})` : "";
     return {
       pr_number: pr.pr_number,
       outcome: "blocked",
       failure_class: ciBlocker.failure_class,
-      summary: safeSummary(ciBlocker.summary),
+      summary: safeSummary(`${ciBlocker.summary}${cause}`),
       next_action: ciBlocker.next_action,
+      ...(ciResult.head_sha ? { ci_head_sha: ciResult.head_sha } : {}),
     };
   }
 

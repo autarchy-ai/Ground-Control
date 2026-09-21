@@ -26,6 +26,27 @@ const RECORD = "4".repeat(32);
 
 const TREE = "5".repeat(40);
 
+// Issue #1679: synchronization is where a delivery is bound to the review that
+// authorized it. A zero-finding review authorizes exactly the tree it read, so
+// the fixture names that tree; the lane comes from the run's pickup record.
+const REVIEW_EVIDENCE = {
+  ok: true,
+  published: true,
+  cycle: 1,
+  comment_id: 12,
+  publication_id: "a".repeat(64),
+  revision_digest: "c".repeat(64),
+  candidate_tree_oid: TREE,
+  findings_count: 0,
+  branch: BRANCH,
+};
+const deliveryBindingDeps = {
+  reviewEvidenceReader: async () => REVIEW_EVIDENCE,
+  laneReader: async () => ({ ok: true, lane: "implement" }),
+  // No earlier synchronization on this branch; the settlement is derived fresh.
+  latestSyncRecordReader: async () => ({ ok: true, record: null }),
+};
+
 async function workspaceAuthorization() {
   const [gitDir, gitCommonDir, origin] = await Promise.all([
     execFile("git", ["-C", REPO_ROOT, "rev-parse", "--absolute-git-dir"]),
@@ -136,6 +157,7 @@ describe("pre-PR implement synchronization", () => {
     const { calls, runner } = completeRunner();
     const result = await runSynchronizeImplementBranch(completeInput(), {
       workspaceAuthorizationResolver: workspaceAuthorization,
+      ...deliveryBindingDeps,
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
@@ -154,6 +176,7 @@ describe("pre-PR implement synchronization", () => {
     const { calls, runner } = completeRunner();
     const result = await runSynchronizeImplementBranch(completeInput(), {
       workspaceAuthorizationResolver: workspaceAuthorization,
+      ...deliveryBindingDeps,
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader("## Requirements\n- DSL-437\n- DSL-438\n"),
@@ -177,6 +200,7 @@ describe("pre-PR implement synchronization", () => {
       requestedRequirementUid: "DSL-437; rm -rf /",
     }, {
       workspaceAuthorizationResolver: workspaceAuthorization,
+      ...deliveryBindingDeps,
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
@@ -225,6 +249,7 @@ describe("pre-PR implement synchronization", () => {
       requestedRequirementUid: "OTHER-999",
     }, {
       workspaceAuthorizationResolver: workspaceAuthorization,
+      ...deliveryBindingDeps,
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
@@ -261,6 +286,7 @@ describe("pre-PR implement synchronization", () => {
     };
     const result = await runSynchronizeImplementBranch(completeInput(), {
       workspaceAuthorizationResolver: workspaceAuthorization,
+      ...deliveryBindingDeps,
       commandRunner: runner,
       contextResolver: async () => context(),
     });
@@ -284,6 +310,7 @@ describe("pre-PR implement synchronization", () => {
       action: "start",
     }, {
       workspaceAuthorizationResolver: workspaceAuthorization,
+      ...deliveryBindingDeps,
       commandRunner: async (command, args) => {
         calls.push([command, args]);
         return { stdout: "" };
@@ -337,6 +364,12 @@ describe("pre-PR implement synchronization", () => {
       outcome: "merged_clean",
       resultingFeatureSha: RESULT,
       verifiedTreeSha: TREE,
+      // An existing record must match field for field, including the delivery
+      // binding it now carries (issue #1679).
+      settledTreeSha: TREE,
+      reviewPublicationId: REVIEW_EVIDENCE.publication_id,
+      reviewRevisionDigest: REVIEW_EVIDENCE.revision_digest,
+      lane: "implement",
     };
     const result = await runSynchronizeImplementBranch({
       repoPath: REPO_ROOT,
@@ -349,6 +382,7 @@ describe("pre-PR implement synchronization", () => {
       outcome: "merged_clean",
     }, {
       workspaceAuthorizationResolver: workspaceAuthorization,
+      ...deliveryBindingDeps,
       commandRunner: runner,
       contextResolver: async () => context(),
       syncRecordReader: async () => ({
@@ -394,6 +428,7 @@ describe("pre-PR implement synchronization", () => {
       requestedRequirementUid: "DSL-437",
     }, {
       workspaceAuthorizationResolver: workspaceAuthorization,
+      ...deliveryBindingDeps,
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
@@ -411,6 +446,10 @@ describe("pre-PR implement synchronization", () => {
           outcome: "merged_clean",
           resultingFeatureSha: RESULT,
           verifiedTreeSha: TREE,
+          settledTreeSha: TREE,
+          reviewPublicationId: REVIEW_EVIDENCE.publication_id,
+          reviewRevisionDigest: REVIEW_EVIDENCE.revision_digest,
+          lane: "implement",
         },
         commentId: 100,
         commentUrl: "https://github.com/autarchy-ai/Ground-Control/issues/1421#issuecomment-100",
