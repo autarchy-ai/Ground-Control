@@ -24,6 +24,7 @@ _MAX_PACKET_BYTES = 1024 * 1024 * 1024
 _MAX_FILE_COUNT = 2048
 _MAX_FILE_BYTES = 64 * 1024 * 1024
 _MAX_HANDOFF_BYTES = 64 * 1024
+_INVALID_SECTION_BOUNDS = "migration section bounds are invalid"
 
 
 def canonical_json(value: object) -> bytes:
@@ -59,11 +60,11 @@ def _section_bounds(raw: dict[str, object], role: object, cursor: int) -> tuple[
     offset, length, digest = raw.get("offset"), raw.get("length"), raw.get("sha256")
     max_length = _MAX_PACKET_BYTES if role == "bundle" else _MAX_FILE_BYTES
     if not isinstance(offset, int) or not isinstance(length, int):
-        raise MigrationError("migration section bounds are invalid")
+        raise MigrationError(_INVALID_SECTION_BOUNDS)
     if offset != cursor or not 0 <= length <= max_length:
-        raise MigrationError("migration section bounds are invalid")
+        raise MigrationError(_INVALID_SECTION_BOUNDS)
     if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
-        raise MigrationError("migration section bounds are invalid")
+        raise MigrationError(_INVALID_SECTION_BOUNDS)
     return offset, length, digest
 
 
@@ -119,9 +120,8 @@ def _entry_identity(item: object, role: str, previous: str) -> tuple[dict[str, o
     expected = {"path", "deleted"} if deleted else {"path", "mode", "section"}
     if set(item) != expected:
         raise MigrationError("migration entry fields are invalid")
-    if deleted:
-        if role == "untracked":
-            raise MigrationError("an untracked entry cannot be deleted")
+    if deleted and role == "untracked":
+        raise MigrationError("an untracked entry cannot be deleted")
     return item, path, deleted
 
 

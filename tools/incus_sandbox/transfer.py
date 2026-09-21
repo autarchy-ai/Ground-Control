@@ -23,6 +23,7 @@ _BOOTSTRAP = "/usr/local/lib/gc-incus-sandbox/guest-bootstrap.py"
 _MIGRATION = "/usr/local/lib/gc-incus-sandbox/migration.py"
 _MIGRATION_PACKET = "/usr/local/lib/gc-incus-sandbox/migration_packet.py"
 _GUEST_HOME = "/home/sandbox"
+_PRIVATE_FILE_MODE = "--mode=0644"
 _MAX_PACKET_BYTES = 1024 * 1024 * 1024
 _MAX_METADATA_BYTES = 8 * 1024 * 1024
 
@@ -138,11 +139,11 @@ def transfer_commands(project: str, sandbox: str, packet_path: str) -> list[list
         [_INCUS, "file", "push", _BOOTSTRAP, f"{sandbox}{bootstrap}", "--project", project,
          "--mode=0755"],
         [_INCUS, "file", "push", _MIGRATION, f"{sandbox}{migration}", "--project", project,
-         "--mode=0644"],
+         _PRIVATE_FILE_MODE],
         [_INCUS, "file", "push", _MIGRATION_PACKET, f"{sandbox}{migration_packet}", "--project", project,
-         "--mode=0644"],
+         _PRIVATE_FILE_MODE],
         [_INCUS, "file", "push", packet_path, f"{sandbox}{packet}", "--project", project,
-         "--mode=0644"],
+         _PRIVATE_FILE_MODE],
         [_INCUS, "exec", sandbox, "--project", project, "--", "su", "-", "sandbox", "-c",
          f"exec /usr/bin/python3 {bootstrap} {packet} {_GUEST_HOME}/workspace {sandbox}"],
     ]

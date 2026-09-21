@@ -298,10 +298,11 @@ def _publish_result(transfer_dir: Path, result_path: Path, ready_path: Path,
     _fsync_directory(transfer_dir)
 
 
-def _recover_workspace(metadata: dict[str, Any], payload: bytes, workspace: Path, transfer_dir: Path,
+def _recover_workspace(metadata: dict[str, Any], payload: bytes, workspace: Path,
                        result_path: Path, ready_path: Path, handoff: dict[str, str],
                        result: dict[str, object]) -> dict[str, object]:
     """Verify and finish publication for an already-exposed workspace."""
+    transfer_dir = result_path.parent
     existing = _read_json(result_path) if result_path.exists() else None
     if _matches_identity(existing, metadata):
         _verify_entries(metadata, payload, workspace)
@@ -361,7 +362,7 @@ def restore_migration(packet: bytes, workspace: Path, transfer_dir: Path, sandbo
     result = _migration_result(metadata, handoff, sandbox)
     if workspace.exists():
         return _recover_workspace(
-            metadata, payload, workspace, transfer_dir, result_path, ready_path, handoff, result,
+            metadata, payload, workspace, result_path, ready_path, handoff, result,
         )
     _stage_workspace(metadata, payload, workspace, transfer_dir, ready_path)
     _publish_result(transfer_dir, result_path, ready_path, handoff, result)
