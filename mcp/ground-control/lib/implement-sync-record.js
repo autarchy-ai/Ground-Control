@@ -66,67 +66,70 @@ function baseSyncSchemaVersion(schema) {
   return null;
 }
 
-export function parseImplementBaseSyncMarkers(commentBodies, issueNumber) {
-  const records = [];
-  const markerRe = /<!--\s*gc:implement-base-sync\s+([^>]*?)-->/g;
-  for (const body of Array.isArray(commentBodies) ? commentBodies : []) {
-    if (typeof body !== "string") continue;
-    let match;
-    while ((match = markerRe.exec(body)) !== null) {
-      const attrs = {};
-      const attrRe = /([a-z]+)="([^"]*)"/g;
-      let attr;
-      while ((attr = attrRe.exec(match[1])) !== null) attrs[attr[1]] = attr[2];
-      const parsedIssue = Number.parseInt(attrs.issue ?? "", 10);
-      const schemaVersion = baseSyncSchemaVersion(attrs.schema);
-      const commonValid = schemaVersion != null
-        && parsedIssue === issueNumber
-        && /^[0-9a-f]{32}$/.test(attrs.record ?? "")
-        && validateImplementBranchName(attrs.branch, issueNumber).ok === true
-        && isSafeGitRefName(attrs.base)
-        && attrs.source === `refs/remotes/origin/${attrs.base}`
-        && GIT_OBJECT_ID_RE.test(attrs.pre ?? "")
-        && GIT_OBJECT_ID_RE.test(attrs.fetched ?? "")
-        && IMPLEMENT_BASE_SYNC_OUTCOMES.includes(attrs.outcome)
-        && GIT_OBJECT_ID_RE.test(attrs.result ?? "")
-        && GIT_OBJECT_ID_RE.test(attrs.verified ?? "");
-      // v1 carries none of the binding attributes and must carry none; v2 requires
-      // all of them. A well-formed v1 record stays `valid` so it does not poison a
-      // read of the whole thread - it simply cannot authorize a delivery, which the
-      // reader enforces when it selects one (issue #1679, core-F4).
-      const bindingValid = schemaVersion === 1
-        ? ["settled", "review", "revision", "lane"].every((key) => attrs[key] === undefined)
-        : GIT_OBJECT_ID_RE.test(attrs.settled ?? "")
-          && isSyncPublicationField(attrs.review)
-          && isSyncPublicationField(attrs.revision)
-          && RUN_LANE_VALUES.has(attrs.lane);
-      if (!commonValid || !bindingValid) {
-        records.push({ valid: false, raw: match[0] });
-        continue;
-      }
-      records.push({
-        valid: true,
-        schemaVersion,
-        recordId: attrs.record,
-        issueNumber: parsedIssue,
-        branchName: attrs.branch,
-        baseBranch: attrs.base,
-        remoteRef: attrs.source,
-        preSyncSha: attrs.pre,
-        fetchedBaseSha: attrs.fetched,
-        outcome: attrs.outcome,
-        resultingFeatureSha: attrs.result,
-        verifiedTreeSha: attrs.verified,
-        ...(schemaVersion === 1 ? {} : {
-          settledTreeSha: attrs.settled,
-          reviewPublicationId: attrs.review,
-          reviewRevisionDigest: attrs.revision,
-          lane: attrs.lane,
-        }),
-      });
-    }
+function readMarkerAttributes(text) {
+  const attrs = {};
+  for (const [, key, value] of text.matchAll(/([a-z]+)="([^"]*)"/g)) attrs[key] = value;
+  return attrs;
+}
+
+function commonSyncFieldsValid(attrs, schemaVersion, issueNumber) {
+  return schemaVersion != null
+    && Number.parseInt(attrs.issue ?? "", 10) === issueNumber
+    && /^[0-9a-f]{32}$/.test(attrs.record ?? "")
+    && validateImplementBranchName(attrs.branch, issueNumber).ok === true
+    && isSafeGitRefName(attrs.base)
+    && attrs.source === `refs/remotes/origin/${attrs.base}`
+    && IMPLEMENT_BASE_SYNC_OUTCOMES.includes(attrs.outcome)
+    && ["pre", "fetched", "result", "verified"].every((key) => GIT_OBJECT_ID_RE.test(attrs[key] ?? ""));
+}
+
+// v1 carries none of the binding attributes and must carry none; v2 requires
+// all of them. A well-formed v1 record stays `valid` so it does not poison a
+// read of the whole thread - it simply cannot authorize a delivery, which the
+// reader enforces when it selects one (issue #1679, core-F4).
+function bindingSyncFieldsValid(attrs, schemaVersion) {
+  if (schemaVersion === 1) return ["settled", "review", "revision", "lane"].every((key) => attrs[key] === undefined);
+  return GIT_OBJECT_ID_RE.test(attrs.settled ?? "")
+    && isSyncPublicationField(attrs.review)
+    && isSyncPublicationField(attrs.revision)
+    && RUN_LANE_VALUES.has(attrs.lane);
+}
+
+// The record a marker's attributes describe, or null when they do not validate.
+function parseImplementBaseSyncMarker(attributeText, issueNumber) {
+  const attrs = readMarkerAttributes(attributeText);
+  const schemaVersion = baseSyncSchemaVersion(attrs.schema);
+  if (!commonSyncFieldsValid(attrs, schemaVersion, issueNumber) || !bindingSyncFieldsValid(attrs, schemaVersion)) {
+    return null;
   }
-  return records;
+  return {
+    valid: true,
+    schemaVersion,
+    recordId: attrs.record,
+    issueNumber,
+    branchName: attrs.branch,
+    baseBranch: attrs.base,
+    remoteRef: attrs.source,
+    preSyncSha: attrs.pre,
+    fetchedBaseSha: attrs.fetched,
+    outcome: attrs.outcome,
+    resultingFeatureSha: attrs.result,
+    verifiedTreeSha: attrs.verified,
+    ...(schemaVersion === 1 ? {} : {
+      settledTreeSha: attrs.settled,
+      reviewPublicationId: attrs.review,
+      reviewRevisionDigest: attrs.revision,
+      lane: attrs.lane,
+    }),
+  };
+}
+
+export function parseImplementBaseSyncMarkers(commentBodies, issueNumber) {
+  const markerRe = /<!--\s*gc:implement-base-sync\s+([^>]*?)-->/g;
+  return (Array.isArray(commentBodies) ? commentBodies : [])
+    .filter((body) => typeof body === "string")
+    .flatMap((body) => [...body.matchAll(markerRe)])
+    .map((match) => parseImplementBaseSyncMarker(match[1], issueNumber) ?? { valid: false, raw: match[0] });
 }
 
 /**

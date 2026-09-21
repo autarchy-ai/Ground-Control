@@ -14,7 +14,7 @@ import {
   writeSync,
 } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { GIT_OBJECT_ID_RE } from "./codex-workflow.js";
 import { validateDecisionRecordInput } from "./decision-records.js";
 import { REVIEW_FAILURE_CAUSES } from "./review-failure-diagnostics.js";
@@ -266,9 +266,16 @@ function reviewResultDirectory(gitDir) {
   return directory;
 }
 
+// The handle arrives as a tool argument, so it is validated as the exact string
+// used to build the path (a non-string could stringify differently twice), and
+// the resolved path must still sit directly inside the results directory.
 function recordPath(gitDir, handle) {
-  if (!REVIEW_HANDLE_RE.test(String(handle))) throw Object.assign(new Error("invalid review handle"), { code: "review_result_handle_invalid" });
-  return join(reviewResultDirectory(gitDir), `${handle}.json`);
+  const invalid = () => Object.assign(new Error("invalid review handle"), { code: "review_result_handle_invalid" });
+  if (typeof handle !== "string" || !REVIEW_HANDLE_RE.test(handle)) throw invalid();
+  const directory = reviewResultDirectory(gitDir);
+  const path = resolve(directory, `${handle}.json`);
+  if (!path.startsWith(`${directory}${sep}`)) throw invalid();
+  return path;
 }
 
 function assertRegularTarget(path) {

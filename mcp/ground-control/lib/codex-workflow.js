@@ -6,8 +6,6 @@
 
 import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
-import { randomBytes } from "node:crypto";
-import { isSafeGitRefName } from "./repo-context.js";
 import { STATION_OBSERVATION_DISPOSITION, canReobservationClose, parseExecutionObligationV2Markers } from "./execution-obligation-v2.js";
 
 const IMPLEMENT_BRANCH_RE = /^[a-z0-9-]+$/;

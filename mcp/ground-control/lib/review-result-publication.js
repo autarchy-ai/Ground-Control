@@ -197,6 +197,48 @@ export async function runGetReviewResult(input, overrides = {}) {
   };
 }
 
+// A zero-finding publication authorizes the candidate tree for delivery, and
+// that tree stages untracked files while the reviewed diff carries only tracked
+// ones. Publishing it while untracked paths went unreviewed would launder
+// content no reviewer saw as reviewed, which is worse than the drift the
+// binding was meant to catch. Stage everything and review again (issue #1679,
+// core-F1). A finding-bearing cycle authorizes no tree, so it is unaffected.
+function unreviewedPathsRefusal(current) {
+  const unreviewed = current.revision.unreviewed_untracked_paths?.length ?? 0;
+  if (current.findings.length > 0 || unreviewed === 0) return null;
+  return fail(
+    "review_publication_unreviewed_paths_present",
+    "This cycle reported no findings, so publishing it would authorize its tree for delivery - and "
+    + `${unreviewed} untracked path(s) sit in that tree without `
+    + "being part of the reviewed diff. Publish stages them with `git add -A`, so they would ship "
+    + "unreviewed. Stage them and review again if they belong to this change; remove or ignore them if "
+    + "they do not.",
+    "stage_or_remove_the_unreviewed_paths_and_rerun_the_review",
+  );
+}
+
+// Re-capture the live revision so a stale review cannot be published.
+async function recaptureRevision(current, repository, overrides) {
+  const captureRevision = overrides.captureRevision ?? captureReviewRevision;
+  try {
+    return {
+      observed: await captureRevision({
+        repoRoot: repository.repoRoot,
+        baseBranch: current.base_branch,
+        uncommitted: true,
+      }),
+    };
+  } catch (error) {
+    // A checkout that can execute its own code during staging is a refusal with
+    // its own cause, not a generic stage fault (issue #1679, security-F1).
+    if (error?.code === "review_checkout_configuration_unsafe") {
+      return { result: fail(error.code, error.message, "remove_the_caller_controlled_git_configuration_and_retry") };
+    }
+    if (error?.code !== "review_revision_changed_during_capture") throw error;
+    return { result: fail(error.code, "The review input moved while its publication revision was being captured.", "retry_after_the_tree_is_stable") };
+  }
+}
+
 async function prepareVerdictPublication(current, input, repository, overrides) {
   const checked = validateSanitizedReviewPublication(current, input.sanitized);
   if (!checked.ok) return { result: checked };
@@ -221,40 +263,11 @@ async function prepareVerdictPublication(current, input, repository, overrides) 
   if (current.publication_status !== "unpublished") {
     return { result: fail("review_result_not_publishable", `Review result status is ${current.publication_status}.`) };
   }
-  // A zero-finding publication authorizes the candidate tree for delivery, and
-  // that tree stages untracked files while the reviewed diff carries only tracked
-  // ones. Publishing it while untracked paths went unreviewed would launder
-  // content no reviewer saw as reviewed, which is worse than the drift the
-  // binding was meant to catch. Stage everything and review again (issue #1679,
-  // core-F1). A finding-bearing cycle authorizes no tree, so it is unaffected.
-  if (current.findings.length === 0 && (current.revision.unreviewed_untracked_paths?.length ?? 0) > 0) {
-    return { result: fail(
-      "review_publication_unreviewed_paths_present",
-      "This cycle reported no findings, so publishing it would authorize its tree for delivery - and "
-      + `${current.revision.unreviewed_untracked_paths.length} untracked path(s) sit in that tree without `
-      + "being part of the reviewed diff. Publish stages them with `git add -A`, so they would ship "
-      + "unreviewed. Stage them and review again if they belong to this change; remove or ignore them if "
-      + "they do not.",
-      "stage_or_remove_the_unreviewed_paths_and_rerun_the_review",
-    ) };
-  }
-  const captureRevision = overrides.captureRevision ?? captureReviewRevision;
-  let observed;
-  try {
-    observed = await captureRevision({
-      repoRoot: repository.repoRoot,
-      baseBranch: current.base_branch,
-      uncommitted: true,
-    });
-  } catch (error) {
-    // A checkout that can execute its own code during staging is a refusal with
-    // its own cause, not a generic stage fault (issue #1679, security-F1).
-    if (error?.code === "review_checkout_configuration_unsafe") {
-      return { result: fail(error.code, error.message, "remove_the_caller_controlled_git_configuration_and_retry") };
-    }
-    if (error?.code !== "review_revision_changed_during_capture") throw error;
-    return { result: fail(error.code, "The review input moved while its publication revision was being captured.", "retry_after_the_tree_is_stable") };
-  }
+  const unreviewed = unreviewedPathsRefusal(current);
+  if (unreviewed) return { result: unreviewed };
+  const recaptured = await recaptureRevision(current, repository, overrides);
+  if (recaptured.result) return recaptured;
+  const { observed } = recaptured;
   if (observed.revision.digest !== current.revision.digest) {
     return { result: fail("review_revision_stale", "The current review input no longer matches the retained reviewed revision.", "rerun_review_on_current_revision") };
   }

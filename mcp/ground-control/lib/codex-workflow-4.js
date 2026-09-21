@@ -13,7 +13,9 @@ import { validateImplementBranchName } from "./codex-workflow.js";
 import { IMPLEMENT_BASE_SYNC_ACTIONS, IMPLEMENT_BASE_SYNC_NO_PUBLICATION, newImplementSyncRecordId } from "./implement-sync-record.js";
 import { assertSafeImplementCheckoutConfiguration, authorizeImplementRepoRoot, ensureGitRepo, resolveMcpLaunchWorkspaceAuthorization } from "./grc-legacy-compat-4.js";
 import { runGetIssueThread } from "./issue-thread.js";
-import { postImplementBaseSyncRecord, readTrustedImplementSyncRecord, verifyPublishedImplementHead } from "./knowledge-capture.js";
+import {
+  postImplementBaseSyncRecord, readLatestTrustedImplementSyncRecord, readTrustedImplementSyncRecord, verifyPublishedImplementHead,
+} from "./knowledge-capture.js";
 import { isSafeGitRefName } from "./repo-context.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { execFile } from "./runtime-primitives.js";
@@ -21,7 +23,6 @@ import { prepareCommittedRetryCompletion, validateBaseSyncCompletionInput } from
 import { resolveDeliveryBinding } from "./delivery-binding.js";
 import { readTrustedReviewPublicationEvidence } from "./review-publication-evidence.js";
 import { readTrustedRunLane } from "./run-lane-evidence.js";
-import { readLatestTrustedImplementSyncRecord } from "./knowledge-capture.js";
 
 // Validate the shared boundary input, then the branch name. Returns the
 // input-invalid envelope, or the branch-name validation result (terminal to the
@@ -274,7 +275,7 @@ async function prepareMergeHeadCompletion(args) {
 // before a base merge changes it. Computed here, once, because this boundary is
 // the last place that holds both the review evidence and the local commits.
 async function resolveSyncDeliveryBinding(args, preSyncSha) {
-  const { repoRoot, input, commandRunner, repoAuthorization } = args;
+  const { repoRoot, input, repoAuthorization } = args;
   const readEvidence = args.reviewEvidenceReader ?? readTrustedReviewPublicationEvidence;
   const readLane = args.laneReader ?? readTrustedRunLane;
   const readLatestRecord = args.latestSyncRecordReader ?? readLatestTrustedImplementSyncRecord;

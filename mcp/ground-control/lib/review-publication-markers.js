@@ -58,51 +58,58 @@ function canonicalStage(name, attributes, body) {
   return null;
 }
 
+// v1 carries neither binding field and must carry neither; v2 requires both.
+function bindingAttributesValid(version, attributes) {
+  if (version === 1) return attributes.tree === undefined && attributes.findings === undefined;
+  const findingsCount = Number(attributes.findings);
+  return GIT_TREE_OID_RE.test(attributes.tree ?? "") && Number.isInteger(findingsCount) && findingsCount >= 0;
+}
+
+function reviewMarkerAttributesValid(stage, version, attributes) {
+  const issue = Number(attributes.issue);
+  const cycle = Number(attributes.cycle);
+  return stage != null
+    && Object.keys(attributes).every((name) => STAGE_ATTRIBUTES[stage].has(name))
+    && Number.isInteger(issue) && issue > 0
+    && Number.isInteger(cycle) && cycle > 0
+    && ["publication", "original", "revision", "sanitized"].every((key) => HEX_64_RE.test(attributes[key] ?? ""))
+    && bindingAttributesValid(version, attributes);
+}
+
+// One marker: its parsed record, a malformed entry when it claims this family but
+// does not validate, or null when it belongs to another family.
+function parseReviewPublicationMarker(match, body) {
+  const attributes = parseAttributes(match[2]);
+  if (attributes == null) {
+    const claimsFamily = match[2].includes(REVIEW_PUBLICATION_MARKER_SCHEMA)
+      || match[2].includes(REVIEW_PUBLICATION_MARKER_SCHEMA_V1);
+    return claimsFamily ? { stage: null, malformed: true } : null;
+  }
+  const version = markerSchemaVersion(attributes.schema);
+  if (version == null) return null;
+  const stage = canonicalStage(match[1], attributes, body);
+  if (!reviewMarkerAttributesValid(stage, version, attributes)) return { stage: null, malformed: true };
+  return {
+    stage,
+    schema_version: version,
+    issue_number: Number(attributes.issue),
+    cycle: Number(attributes.cycle),
+    publication_id: attributes.publication,
+    original_digest: attributes.original,
+    revision_digest: attributes.revision,
+    sanitized_digest: attributes.sanitized,
+    candidate_tree_oid: version === 1 ? null : attributes.tree,
+    findings_count: version === 1 ? null : Number(attributes.findings),
+    // Only the cycle stage carries it; it is the branch the review ran on.
+    branch: attributes.branch ?? null,
+  };
+}
+
 export function parseReviewPublicationMarkers(body) {
   if (typeof body !== "string") return [];
-  const parsed = [];
-  for (const match of body.matchAll(MARKER_RE)) {
-    const attributes = parseAttributes(match[2]);
-    if (attributes == null) {
-      if (match[2].includes(REVIEW_PUBLICATION_MARKER_SCHEMA)
-        || match[2].includes(REVIEW_PUBLICATION_MARKER_SCHEMA_V1)) parsed.push({ stage: null, malformed: true });
-      continue;
-    }
-    const version = markerSchemaVersion(attributes?.schema);
-    if (version == null) continue;
-    const stage = canonicalStage(match[1], attributes, body);
-    const issue = Number(attributes.issue);
-    const cycle = Number(attributes.cycle);
-    const findingsCount = Number(attributes.findings);
-    const valid = stage != null
-      && Object.keys(attributes).every((name) => STAGE_ATTRIBUTES[stage].has(name))
-      && Number.isInteger(issue) && issue > 0
-      && Number.isInteger(cycle) && cycle > 0
-      && HEX_64_RE.test(attributes.publication ?? "")
-      && HEX_64_RE.test(attributes.original ?? "")
-      && HEX_64_RE.test(attributes.revision ?? "")
-      && HEX_64_RE.test(attributes.sanitized ?? "")
-      // v1 carries neither field and must carry neither; v2 requires both.
-      && (version === 1
-        ? attributes.tree === undefined && attributes.findings === undefined
-        : GIT_TREE_OID_RE.test(attributes.tree ?? "")
-          && Number.isInteger(findingsCount) && findingsCount >= 0);
-    parsed.push(valid ? {
-      stage,
-      schema_version: version,
-      issue_number: issue,
-      cycle,
-      publication_id: attributes.publication,
-      original_digest: attributes.original,
-      revision_digest: attributes.revision,
-      sanitized_digest: attributes.sanitized,
-      candidate_tree_oid: version === 1 ? null : attributes.tree,
-      findings_count: version === 1 ? null : findingsCount,
-      // Only the cycle stage carries it; it is the branch the review ran on.
-      branch: attributes.branch ?? null,
-    } : { stage: null, malformed: true });
-  }
-  return parsed;
+  return [...body.matchAll(MARKER_RE)]
+    .map((match) => parseReviewPublicationMarker(match, body))
+    .filter((entry) => entry != null);
 }
 
 export function reviewPublicationTupleKey(marker) {

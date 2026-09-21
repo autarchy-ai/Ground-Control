@@ -144,6 +144,23 @@ describe("retained review-result artifacts (#1632)", () => {
     }
   });
 
+  // The handle is a tool argument. Only the exact handle string may name a file,
+  // so a value that validates as one string and stringifies as another, or that
+  // tries to leave the results directory, never reaches the filesystem.
+  it("reads only by an exact handle string that stays inside the results directory", () => {
+    const gitDir = tempGitDir();
+    try {
+      const handle = `rvw_${"f".repeat(48)}`;
+      let reads = 0;
+      const shifting = { toString: () => (reads++ === 0 ? handle : "../../outside") };
+      assert.equal(readReviewResult(gitDir, shifting).error, "review_result_handle_invalid");
+      assert.equal(reads, 0, "a non-string handle is refused before it is stringified");
+      assert.equal(readReviewResult(gitDir, `../${handle}`).error, "review_result_handle_invalid");
+    } finally {
+      rmSync(gitDir, { recursive: true, force: true });
+    }
+  });
+
   it("detects edits to the retained original review payload", () => {
     const record = artifact();
     record.findings[0].body = "tampered after retention";

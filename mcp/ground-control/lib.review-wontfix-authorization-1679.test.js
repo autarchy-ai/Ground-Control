@@ -197,6 +197,23 @@ describe("wontfix needs the review run it answers (#1679)", () => {
   });
 });
 
+describe("wontfix authorization fails closed when GitHub cannot answer (#1679)", () => {
+  const input = { repoRoot: "/repo", owner: OWNER, name: NAME, issueNumber: ISSUE, reviewStartedAt: REVIEW_STARTED_AT, findings: wontfix() };
+  const unavailable = async () => { throw new Error("gh api 502"); };
+
+  it("refuses when the issue thread cannot be read", async () => {
+    const result = await verifyReviewWontfixAuthorizations(input, { readComments: unavailable, resolveTrust: trust() });
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "review_wontfix_authorization_unverifiable");
+  });
+
+  it("refuses when the authorizing comment's permission cannot be resolved", async () => {
+    const result = await verifyReviewWontfixAuthorizations(input, { readComments: async () => comments(), resolveTrust: unavailable });
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "review_wontfix_authorization_unverifiable");
+  });
+});
+
 describe("review publication verifies wontfix authorization before its first write (#1679)", () => {
   it("refuses a self-asserted authorization without posting anything", async () => {
     const record = retained();

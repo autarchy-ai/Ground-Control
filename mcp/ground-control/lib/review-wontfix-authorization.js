@@ -49,6 +49,13 @@ function postedAfter(comment, reviewStartedAt) {
   return Number.isFinite(posted) && Number.isFinite(started) && posted > started;
 }
 
+// Whether a parsed comment URL points at this repository's issue.
+function namesThisIssue(reference, { owner, name, issueNumber }) {
+  return reference?.owner.toLowerCase() === String(owner).toLowerCase()
+    && reference.name.toLowerCase() === String(name).toLowerCase()
+    && reference.issueNumber === issueNumber;
+}
+
 function unverifiable(findingId, reason) {
   return {
     ok: false,
@@ -91,12 +98,7 @@ export async function verifyReviewWontfixAuthorizations(
   const references = [];
   for (const finding of pending) {
     const reference = parseIssueCommentUrl(finding.user_authorization);
-    if (
-      reference == null
-      || reference.owner.toLowerCase() !== String(owner).toLowerCase()
-      || reference.name.toLowerCase() !== String(name).toLowerCase()
-      || reference.issueNumber !== issueNumber
-    ) {
+    if (!namesThisIssue(reference, { owner, name, issueNumber })) {
       return unverifiable(finding.id, "it is not a comment URL on this repository's issue");
     }
     references.push({ finding, commentId: reference.commentId });

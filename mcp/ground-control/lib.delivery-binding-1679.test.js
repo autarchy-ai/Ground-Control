@@ -261,6 +261,11 @@ describe("historical synchronization records stay readable (#1679)", () => {
     assert.equal(parseImplementBaseSyncMarkers([stripped], 1679)[0].valid, false);
   });
 
+  it("rejects a record of a schema version it does not know", () => {
+    const future = v2.replace("remote-base-sync/v2", "remote-base-sync/v9");
+    assert.equal(parseImplementBaseSyncMarkers([future], 1679)[0].valid, false);
+  });
+
   it("reads a current record from a thread that also carries a historical one", () => {
     const records = parseImplementBaseSyncMarkers([v1, v2], 1679);
     assert.equal(records.length, 2);

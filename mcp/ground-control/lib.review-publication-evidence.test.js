@@ -126,6 +126,16 @@ describe("trusted review-publication evidence (#1632)", () => {
     assert.equal(result.error, "review_publication_evidence_malformed");
   });
 
+  it("fails closed on a marker of this family whose attributes cannot be parsed", async () => {
+    const comments = publicationComments();
+    comments[0] = { ...comments[0], body: comments[0].body.replace(' stage="findings"', ' stage="findings" stage="findings"') };
+    const result = await readTrustedReviewPublicationEvidence({
+      repoRoot: "/repo", owner: "fake", name: "repo", issueNumber: 1632,
+    }, { readComments: async () => comments, resolveTrust: async () => ({ isTrusted: () => true }) });
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "review_publication_evidence_malformed");
+  });
+
   it("selects the latest complete cycle while allowing earlier published cycles", async () => {
     const earlier = publicationComments();
     const later = publicationComments().map((comment) => ({
