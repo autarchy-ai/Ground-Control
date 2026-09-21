@@ -8,7 +8,10 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
+from tools.incus_sandbox import task_environment
 from tools.incus_sandbox.config import ConfigError, load_config, upgrade_config
 from tools.incus_sandbox.repository_environment import (
     DeclarationError,
@@ -19,6 +22,7 @@ from tools.incus_sandbox.task_environment import (
     ProviderError,
     TaskRuntime,
     TaskEnvironmentService,
+    redacted_task_observation,
     record_source_binding,
 )
 
@@ -275,6 +279,34 @@ class TaskEnvironmentServiceTest(unittest.TestCase):
         with self.assertRaises(ProviderError):
             service.start("agent-1", self.request("example/one", raw), os.getuid())
         self.assertEqual(self.calls, [])
+
+    def test_redacted_observation_rejects_malformed_state(self) -> None:
+        task = self.root / "task.json"
+        self.assertEqual(redacted_task_observation(task, False),
+                         {"state": "not_started", "variables": []})
+        task.write_text(json.dumps({"variables": [
+            {"name": "TOKEN", "source": "secret", "state": "available"},
+        ]}), encoding="utf-8")
+        self.assertEqual(redacted_task_observation(task, True)["state"], "running")
+        task.write_text('{"variables":[{"name":"BAD-NAME"}]}', encoding="utf-8")
+        self.assertEqual(redacted_task_observation(task, True)["state"], "unavailable")
+
+    def test_root_entrypoint_dispatches_only_the_authenticated_task_lifecycle(self) -> None:
+        config = SimpleNamespace(
+            project="gc-sandbox", state_dir=self.state, operator_uid=os.getuid(),
+            event_log=self.root / "events", event_max_bytes=1024,
+            task_environment=SimpleNamespace(repositories={}, max_value_bytes=16384),
+        )
+        service, events, lifecycle = MagicMock(), MagicMock(), MagicMock()
+        with patch.object(task_environment.os, "geteuid", return_value=0), \
+             patch.dict(task_environment.os.environ, {"SUDO_UID": str(os.getuid())}, clear=True), \
+             patch("tools.incus_sandbox.config.load_config", return_value=config), \
+             patch("tools.incus_sandbox.events.EventWriter", return_value=events), \
+             patch("tools.incus_sandbox.helper.LifecycleHelper", return_value=lifecycle), \
+             patch.object(task_environment, "TaskEnvironmentService", return_value=service):
+            self.assertEqual(task_environment.main(["stop", "agent-1"]), 0)
+        service.stop.assert_called_once_with("agent-1", os.getuid())
+        events.write.assert_called_once()
 
 
 if __name__ == "__main__":
