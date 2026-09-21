@@ -57,9 +57,9 @@ still has no pre-merge report of its own.
 transport: it holds no `gh` logic, no marker parser, and no completion reconstruction. It
 passes the event's pull-request number to `grndctl finalize-merged-pr` and nothing else.
 
-Its shape is a security boundary, pinned two-sidedly by
-`tools/policy/phase_e_automation.py`, which also pins the `run-name:` the dispatch binding
-depends on: never `pull_request_target`; never the pull-request
+Its shape is a security boundary, checked two-sidedly by
+`tools/policy/phase_e_automation.py`, which also requires `run-name:` to carry both halves of
+the expression the binding rests on: never `pull_request_target`; never the pull-request
 head, because the checkout is pinned to the event's immutable `merge_commit_sha` with
 `persist-credentials: false`; `issues: write` as its only write permission; and every
 external action pinned to a commit SHA. It runs no tests, no policy suite, and no review, and
@@ -86,14 +86,33 @@ deliberately not writable by automation, so the loop cannot close on itself.
 The class is verified. Alongside the unchanged `gc:final-report` marker, the finalizer writes
 a separate `gc:finalizer-run` marker naming its `GITHUB_RUN_ID`, and the gate accepts it only
 when that run resolves through the Actions API to this repository's pinned finalizer workflow
-and is bound to this pull request. A pull-request-triggered run is bound by its own
-`pull_requests` association. A dispatch run has none, so the workflow's `run-name:` carries
-the pull request into the run record and the gate matches on that; accepting a dispatch run
-on the strength of its event alone would be no binding at all, because run ids are public and
-one real run would then vouch for any issue and pull request a comment cared to name. A
-forged run id fails the lookup, and a workflow that merely echoes attacker-controlled text
-cannot produce a finalizer run bound to the pull request that text names. Fork pull requests
-receive a read-only token and cannot post as the identity at all.
+and is bound to this pull request. A matching `pull_requests` association remains the preferred
+binding. **Correction for issue #1683:** that association cannot be required for the primary
+`pull_request: closed` trigger: the merged delivery's observed run has `event: "pull_request"`
+and `pull_requests: []`. When no association matches, both `pull_request` and
+`workflow_dispatch` may use the workflow's PR-number-bearing run name, returned as
+`display_title`, through the existing number-boundary matcher. Other events gain no title
+fallback. The repository and exact workflow-path checks precede either binding; an event,
+bot login, or public run id alone never supplies authority. An unresolved run is refused.
+
+The title is evidence only because the repository-controlled workflow explicitly sets
+`run-name: Ground Control Phase E for PR ${{ github.event.pull_request.number || inputs.pr }}`.
+Keep that contract aligned in the repository workflow and the installable
+`lib/phase-e-workflow.js` template. A workflow path identifies a file, not an immutable
+attestation of its contents. In particular, GitHub can use the PR title when `run-name` is
+omitted ([workflow syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#run-name));
+arbitrary PR text must never become binding evidence. The policy check pinned only
+`inputs.pr` on the run-name line while the title bound dispatch runs alone; now that both
+triggers bind through it, the check requires `github.event.pull_request.number` as well, and
+the installable template's own suite asserts the same line. Prose or a second trust resolver
+cannot substitute for that enforcement.
+
+The verifier must accept its own in-progress run: requiring a successful run conclusion
+would make finalization circular. Provenance proves the report's origin, not merge state,
+readiness, or requirement completion; those remain the incumbent finalizer's gates. Keep
+`findTrustedFinalReportMarker` shared by publication and close so a retry also recognizes a
+report written before the original close failed. The correction changes neither marker
+format nor the distinct automation trust class, and does not authorize human-only overrides.
 
 ### Replay is safe, and failure is never a close path
 

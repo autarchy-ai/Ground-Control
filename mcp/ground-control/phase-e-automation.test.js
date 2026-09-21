@@ -45,7 +45,11 @@ function deps(overrides = {}) {
       ok: true,
       record: { version: 1, lane: "implement", head: HEAD, commentId: 500, payload: COMPLETION },
     }),
-    finalize: async () => ({ ok: true, action: "finalize", phase: "closed", close: { closed: true } }),
+    // The shape `runCloseIssueAfterMerge` actually returns: it reports whether it had to
+    // act, never a `closed` field (issue #1683).
+    finalize: async () => ({
+      ok: true, action: "finalize", phase: "closed", close: { ok: true, already_closed: false },
+    }),
     readComments: async () => [],
     postComment: async (_repoRoot, _owner, _name, number, body) => {
       posted.push({ number, body });
@@ -158,6 +162,18 @@ describe("automated Phase E", () => {
     const result = await runAutomatedPhaseE({ repoPath: "/repo", prNumber: PR }, replay);
     assert.equal(result.ok, false);
     assert.equal(replay.posted.length, 0);
+  });
+
+  // The envelope is what a maintainer reads when a run looks wrong, so it has to describe
+  // the terminal state, not whether this particular call did the closing. The first live
+  // finalization reported `closed: false` on an issue it had just closed (issue #1683).
+  it("reports the issue as closed whether this run closed it or found it closed", async () => {
+    for (const close of [{ ok: true, already_closed: false }, { ok: true, already_closed: true }]) {
+      const d = deps({ finalize: async () => ({ ok: true, phase: "closed", close }) });
+      const result = await runAutomatedPhaseE({ repoPath: "/repo", prNumber: PR }, d);
+      assert.equal(result.ok, true);
+      assert.equal(result.closed, true, JSON.stringify(close));
+    }
   });
 
   it("converges on the closed issue when the delivery was already reported", async () => {
