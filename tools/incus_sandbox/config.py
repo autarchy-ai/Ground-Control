@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -46,6 +47,22 @@ class MigrationLimits(object):
 
 
 @dataclass(frozen=True)
+class ProviderLocator(object):
+    """One root-owned file-provider locator and its closed availability state."""
+
+    path: Path
+    state: str
+
+
+@dataclass(frozen=True)
+class TaskEnvironmentPolicy(object):
+    """Repository-scoped secret aliases controlled only by the host operator."""
+
+    max_value_bytes: int
+    repositories: dict[str, dict[str, ProviderLocator]]
+
+
+@dataclass(frozen=True)
 class SandboxConfig(object):
     """Validated host policy used by the root-side lifecycle helper."""
 
@@ -62,6 +79,7 @@ class SandboxConfig(object):
     vm: VmLimits
     host: HostLimits
     migration: MigrationLimits | None
+    task_environment: TaskEnvironmentPolicy
 
 
 _TOP_LEVEL = {
@@ -70,6 +88,7 @@ _TOP_LEVEL = {
     "vm", "host",
 }
 _TOP_LEVEL_V2 = _TOP_LEVEL | {"migration"}
+_TOP_LEVEL_V3 = _TOP_LEVEL_V2 | {"task_environment"}
 _VM_FIELDS = ("cpu", "memory_mib", "disk_gib")
 _HOST_FIELDS = (
     "reserve_memory_mib", "reserve_disk_gib", "max_cpu", "max_memory_mib",
@@ -79,12 +98,16 @@ _MIGRATION_FIELDS = ("max_packet_bytes", "max_file_count", "max_file_bytes", "ma
 _MIN_EVENT_BYTES = 512
 _SCHEMA_V1 = "gc.incus-sandbox/v1"
 _SCHEMA_V2 = "gc.incus-sandbox/v2"
+_SCHEMA_V3 = "gc.incus-sandbox/v3"
 _DEFAULT_MIGRATION = {
     "max_packet_bytes": 1024 * 1024 * 1024,
     "max_file_count": 2048,
     "max_file_bytes": 64 * 1024 * 1024,
     "max_handoff_bytes": 64 * 1024,
 }
+_DEFAULT_TASK_ENVIRONMENT = {"max_value_bytes": 16 * 1024, "repositories": {}}
+_REPOSITORY = re.compile(r"^[a-z0-9_.-]{1,100}/[a-z0-9_.-]{1,100}$")
+_ALIAS = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
 
 def _positive(value: object, field: str) -> int:
@@ -140,8 +163,10 @@ def _read_document(path: Path) -> dict[str, object]:
 def _check_top_level(doc: dict[str, object]) -> None:
     """Verify the closed versioned configuration vocabulary."""
     schema = doc.get("schema")
-    expected = _TOP_LEVEL if schema == _SCHEMA_V1 else _TOP_LEVEL_V2
-    if schema not in {_SCHEMA_V1, _SCHEMA_V2} or set(doc) != expected:
+    expected = {
+        _SCHEMA_V1: _TOP_LEVEL, _SCHEMA_V2: _TOP_LEVEL_V2, _SCHEMA_V3: _TOP_LEVEL_V3,
+    }.get(schema)
+    if expected is None or set(doc) != expected:
         raise ConfigError("configuration keys do not match the declared gc.incus-sandbox schema")
 
 
@@ -168,8 +193,8 @@ def _limits(doc: dict[str, object], fields: tuple[str, ...], label: str) -> tupl
 
 
 def _migration_limits(doc: dict[str, object]) -> MigrationLimits | None:
-    """Validate v2 migration bounds against the installed guest validator."""
-    if doc["schema"] != _SCHEMA_V2:
+    """Validate v2/v3 migration bounds against the installed guest validator."""
+    if doc["schema"] == _SCHEMA_V1:
         return None
     migration = MigrationLimits(*_limits(doc, _MIGRATION_FIELDS, "migration"))
     limits = (
@@ -183,6 +208,56 @@ def _migration_limits(doc: dict[str, object]) -> MigrationLimits | None:
     if not all(limits):
         raise ConfigError("migration limits exceed the installed guest validator")
     return migration
+
+
+def _provider_locator(raw: object) -> ProviderLocator:
+    """Validate one host-selected provider locator."""
+    if not isinstance(raw, dict) or set(raw) != {"path", "state"}:
+        raise ConfigError("task_environment provider locator is invalid")
+    path, state = raw["path"], raw["state"]
+    if not isinstance(path, str) or not path.startswith("/") or "\0" in path:
+        raise ConfigError("task_environment provider path is invalid")
+    if state not in {"available", "expired", "revoked"}:
+        raise ConfigError("task_environment provider state is invalid")
+    return ProviderLocator(Path(path), state)
+
+
+def _provider_aliases(raw: object) -> dict[str, ProviderLocator]:
+    """Validate the aliases authorized for one repository."""
+    if not isinstance(raw, dict) or len(raw) > 128:
+        raise ConfigError("task_environment aliases are invalid")
+    aliases: dict[str, ProviderLocator] = {}
+    for alias, locator in raw.items():
+        if not isinstance(alias, str) or not _ALIAS.fullmatch(alias):
+            raise ConfigError("task_environment alias is invalid")
+        aliases[alias] = _provider_locator(locator)
+    return aliases
+
+
+def _provider_repositories(raw: object) -> dict[str, dict[str, ProviderLocator]]:
+    """Validate the repository-keyed host authority map."""
+    if not isinstance(raw, dict) or len(raw) > 256:
+        raise ConfigError("task_environment repositories are invalid")
+    repositories = {}
+    for repository, aliases in raw.items():
+        if not isinstance(repository, str) or not _REPOSITORY.fullmatch(repository):
+            raise ConfigError("task_environment repository identity is invalid")
+        repositories[repository] = _provider_aliases(aliases)
+    return repositories
+
+
+def _task_environment_policy(doc: dict[str, object]) -> TaskEnvironmentPolicy:
+    """Validate the closed v3 repository-to-provider authority map."""
+    if doc["schema"] != _SCHEMA_V3:
+        return TaskEnvironmentPolicy(max_value_bytes=16 * 1024, repositories={})
+    section = doc.get("task_environment")
+    if not isinstance(section, dict) or set(section) != {"max_value_bytes", "repositories"}:
+        raise ConfigError("task_environment policy fields are invalid")
+    maximum = _positive(section["max_value_bytes"], "task_environment.max_value_bytes")
+    if maximum > 16 * 1024:
+        raise ConfigError("task_environment.max_value_bytes exceeds the guest validator")
+    return TaskEnvironmentPolicy(max_value_bytes=maximum,
+                                 repositories=_provider_repositories(section["repositories"]))
 
 
 def _build_config(doc: dict[str, object]) -> SandboxConfig:
@@ -204,7 +279,7 @@ def _build_config(doc: dict[str, object]) -> SandboxConfig:
             doc["observation_max_age_seconds"], "observation_max_age_seconds"
         ),
         operator_uid=_positive(doc["operator_uid"], "operator_uid"), vm=vm, host=host,
-        migration=migration,
+        migration=migration, task_environment=_task_environment_policy(doc),
     )
 
 
@@ -222,9 +297,13 @@ def upgrade_config(path: Path, *, expected_uid: int = 0) -> bool:
     document = _read_document(path)
     _check_top_level(document)
     _build_config(document)
-    if document["schema"] == _SCHEMA_V2:
+    if document["schema"] == _SCHEMA_V3:
         return False
-    upgraded = {**document, "schema": _SCHEMA_V2, "migration": _DEFAULT_MIGRATION}
+    upgraded = {
+        **document, "schema": _SCHEMA_V3,
+        "migration": document.get("migration", _DEFAULT_MIGRATION),
+        "task_environment": _DEFAULT_TASK_ENVIRONMENT,
+    }
     _check_top_level(upgraded)
     _build_config(upgraded)
     temporary: Path | None = None

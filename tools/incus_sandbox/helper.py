@@ -13,25 +13,24 @@ import sys
 import time
 from pathlib import Path
 from collections.abc import Callable
-
 if __package__:
     from .config import SandboxConfig, load_config
     from .events import EventWriter
     from .observations import observation, observed_facts, positive_fact, query_payload, status_state
+    from .task_environment import redacted_task_observation, state_lock
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from config import SandboxConfig, load_config
     from events import EventWriter
     from observations import observation, observed_facts, positive_fact, query_payload, status_state
+    from task_environment import redacted_task_observation, state_lock
 
 
 class UsageError(RuntimeError):
     """The caller requested a lifecycle action outside the closed vocabulary."""
 
-
 class AdmissionError(RuntimeError):
     """Host capacity facts do not safely admit a VM operation."""
-
 
 _NAME = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
 _ACTIONS = {"create", "list", "attach", "stop", "start", "delete", "status", "diagnose"}
@@ -39,7 +38,6 @@ _INCUS = "/usr/bin/incus"
 _IP = "/usr/sbin/ip"
 _INVALID_ALLOCATION = "allocation state is invalid"
 _INVALID_OPERATOR = "caller is not the configured sandbox operator"
-
 
 def _run(argv: list[str]) -> dict[str, int]:
     """Run one already-allowlisted executable argument vector."""
@@ -241,6 +239,8 @@ class LifecycleHelper(object):
             self._save_allocations(fd, records)
         finally:
             self._unlock(fd)
+        (self.config.state_dir / "source-bindings" / f"{name}.json").unlink(missing_ok=True)
+        (self.config.state_dir / "tasks" / f"{name}.json").unlink(missing_ok=True)
 
     def _headroom(self) -> dict[str, int]:
         fd, records = self._locked_allocations()
@@ -262,7 +262,7 @@ class LifecycleHelper(object):
         observed = self.observer()
         available, status = status_state(incus_info, observed)
         return {
-            "schema": "gc.incus-sandbox.status/v1",
+            "schema": "gc.incus-sandbox.status/v2",
             "sandbox_id": name,
             "desired_state": "running" if name in self._allocation_names() else "stopped",
             "observed_state": status,
@@ -272,6 +272,9 @@ class LifecycleHelper(object):
             "admission_headroom": self._headroom(),
             "last_transition": "unavailable",
             "failure_reason": "none" if available else "observation_unavailable",
+            "task_environment": redacted_task_observation(
+                self._task_state_path(name), status == "running",
+            ),
         }
 
     def _allocation_names(self) -> set[str]:
@@ -385,27 +388,45 @@ class LifecycleHelper(object):
         ]
         self._mutate("create", name, commands, reserve=True, fresh=True)
         self._emit("boot", "success", name)
-
     def start(self, name: str) -> None:
         name = self._name(name)
-        self._mutate("start", name, [[_INCUS, "start", name, "--project", self.config.project]], reserve=True)
+        with state_lock(self.config.state_dir, name):
+            self._mutate("start", name, [[_INCUS, "start", name, "--project", self.config.project]], reserve=True)
+            self._task_state_path(name).unlink(missing_ok=True)
+    def _task_state_path(self, name: str) -> Path:
+        return self.config.state_dir / "tasks" / f"{name}.json"
+    def _terminate_task(self, name: str) -> None:
+        """Stop the fixed task session before a VM can stop or disappear."""
+        state = self._task_state_path(name)
+        if not state.exists():
+            return
+        self.runner([_INCUS, "exec", name, "--project", self.config.project, "--",
+                     "/usr/bin/python3", "/usr/local/lib/gc-incus-sandbox/task-launcher.py", "stop"])
+        state.unlink(missing_ok=True)
 
     def stop(self, name: str) -> None:
         name = self._name(name)
-        self._mutate("stop", name, [[_INCUS, "stop", name, "--project", self.config.project]], release=True)
+        with state_lock(self.config.state_dir, name):
+            self._require_owner(name)
+            self._terminate_task(name)
+            self._mutate("stop", name, [[_INCUS, "stop", name, "--project", self.config.project]], release=True)
 
     def delete(self, name: str, confirmation: str | None = None) -> None:
         name = self._name(name)
         if confirmation != name:
             raise UsageError("delete requires the exact sandbox name as confirmation")
-        command = [_INCUS, "delete", name, "--force", "--project", self.config.project]
-        self._mutate("delete", name, [command], release=True)
-        self._forget(name)
+        with state_lock(self.config.state_dir, name):
+            self._require_owner(name)
+            self._terminate_task(name)
+            command = [_INCUS, "delete", name, "--force", "--project", self.config.project]
+            self._mutate("delete", name, [command], release=True)
+            self._forget(name)
 
     def attach(self, name: str) -> None:
         name = self._name(name)
         self._mutate("attach", name, [[_INCUS, "exec", name, "--project", self.config.project, "--",
-                                        "su", "-", "sandbox", "-c", "exec tmux new-session -A -s coding"]])
+                                        "/usr/bin/tmux", "-S", "/run/gc-sandbox-task/control",
+                                        "attach-session", "-t", "gc-task"]])
 
     def list(self) -> None:
         self.events.ensure_available()

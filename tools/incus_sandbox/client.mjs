@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { readSync } from "node:fs";
 
 import { captureMigration, parseMigrationSpec, prepareSource, transferMigration } from "./source.mjs";
+import { isTaskAction, runTaskCommand } from "./task_client.mjs";
 
 const ACTIONS = new Set(["create", "list", "attach", "stop", "start", "delete", "status", "diagnose"]);
 const NAME = /^[a-z][a-z0-9-]{0,47}$/;
@@ -74,6 +75,10 @@ export function runProgram(argv, run = ({ command, args, options }) => spawnSync
     if (argv.length !== 3) throw new Error("usage: migrate SANDBOX SOURCE_CHECKOUT");
     const packet = captureMigration(argv[2], parseMigrationSpec(input(64 * 1024)));
     transferMigration(argv[1], packet, run);
+    return;
+  }
+  if (isTaskAction(argv[0])) {
+    runTaskCommand(argv, run, environment, io ?? {});
     return;
   }
   runClient(argv, (command, args, options) => run({ command, args, options }));

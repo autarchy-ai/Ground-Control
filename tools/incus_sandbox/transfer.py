@@ -22,6 +22,8 @@ _INCUS = "/usr/bin/incus"
 _BOOTSTRAP = "/usr/local/lib/gc-incus-sandbox/guest-bootstrap.py"
 _MIGRATION = "/usr/local/lib/gc-incus-sandbox/migration.py"
 _MIGRATION_PACKET = "/usr/local/lib/gc-incus-sandbox/migration_packet.py"
+_TASK_LAUNCHER = "/usr/local/lib/gc-incus-sandbox/task-launcher.py"
+_REPOSITORY_ENVIRONMENT = "/usr/local/lib/gc-incus-sandbox/repository_environment.py"
 _GUEST_HOME = "/home/sandbox"
 _PRIVATE_FILE_MODE = "--mode=0644"
 _MAX_PACKET_BYTES = 1024 * 1024 * 1024
@@ -65,6 +67,21 @@ def _packet_kind(packet: bytes) -> str:
     if metadata.get("schema") == "gc.incus-sandbox.source/v1" and metadata.get("kind") in {"clone", "bundle"}:
         return str(metadata["kind"])
     raise TransferError("transfer packet schema is invalid")
+
+
+def _packet_binding(packet: bytes) -> tuple[str, str] | None:
+    """Return the already packet-bounded repository binding, if one is declared."""
+    length = int.from_bytes(packet[4:8], "big")
+    metadata = json.loads(packet[8:8 + length].decode("utf-8"))
+    repository = metadata.get("repository_identity")
+    digest = metadata.get("environment_digest")
+    if repository is None and digest is None:
+        return None
+    if (not isinstance(repository, str) or not re.fullmatch(
+            r"[a-z0-9_.-]{1,100}/[a-z0-9_.-]{1,100}", repository)
+            or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+        raise TransferError("source environment binding is invalid")
+    return repository, digest
 
 
 def _migration_dependencies() -> tuple[type, object, object]:
@@ -127,6 +144,9 @@ def transfer_commands(project: str, sandbox: str, packet_path: str) -> list[list
     bootstrap = f"{_GUEST_HOME}/.local/bin/gc-guest-bootstrap.py"
     migration = f"{_GUEST_HOME}/.local/bin/migration.py"
     migration_packet = f"{_GUEST_HOME}/.local/bin/migration_packet.py"
+    guest_runtime = "/usr/local/lib/gc-incus-sandbox"
+    task_launcher = f"{guest_runtime}/task-launcher.py"
+    repository_environment = f"{guest_runtime}/repository_environment.py"
     packet = f"{_GUEST_HOME}/.gc-transfer/source.gcs"
     return [
         # Guest commands take an absolute guest path; a file push takes the instance-relative
@@ -134,6 +154,8 @@ def transfer_commands(project: str, sandbox: str, packet_path: str) -> list[list
         [_INCUS, "exec", sandbox, "--project", project, "--", "/usr/bin/install", "-d",
          "-o", "sandbox", "-g", "sandbox", "-m", "0700", f"{_GUEST_HOME}/.local",
          f"{_GUEST_HOME}/.local/bin", f"{_GUEST_HOME}/.gc-transfer"],
+        [_INCUS, "exec", sandbox, "--project", project, "--", "/usr/bin/install", "-d",
+         "-o", "root", "-g", "root", "-m", "0755", guest_runtime],
         # The guest runs the bootstrap as the unprivileged sandbox user, so this root-owned
         # script stays readable and is never writable inside the guest.
         [_INCUS, "file", "push", _BOOTSTRAP, f"{sandbox}{bootstrap}", "--project", project,
@@ -142,6 +164,10 @@ def transfer_commands(project: str, sandbox: str, packet_path: str) -> list[list
          _PRIVATE_FILE_MODE],
         [_INCUS, "file", "push", _MIGRATION_PACKET, f"{sandbox}{migration_packet}", "--project", project,
          _PRIVATE_FILE_MODE],
+        [_INCUS, "file", "push", _TASK_LAUNCHER, f"{sandbox}{task_launcher}", "--project", project,
+         "--mode=0755"],
+        [_INCUS, "file", "push", _REPOSITORY_ENVIRONMENT, f"{sandbox}{repository_environment}",
+         "--project", project, _PRIVATE_FILE_MODE],
         [_INCUS, "file", "push", packet_path, f"{sandbox}{packet}", "--project", project,
          _PRIVATE_FILE_MODE],
         [_INCUS, "exec", sandbox, "--project", project, "--", "su", "-", "sandbox", "-c",
@@ -180,8 +206,21 @@ def audited_transfer(config: object, sandbox: str, stream: object, kind: str,
             raise TransferError("transfer kind does not match packet schema")
         max_bytes = (_migration_limit(config, sandbox, packet, events, caller_uid)
                      if actual_kind == "migration" else _MAX_PACKET_BYTES)
-        transfer(config.project, config.state_dir, sandbox, io.BytesIO(packet),
-                 max_bytes=max_bytes)
+        if __package__:
+            from .task_environment import (
+                clear_source_binding, record_source_digest, state_lock,
+            )
+        else:
+            from task_environment import clear_source_binding, record_source_digest, state_lock
+        with state_lock(config.state_dir, sandbox):
+            if (config.state_dir / "tasks" / f"{sandbox}.json").exists():
+                raise TransferError("stop the active task before replacing its source")
+            clear_source_binding(config.state_dir, sandbox)
+            transfer(config.project, config.state_dir, sandbox, io.BytesIO(packet),
+                     max_bytes=max_bytes)
+            binding = _packet_binding(packet)
+            if binding is not None:
+                record_source_digest(config.state_dir, sandbox, *binding)
         events.write({"action": "transfer", "outcome": "success", "sandbox_id": sandbox})
     except Exception:
         events.write({"action": "transfer", "outcome": "failure", "sandbox_id": sandbox,

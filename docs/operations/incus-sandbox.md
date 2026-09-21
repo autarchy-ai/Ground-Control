@@ -12,9 +12,9 @@ Run the privileged setup deliberately from a reviewed checkout:
 sudo bash tools/incus_sandbox/setup.sh install
 ```
 
-Upgrade an existing installation in place before using dirty-work migration.
-This replaces only the reviewed programs and upgrades the root policy from
-`gc.incus-sandbox/v1` to `v2` with closed migration limits; it keeps guests,
+Upgrade an existing installation in place before using dirty-work migration or
+repository-scoped task variables. This replaces only the reviewed programs and
+upgrades a v1/v2 root policy to `gc.incus-sandbox/v3`; it keeps guests,
 allocations, storage, network policy, and sessions:
 
 ```sh
@@ -139,8 +139,9 @@ gc-incus-sandbox delete agent-1 --confirm agent-1
 gc-incus-sandbox list
 ```
 
-`attach` runs `tmux new-session -A -s coding` inside the guest. Detaching the
-host terminal leaves that guest session running. The CLI accepts no command,
+`attach` joins the explicit `gc-task` session created by `task-start`; it never
+creates a session or restores a previous task environment. Detaching the host
+terminal leaves that task session running. The CLI accepts no arbitrary command,
 profile, device, image, mount, or network arguments, and it never retries a
 requested guest operation on the host.
 
@@ -165,6 +166,7 @@ needs no guest credentials:
 ```sh
 gc-incus-sandbox create agent-1
 gc-incus-sandbox prepare agent-1 bundle "$PWD" HEAD
+gc-incus-sandbox task-start agent-1
 gc-incus-sandbox attach agent-1
 ```
 
@@ -200,6 +202,97 @@ installs at the sandbox user's own prefix; it installs no tooling, and it does
 not copy a host home, Codex cache, credential store, SSH agent, runtime socket,
 or Docker context. Run installs, hooks, tests, reviewers, and builds in the
 attached guest.
+
+## Repository-scoped task variables
+
+This feature is opt-in per repository. Installation and upgrade leave
+`task_environment.repositories` empty; Ground Control does not configure any
+repository or value for every user.
+
+A repository that needs task variables commits `.gc-sandbox-env.json` at its
+root. The identity is the normalized GitHub `owner/repository`, and every entry
+contains exactly one non-secret literal or logical secret reference:
+
+```json
+{
+  "schema": "gc.incus-sandbox.task-environment/v1",
+  "repository": "example/service",
+  "variables": [
+    {"name": "DEPLOY_REGION", "literal": "eu-central-1"},
+    {"name": "SERVICE_TOKEN", "secret_ref": "service-token"}
+  ]
+}
+```
+
+The parser is closed and bounded. It rejects unknown fields, duplicate names or
+aliases, ambiguous sources, NULs, unsafe names such as `PATH`, `LD_*`, `GIT_*`,
+`SSH_*`, `CODEX_*`, `GH_TOKEN`, and `GITHUB_TOKEN`, and a repository identity
+that differs from the sanitized Git origin. Secret values and provider paths
+never belong in this file.
+
+The host operator separately adds only the intended repository and aliases to
+the root-owned `/etc/gc-incus-sandbox/config.json` v3 policy:
+
+```json
+"task_environment": {
+  "max_value_bytes": 16384,
+  "repositories": {
+    "example/service": {
+      "service-token": {
+        "path": "/etc/gc-incus-sandbox/providers/example-service-token",
+        "state": "available"
+      }
+    }
+  }
+}
+```
+
+Create each provider file as a root-owned, non-symlinked regular file with mode
+`0600`. The fixed file provider refuses missing, empty, oversized,
+group/world-writable, expired, or revoked entries. The repository cannot name a
+path, backend, host environment variable, or alias belonging to another
+repository.
+
+Source preparation binds the normalized repository and the exact declaration
+digest to the sandbox. Then start and attach to the task explicitly:
+
+```sh
+gc-incus-sandbox prepare agent-1 bundle "$PWD" HEAD
+gc-incus-sandbox task-start agent-1
+gc-incus-sandbox attach agent-1
+```
+
+`task-start` rechecks the operator, active sandbox ownership, source binding,
+repository identity, declaration digest, and every provider reference. It
+resolves all values or starts nothing. Values travel in a bounded stdin frame
+to a fixed guest launcher, then through a one-use socket in a private runtime
+directory to a transient systemd service with a fresh dynamic uid. They do not enter argv, Incus configuration, source
+or migration packet values, images, Git data, handoff files, logs, diagnostics,
+or root-owned task state. The service constructs a minimal environment instead
+of inheriting host or guest ambient variables; stopping it kills the complete
+task cgroup and removes the private runtime directory.
+
+Use `task-restart` to stop the complete task session and resolve every reference
+again, or `task-stop` to terminate it without starting another process:
+
+```sh
+gc-incus-sandbox task-restart agent-1
+gc-incus-sandbox task-stop agent-1
+```
+
+Replace a provider file atomically to rotate it for the next task process. To
+revoke, set its host-policy state to `revoked` and stop the active task; future
+starts fail closed. Editing or removing a provider outside that operator path
+also blocks the next start, but cannot erase bytes already held by a running
+process, so stop that process explicitly. A VM stop or deletion stops the task
+first and removes its redacted task state. Starting a VM never resurrects a
+task; run `task-start` again, which re-resolves current values.
+
+`status` and `diagnose` show only task state plus configured variable names,
+literal/secret source kind, and closed availability. They omit literal values,
+secret aliases, provider paths and revisions, lengths, hashes, and child/provider
+output. GitHub publication credentials remain on the broker path; reusable
+GitHub credentials are deliberately rejected here.
 
 Guest output stays in the guest. When preparation reports a guest failure, or
 the template is missing a prerequisite, read the reason in the guest:
@@ -273,8 +366,8 @@ The probe reads the sibling guest's own address, then requires guest access to
 the metadata address, the host bridge address, the private bridge canary, that
 sibling, and an external IPv6 canary to fail. It exits non-zero when any of them
 answers or when the probe itself cannot run, and it uses no secrets or host
-checkout data. Also create, attach, stop, start, and attach again to prove
-the guest tmux session behavior. A bounded resource exercise should be performed
+checkout data. Also create, prepare, task-start, attach, task-stop, start the VM,
+and confirm no task was resurrected. A bounded resource exercise should be performed
 on a disposable VM only, while observing that the host remains responsive.
 
 Lifecycle events, including a transfer outcome without packet contents, are stored in the root-owned,

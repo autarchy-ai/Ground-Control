@@ -13,11 +13,15 @@ from pathlib import Path
 from typing import TypedDict
 
 
-_ACTIONS = {"create", "boot", "attach", "stop", "start", "delete", "status", "diagnose", "transfer"}
+_ACTIONS = {
+    "create", "boot", "attach", "stop", "start", "delete", "status", "diagnose", "transfer",
+    "task_start", "task_restart", "task_stop",
+}
 _OUTCOMES = {"success", "failure", "denied"}
 _ERRORS = {
     "none", "admission_observation_stale", "admission_insufficient", "command_failed",
     "invalid_input", "event_unavailable",
+    "task_unavailable",
 }
 _INPUT_FIELDS = {"action", "outcome", "sandbox_id", "error_code", "assigned", "observed", "duration_ms"}
 
@@ -80,7 +84,7 @@ class EventWriter(object):
         """Build one schema-constrained JSONL record from approved facts."""
         action, outcome, error_code, sandbox_id = self._identity(event)
         record: dict[str, object] = {
-            "schema": "gc.incus-sandbox.event/v1",
+            "schema": "gc.incus-sandbox.event/v2",
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "duration_ms": int(event.get("duration_ms", 0)), "event_id": str(uuid.uuid4()),
             "host_id": "local", "operation_id": str(uuid.uuid4()),

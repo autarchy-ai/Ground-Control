@@ -192,8 +192,18 @@ def _validate_metadata_shape(metadata: dict[str, Any]) -> None:
         "schema", "migration_id", "commit", "branch", "state_digest", "bundle_section",
         "handoff_section", "entries", "sections",
     }
+    binding = {"repository_identity", "environment_digest"}
+    if set(metadata) & binding:
+        expected |= binding
     if set(metadata) != expected or metadata.get("schema") != _SCHEMA:
         raise MigrationError("migration packet schema is invalid")
+    if binding <= set(metadata):
+        repository = metadata.get("repository_identity")
+        digest = metadata.get("environment_digest")
+        if (not isinstance(repository, str) or not re.fullmatch(
+                r"[a-z0-9_.-]{1,100}/[a-z0-9_.-]{1,100}", repository)
+                or not isinstance(digest, str) or not _DIGEST.fullmatch(digest)):
+            raise MigrationError("migration environment binding is invalid")
 
 
 def _validate_metadata(metadata: dict[str, Any]) -> str | None:

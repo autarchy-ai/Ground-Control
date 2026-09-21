@@ -91,6 +91,8 @@ install -m 0755 "/tmp/${{release}}/bin/gh" /usr/local/bin/gh
 rm -rf "/tmp/${{release}}.tar.gz" "/tmp/${{release}}"
 id sandbox >/dev/null 2>&1 || useradd -m -s /bin/bash sandbox
 install -d -o sandbox -g sandbox -m 0700 /home/sandbox/.local /home/sandbox/.local/bin
+printf '%s\n' 'kernel.yama.ptrace_scope=1' >/etc/sysctl.d/90-gc-sandbox-task.conf
+sysctl -q -w kernel.yama.ptrace_scope=1
 : >/etc/machine-id
 rm -f /root/.bash_history /home/sandbox/.bash_history
 """
