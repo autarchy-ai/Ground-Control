@@ -41,6 +41,11 @@ _INVALID_REQUEST = "task start request is invalid"
 _UNAVAILABLE = "a required task value is unavailable"
 
 
+def _new_task_id() -> str:
+    """Return an unpredictable fixed-width task identity."""
+    return secrets.token_hex(16)
+
+
 def _atomic_json(path: Path, document: object) -> None:
     """Replace one private JSON state file atomically."""
     path.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
@@ -139,7 +144,7 @@ class TaskRuntime(object):
     active_owner: Callable[[str, int], bool]
     runner: Callable[..., object]
     expected_provider_uid: int = 0
-    task_id_factory: Callable[[], str] = lambda: secrets.token_hex(16)
+    task_id_factory: Callable[[], str] = _new_task_id
 
 
 class TaskEnvironmentService(object):

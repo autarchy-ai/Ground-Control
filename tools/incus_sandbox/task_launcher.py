@@ -38,6 +38,18 @@ _LAUNCHER = "/usr/local/lib/gc-incus-sandbox/task-launcher.py"
 _INVALID_VARIABLE = "task frame variable is invalid"
 
 
+def _valid_frame_shape(frame: object) -> bool:
+    """Check the envelope fields without interpreting variable entries."""
+    if not isinstance(frame, dict) or set(frame) != {"schema", "task_id", "variables"}:
+        return False
+    task_id, variables = frame.get("task_id"), frame.get("variables")
+    return (
+        frame.get("schema") == "gc.incus-sandbox.task-frame/v1"
+        and isinstance(task_id, str) and bool(_TASK_ID.fullmatch(task_id))
+        and isinstance(variables, list) and len(variables) <= 128
+    )
+
+
 def _frame(raw: bytes) -> dict[str, object]:
     """Decode and validate the closed task frame envelope."""
     if not isinstance(raw, bytes) or not raw or len(raw) > MAX_TASK_FRAME_BYTES:
@@ -46,10 +58,7 @@ def _frame(raw: bytes) -> dict[str, object]:
         frame = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise FrameError("task frame is invalid") from exc
-    if (not isinstance(frame, dict) or set(frame) != {"schema", "task_id", "variables"}
-            or frame.get("schema") != "gc.incus-sandbox.task-frame/v1"
-            or not isinstance(frame.get("task_id"), str) or not _TASK_ID.fullmatch(frame["task_id"])
-            or not isinstance(frame.get("variables"), list) or len(frame["variables"]) > 128):
+    if not _valid_frame_shape(frame):
         raise FrameError("task frame is invalid")
     return frame
 
