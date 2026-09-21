@@ -1,5 +1,5 @@
 {
-  "schema": "gc.incus-sandbox/v1",
+  "schema": "gc.incus-sandbox/v2",
   "project": "gc-sandbox",
   "profile": "gc-sandbox-default",
   "pool": "gc-sandbox-pool",
@@ -18,5 +18,11 @@
     "max_memory_mib": 32768,
     "max_disk_gib": 512,
     "overhead_disk_gib": 16
+  },
+  "migration": {
+    "max_packet_bytes": 1073741824,
+    "max_file_count": 2048,
+    "max_file_bytes": 67108864,
+    "max_handoff_bytes": 65536
   }
 }

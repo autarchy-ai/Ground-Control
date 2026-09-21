@@ -12,6 +12,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+if __package__:
+    from .migration import MigrationError, restore_migration
+else:
+    from migration import MigrationError, restore_migration
+
 
 class PacketError(RuntimeError):
     """The transferred source packet is outside the closed guest contract."""
@@ -190,9 +195,23 @@ def _checkout(metadata: dict[str, str], bundle_offset: int, environment: dict[st
             _BUNDLE_PATH.unlink(missing_ok=True)
 
 
-def materialize() -> None:
+def materialize(sandbox: str = "sandbox") -> None:
     """Create a guest checkout and prepare the sandbox user's local tool prefix."""
-    metadata, bundle_offset = _validated_packet(_PACKET_PATH.read_bytes())
+    packet = _PACKET_PATH.read_bytes()
+    if len(packet) >= _HEADER_BYTES and packet[:4] == b"GCS1":
+        metadata_length = int.from_bytes(packet[4:8], "big")
+        if 2 <= metadata_length <= 8 * 1024 * 1024 and len(packet) >= _HEADER_BYTES + metadata_length:
+            try:
+                envelope = json.loads(packet[8:8 + metadata_length].decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                envelope = None
+            if isinstance(envelope, dict) and envelope.get("schema") == "gc.incus-sandbox.migration/v1":
+                require_guest_tools()
+                restore_migration(packet, _WORKSPACE_PATH, _PACKET_PATH.parent, sandbox)
+                guest_tool_prefix(Path.home() / ".local")
+                _PACKET_PATH.unlink(missing_ok=True)
+                return
+    metadata, bundle_offset = _validated_packet(packet)
     require_guest_tools()
     if not prepared_workspace(metadata["commit"]):
         _checkout(metadata, bundle_offset, guest_environment())
@@ -204,17 +223,17 @@ def materialize() -> None:
 
 def main(argv: list[str]) -> int:
     """Run the fixed guest bootstrap entry point."""
-    expected = [str(_PACKET_PATH), str(_WORKSPACE_PATH)]
-    if argv != expected:
-        raise PacketError("usage: guest-bootstrap.py PACKET WORKSPACE")
-    materialize()
+    if (len(argv) != 3 or argv[0] != str(_PACKET_PATH) or argv[1] != str(_WORKSPACE_PATH)
+            or not re.fullmatch(r"[a-z][a-z0-9-]{0,47}", argv[2])):
+        raise PacketError("usage: guest-bootstrap.py PACKET WORKSPACE SANDBOX")
+    materialize(argv[2])
     return 0
 
 
 if __name__ == "__main__":
     try:
         raise SystemExit(main(sys.argv[1:]))
-    except (PacketError, subprocess.CalledProcessError) as exc:
+    except (PacketError, MigrationError, subprocess.CalledProcessError) as exc:
         # The host deliberately discards guest output, so the operator reads the reason
         # from the guest-local log after attaching.
         with contextlib.suppress(OSError):

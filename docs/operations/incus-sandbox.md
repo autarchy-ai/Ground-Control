@@ -12,6 +12,15 @@ Run the privileged setup deliberately from a reviewed checkout:
 sudo bash tools/incus_sandbox/setup.sh install
 ```
 
+Upgrade an existing installation in place before using dirty-work migration.
+This replaces only the reviewed programs and upgrades the root policy from
+`gc.incus-sandbox/v1` to `v2` with closed migration limits; it keeps guests,
+allocations, storage, network policy, and sessions:
+
+```sh
+grndctl sandbox setup upgrade
+```
+
 A host without a checkout runs the same programs from the installed package:
 
 ```sh
@@ -126,7 +135,7 @@ gc-incus-sandbox status agent-1
 gc-incus-sandbox diagnose agent-1
 gc-incus-sandbox stop agent-1
 gc-incus-sandbox start agent-1
-gc-incus-sandbox delete agent-1
+gc-incus-sandbox delete agent-1 --confirm agent-1
 gc-incus-sandbox list
 ```
 
@@ -183,7 +192,8 @@ missing credential or a failed install is finished by repeating the command. A
 guest checkout at a different commit is refused rather than replaced; remove
 `~/workspace` in the guest to prepare another source there.
 
-Dirty working-tree migration is unsupported. Two guests receive separate
+Dirty working-tree migration uses the same packet and guest-bootstrap boundary;
+see [Move an existing coding task into a VM](incus-sandbox-migration.md). Two guests receive separate
 checkouts, `.git` directories, homes, runtime state, credentials, and Docker
 daemons. Preparation materializes the source and points guest-local global
 installs at the sandbox user's own prefix; it installs no tooling, and it does
@@ -286,3 +296,15 @@ sudo bash tools/incus_sandbox/setup.sh rollback
 Rollback refuses while an owned VM is running. It removes only resources named
 by this sandbox setup and leaves unrelated Incus projects, pools, bridges,
 nftables tables, Docker, libvirt, storage, and host services intact.
+
+Deleting one guest is a separate, deliberately confirming action. Stop it,
+inspect its private migration result and Git state, then repeat the exact name:
+
+```sh
+gc-incus-sandbox stop agent-1
+gc-incus-sandbox delete agent-1 --confirm agent-1
+```
+
+Disconnects, timeouts, failed imports, and failed verification never delete a
+guest. Migration does not authorize deletion of the original checkout or
+revocation of credentials.

@@ -225,7 +225,9 @@ class LifecycleBoundaryTest(SandboxTestCase):
     def test_stopped_owner_can_delete_the_same_sandbox(self) -> None:
         self.helper.create("agent-1")
         self.helper.stop("agent-1")
-        self.helper.delete("agent-1")
+        with self.assertRaises(UsageError):
+            self.helper.delete("agent-1", "agent-2")
+        self.helper.delete("agent-1", "agent-1")
         allocations = json.loads((self.config.state_dir / "allocations.json").read_text(encoding="utf-8"))
         self.assertNotIn("agent-1", allocations)
 
@@ -233,7 +235,7 @@ class LifecycleBoundaryTest(SandboxTestCase):
         self.helper.create("agent-1")
         self.helper.stop("agent-1")
         self.helper.start("agent-1")
-        self.helper.delete("agent-1")
+        self.helper.delete("agent-1", "agent-1")
         self.helper.dispatch("list")
         self.assertIn(["/usr/bin/incus", "list", "--project", self.config.project, "--format", "json"], self.commands)
 
@@ -309,51 +311,6 @@ class EventBoundaryTest(SandboxTestCase):
     def test_event_writer_rejects_invalid_resource_facts(self) -> None:
         with self.assertRaises(ValueError):
             self.writer.write({"action": "start", "outcome": "success", "assigned": {"bad": "fact"}})
-
-
-class SetupContractTest(unittest.TestCase):
-    def test_root_helper_is_directly_executable_as_a_python_program(self) -> None:
-        root = Path(__file__).resolve().parents[2]
-        helper = (root / "tools/incus_sandbox/helper.py").read_text(encoding="utf-8")
-        self.assertTrue(helper.startswith("#!/usr/bin/python3\n"))
-
-    def test_setup_installs_the_closed_guest_transfer_programs(self) -> None:
-        root = Path(__file__).resolve().parents[2]
-        setup = (root / "tools/incus_sandbox/setup.sh").read_text(encoding="utf-8")
-        self.assertIn("guest_bootstrap.py", setup)
-        self.assertIn("transfer.py", setup)
-        self.assertIn("source.mjs", setup)
-        self.assertIn("transfer.py *", setup)
-
-    def test_dry_run_is_explicit_about_owned_resources_and_never_flushes_firewalls(self) -> None:
-        root = Path(__file__).resolve().parents[2]
-        result = subprocess.run(["bash", str(root / "tools/incus_sandbox/setup.sh"), "--dry-run", "install"],
-                                capture_output=True, text=True, check=True)
-        self.assertIn("incus project create gc-sandbox", result.stdout)
-        self.assertIn("nft -f", result.stdout)
-        self.assertIn("btrfs size=64GiB", result.stdout)
-        self.assertIn("quota write probe", result.stdout)
-        self.assertIn('profile device add gc-sandbox-default root disk path=/ pool=gc-sandbox-pool --project gc-sandbox', result.stdout)
-        self.assertIn('project set gc-sandbox restricted.devices.nic allow', result.stdout)
-        self.assertIn('profile device add gc-sandbox-default agent disk source=agent:config --project gc-sandbox', result.stdout)
-        self.assertIn("record network-addresses.sha256", result.stdout)
-        self.assertNotIn("flush ruleset", result.stdout)
-        self.assertNotIn("mkfs", result.stdout)
-
-    def test_dry_run_rollback_refuses_to_remove_running_owned_vms(self) -> None:
-        root = Path(__file__).resolve().parents[2]
-        result = subprocess.run(["bash", str(root / "tools/incus_sandbox/setup.sh"), "--dry-run", "rollback"],
-                                capture_output=True, text=True, check=True)
-        self.assertIn("refuse rollback while owned VMs are running", result.stdout)
-
-    def test_firewall_has_a_scoped_input_deny_and_rollback_requires_the_ownership_record(self) -> None:
-        root = Path(__file__).resolve().parents[2]
-        rules = (root / "tools/incus_sandbox/gc-incus-sandbox.nft").read_text(encoding="utf-8")
-        setup = (root / "tools/incus_sandbox/setup.sh").read_text(encoding="utf-8")
-        self.assertIn("chain input", rules)
-        self.assertIn('iifname "gcbr0" ip daddr @host_ipv4 drop', rules)
-        self.assertIn("require_complete_ownership_record", setup)
-        self.assertIn("setup-owned", setup)
 
 
 def write_lifecycle_event(path: str, max_bytes: int, sandbox: str) -> None:

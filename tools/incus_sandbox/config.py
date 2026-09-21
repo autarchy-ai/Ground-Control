@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,6 +36,16 @@ class HostLimits(object):
 
 
 @dataclass(frozen=True)
+class MigrationLimits(object):
+    """Root-owned bounds for dirty-work packets accepted by the transfer helper."""
+
+    max_packet_bytes: int
+    max_file_count: int
+    max_file_bytes: int
+    max_handoff_bytes: int
+
+
+@dataclass(frozen=True)
 class SandboxConfig(object):
     """Validated host policy used by the root-side lifecycle helper."""
 
@@ -48,6 +61,7 @@ class SandboxConfig(object):
     operator_uid: int
     vm: VmLimits
     host: HostLimits
+    migration: MigrationLimits | None
 
 
 _TOP_LEVEL = {
@@ -55,12 +69,20 @@ _TOP_LEVEL = {
     "event_log", "event_max_bytes", "observation_max_age_seconds", "operator_uid",
     "vm", "host",
 }
+_TOP_LEVEL_V2 = _TOP_LEVEL | {"migration"}
 _VM_FIELDS = ("cpu", "memory_mib", "disk_gib")
 _HOST_FIELDS = (
     "reserve_memory_mib", "reserve_disk_gib", "max_cpu", "max_memory_mib",
     "max_disk_gib", "overhead_disk_gib",
 )
+_MIGRATION_FIELDS = ("max_packet_bytes", "max_file_count", "max_file_bytes", "max_handoff_bytes")
 _MIN_EVENT_BYTES = 512
+_DEFAULT_MIGRATION = {
+    "max_packet_bytes": 1024 * 1024 * 1024,
+    "max_file_count": 2048,
+    "max_file_bytes": 64 * 1024 * 1024,
+    "max_handoff_bytes": 64 * 1024,
+}
 
 
 def _positive(value: object, field: str) -> int:
@@ -115,10 +137,10 @@ def _read_document(path: Path) -> dict[str, object]:
 
 def _check_top_level(doc: dict[str, object]) -> None:
     """Verify the closed versioned configuration vocabulary."""
-    if set(doc) != _TOP_LEVEL:
-        raise ConfigError("configuration keys do not match gc.incus-sandbox/v1")
-    if doc["schema"] != "gc.incus-sandbox/v1":
-        raise ConfigError("unsupported configuration schema")
+    schema = doc.get("schema")
+    expected = _TOP_LEVEL if schema == "gc.incus-sandbox/v1" else _TOP_LEVEL_V2
+    if schema not in {"gc.incus-sandbox/v1", "gc.incus-sandbox/v2"} or set(doc) != expected:
+        raise ConfigError("configuration keys do not match the declared gc.incus-sandbox schema")
 
 
 def _image(doc: dict[str, object]) -> str:
@@ -152,6 +174,17 @@ def _build_config(doc: dict[str, object]) -> SandboxConfig:
     event_max_bytes = _positive(doc["event_max_bytes"], "event_max_bytes")
     if event_max_bytes < _MIN_EVENT_BYTES:
         raise ConfigError(f"event_max_bytes must be at least {_MIN_EVENT_BYTES}")
+    migration = None
+    if doc["schema"] == "gc.incus-sandbox/v2":
+        values = _limits(doc, _MIGRATION_FIELDS, "migration")
+        migration = MigrationLimits(*values)
+        if (migration.max_packet_bytes > 1024 * 1024 * 1024
+                or migration.max_file_count > 2048
+                or migration.max_file_bytes > 64 * 1024 * 1024
+                or migration.max_handoff_bytes > 64 * 1024
+                or migration.max_file_bytes > migration.max_packet_bytes
+                or migration.max_handoff_bytes > migration.max_packet_bytes):
+            raise ConfigError("migration limits exceed the installed guest validator")
     return SandboxConfig(
         project=_name(doc, "project"), profile=_name(doc, "profile"),
         pool=_name(doc, "pool"), bridge=_name(doc, "bridge"), image=_image(doc),
@@ -161,6 +194,7 @@ def _build_config(doc: dict[str, object]) -> SandboxConfig:
             doc["observation_max_age_seconds"], "observation_max_age_seconds"
         ),
         operator_uid=_positive(doc["operator_uid"], "operator_uid"), vm=vm, host=host,
+        migration=migration,
     )
 
 
@@ -170,3 +204,45 @@ def load_config(path: Path, *, expected_uid: int = 0) -> SandboxConfig:
     document = _read_document(path)
     _check_top_level(document)
     return _build_config(document)
+
+
+def upgrade_config(path: Path, *, expected_uid: int = 0) -> bool:
+    """Atomically add the closed v2 migration limits to a valid v1 policy."""
+    _owned_regular(path, expected_uid)
+    document = _read_document(path)
+    _check_top_level(document)
+    _build_config(document)
+    if document["schema"] == "gc.incus-sandbox/v2":
+        return False
+    upgraded = {**document, "schema": "gc.incus-sandbox/v2", "migration": _DEFAULT_MIGRATION}
+    _check_top_level(upgraded)
+    _build_config(upgraded)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, prefix="config-", suffix=".json",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump(upgraded, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.chmod(0o600)
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except Exception:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        raise
+    return True
+
+
+if __name__ == "__main__":
+    if sys.argv != [sys.argv[0], "upgrade", "/etc/gc-incus-sandbox/config.json"] or os.geteuid() != 0:
+        raise SystemExit("usage: config.py upgrade /etc/gc-incus-sandbox/config.json (as root)")
+    upgrade_config(Path(sys.argv[2]))

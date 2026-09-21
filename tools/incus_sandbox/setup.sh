@@ -13,6 +13,7 @@ readonly STATE_ROOT="/var/lib/gc-incus-sandbox"
 readonly RULES_PATH="/etc/nftables.d/gc-incus-sandbox.nft"
 readonly OWNERSHIP_RECORD="$STATE_ROOT/setup-owned"
 readonly POOL_SIZE="64GiB"
+readonly PAYLOAD_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 dry_run=false
 
 run() {
@@ -119,27 +120,30 @@ populate_nft_sets() {
 }
 
 install_files() {
+  local preserve_ownership="${1:-false}"
   run install -d -m 0750 "$CONFIG_ROOT"
   if "$dry_run"; then
     echo "create root-owned configuration when absent, then require a pinned image fingerprint"
   elif [[ ! -e "$CONFIG_ROOT/config.json" ]]; then
     [[ "${SUDO_UID:-}" =~ ^[1-9][0-9]*$ ]] || { echo "install through sudo from the intended operator" >&2; return 64; }
     sed "s/\"operator_uid\": 1000/\"operator_uid\": ${SUDO_UID}/" \
-      tools/incus_sandbox/config.example.json >"$CONFIG_ROOT/config.json"
+      "$PAYLOAD_ROOT/config.example.json" >"$CONFIG_ROOT/config.json"
     chmod 0600 "$CONFIG_ROOT/config.json"
     echo "replace the image placeholder with a pinned fingerprint, then rerun setup" >&2
     return 64
   fi
   run install -d -m 0750 "$INSTALL_ROOT" "$STATE_ROOT" /var/log/gc-incus-sandbox
-  run install -m 0640 tools/incus_sandbox/config.py "$INSTALL_ROOT/config.py"
-  run install -m 0640 tools/incus_sandbox/events.py "$INSTALL_ROOT/events.py"
-  run install -m 0640 tools/incus_sandbox/observations.py "$INSTALL_ROOT/observations.py"
-  run install -m 0644 tools/incus_sandbox/guest_bootstrap.py "$INSTALL_ROOT/guest-bootstrap.py"
-  run install -m 0750 tools/incus_sandbox/helper.py "$INSTALL_ROOT/helper.py"
-  run install -m 0750 tools/incus_sandbox/transfer.py "$INSTALL_ROOT/transfer.py"
-  run install -m 0755 tools/incus_sandbox/client.mjs /usr/local/bin/gc-incus-sandbox
-  run install -m 0644 tools/incus_sandbox/source.mjs /usr/local/bin/source.mjs
-  run install -m 0640 tools/incus_sandbox/gc-incus-sandbox.nft "$RULES_PATH"
+  run install -m 0640 "$PAYLOAD_ROOT/config.py" "$INSTALL_ROOT/config.py"
+  run install -m 0640 "$PAYLOAD_ROOT/events.py" "$INSTALL_ROOT/events.py"
+  run install -m 0640 "$PAYLOAD_ROOT/observations.py" "$INSTALL_ROOT/observations.py"
+  run install -m 0644 "$PAYLOAD_ROOT/guest_bootstrap.py" "$INSTALL_ROOT/guest-bootstrap.py"
+  run install -m 0644 "$PAYLOAD_ROOT/migration.py" "$INSTALL_ROOT/migration.py"
+  run install -m 0644 "$PAYLOAD_ROOT/migration_guard.mjs" /usr/local/bin/migration_guard.mjs
+  run install -m 0750 "$PAYLOAD_ROOT/helper.py" "$INSTALL_ROOT/helper.py"
+  run install -m 0750 "$PAYLOAD_ROOT/transfer.py" "$INSTALL_ROOT/transfer.py"
+  run install -m 0755 "$PAYLOAD_ROOT/client.mjs" /usr/local/bin/gc-incus-sandbox
+  run install -m 0644 "$PAYLOAD_ROOT/source.mjs" /usr/local/bin/source.mjs
+  run install -m 0640 "$PAYLOAD_ROOT/gc-incus-sandbox.nft" "$RULES_PATH"
   if ! "$dry_run"; then
     [[ "${SUDO_UID:-}" =~ ^[1-9][0-9]*$ ]] || { echo "install through sudo from the intended operator" >&2; exit 64; }
     cat >"/etc/sudoers.d/gc-incus-sandbox" <<EOF
@@ -148,9 +152,11 @@ ${SUDO_USER} ALL=(root) NOPASSWD: $INSTALL_ROOT/helper.py *, $INSTALL_ROOT/trans
 EOF
     chmod 0440 /etc/sudoers.d/gc-incus-sandbox
     visudo -cf /etc/sudoers.d/gc-incus-sandbox
-    : >"$OWNERSHIP_RECORD"
-    chmod 0600 "$OWNERSHIP_RECORD"
-    printf '%s\n' files sudoers rules config >>"$OWNERSHIP_RECORD"
+    if [[ "$preserve_ownership" != true ]]; then
+      : >"$OWNERSHIP_RECORD"
+      chmod 0600 "$OWNERSHIP_RECORD"
+      printf '%s\n' files sudoers rules config >>"$OWNERSHIP_RECORD"
+    fi
   else
     echo "install validated fixed-helper sudo rule"
   fi
@@ -204,6 +210,15 @@ require_complete_ownership_record() {
   done
 }
 
+require_program_ownership_record() {
+  [[ -f "$OWNERSHIP_RECORD" && ! -L "$OWNERSHIP_RECORD" ]] || { echo "missing sandbox ownership record" >&2; exit 65; }
+  [[ "$(stat -c '%u:%a' "$OWNERSHIP_RECORD")" == "0:600" ]] || { echo "unsafe sandbox ownership record" >&2; exit 65; }
+  local item
+  for item in files sudoers rules config; do
+    grep -Fxq "$item" "$OWNERSHIP_RECORD" || { echo "incomplete sandbox program ownership record" >&2; exit 65; }
+  done
+}
+
 rollback_partial() {
   [[ -f "$OWNERSHIP_RECORD" && ! -L "$OWNERSHIP_RECORD" ]] || return 0
   [[ "$(stat -c '%u:%a' "$OWNERSHIP_RECORD")" == "0:600" ]] || return 0
@@ -221,11 +236,22 @@ refresh() {
   # Host addresses and another firewall's chains change under a live installation.
   # Reapplying only those keeps the destructive install path out of the routine case.
   "$dry_run" && { echo "reapply the sandbox firewall table, address sets, and bridge forwarding"; return 0; }
-  require_complete_ownership_record
+  # Refresh mutates only the setup-owned rules file/table and forwarding entries.
+  # Older valid installs may predate the later resource-completion markers.
+  require_program_ownership_record
   nft delete table inet gc_incus_sandbox 2>/dev/null || true
   nft -f "$RULES_PATH"
   populate_nft_sets
   allow_bridge_forwarding
+}
+
+upgrade() {
+  # Replace only reviewed sandbox programs and migrate the closed root policy;
+  # existing guests, allocations, storage, and network resources remain intact.
+  "$dry_run" && { echo "upgrade sandbox programs and gc.incus-sandbox config to v2"; return 0; }
+  require_program_ownership_record
+  install_files true
+  /usr/bin/python3 "$INSTALL_ROOT/config.py" upgrade "$CONFIG_ROOT/config.json"
 }
 
 rollback() {
@@ -267,6 +293,7 @@ case "${1:-}" in
     trap - EXIT
     ;;
   refresh) refresh ;;
+  upgrade) upgrade ;;
   rollback) rollback ;;
-  *) echo "usage: setup.sh [--dry-run] {install|refresh|rollback}" >&2; exit 64 ;;
+  *) echo "usage: setup.sh [--dry-run] {install|upgrade|refresh|rollback}" >&2; exit 64 ;;
 esac

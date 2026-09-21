@@ -57,7 +57,9 @@ test("host source discovery removes ambient credentials and disables repository 
   assert.equal(environment.GIT_TERMINAL_PROMPT, "0");
   assert.equal(environment.GIT_CONFIG_VALUE_0, "/dev/null");
   assert.equal(environment.GIT_CONFIG_VALUE_1, "false");
-  assert.equal(environment.GIT_CONFIG_VALUE_2, "");
+  assert.equal(environment.GIT_CONFIG_KEY_2, "core.attributesFile");
+  assert.equal(environment.GIT_CONFIG_VALUE_2, "/dev/null");
+  assert.equal(environment.GIT_CONFIG_VALUE_3, "");
 });
 
 test("source packets carry an immutable commit without a host path or credential", () => {

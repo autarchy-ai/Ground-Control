@@ -152,6 +152,20 @@ class GuestMaterializationTest(unittest.TestCase):
             self.assertNotIn("clone", [command[3] for command in commands if len(command) > 3])
             self.assertEqual([command[3] for command in commands], ["rev-parse"])
 
+    def test_materialize_routes_a_migration_packet_to_the_atomic_restorer(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self._materialization_paths(root)
+            paths.pop("home")
+            source = packet({"schema": "gc.incus-sandbox.migration/v1"})
+            paths["_PACKET_PATH"].write_bytes(source)
+            with patch.multiple(guest_bootstrap, **paths), \
+                 patch("tools.incus_sandbox.guest_bootstrap.restore_migration", return_value={}) as restore:
+                guest_bootstrap.materialize()
+            restore.assert_called_once_with(source, paths["_WORKSPACE_PATH"],
+                                            paths["_PACKET_PATH"].parent, "sandbox")
+            self.assertFalse(paths["_PACKET_PATH"].exists())
+
     def test_materialize_rejects_a_workspace_holding_another_commit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -187,10 +201,10 @@ class GuestMaterializationTest(unittest.TestCase):
         self.assertIn("/bin/false", recorded)
 
     def test_main_uses_only_the_fixed_paths(self) -> None:
-        expected = [str(guest_bootstrap._PACKET_PATH), str(guest_bootstrap._WORKSPACE_PATH)]
+        expected = [str(guest_bootstrap._PACKET_PATH), str(guest_bootstrap._WORKSPACE_PATH), "agent-1"]
         with patch("tools.incus_sandbox.guest_bootstrap.materialize") as materialize:
             self.assertEqual(main(expected), 0)
-        materialize.assert_called_once_with()
+        materialize.assert_called_once_with("agent-1")
 
     def test_cli_reports_invalid_arguments(self) -> None:
         with patch.object(sys, "argv", ["guest-bootstrap.py"]):
@@ -210,6 +224,7 @@ class TransferCommandTest(unittest.TestCase):
         rendered = json.dumps(commands)
         self.assertIn("/usr/bin/incus", rendered)
         self.assertIn("guest-bootstrap.py", rendered)
+        self.assertIn("migration.py", rendered)
         self.assertIn("source.gcs", rendered)
         self.assertNotIn("/home/operator", rendered)
         self.assertTrue(all(command[0] == "/usr/bin/incus" for command in commands))
@@ -222,7 +237,7 @@ class TransferCommandTest(unittest.TestCase):
         self.assertEqual([argument for argument in commands[0] if argument.startswith("/home")],
                          ["/home/sandbox/.local", "/home/sandbox/.local/bin", "/home/sandbox/.gc-transfer"])
         self.assertTrue(all(command[4].startswith("agent-1/home/sandbox/")
-                            for command in commands[1:3]))
+                            for command in commands[1:4]))
         # The bootstrap is root-owned and run by the unprivileged guest user.
         self.assertIn("--mode=0755", commands[1])
 
@@ -258,15 +273,78 @@ class TransferCommandTest(unittest.TestCase):
         config = types.SimpleNamespace(event_log=Path("/tmp/events"), event_max_bytes=32,
                                        project="gc-sandbox", state_dir=Path("/tmp/state"))
         events = types.SimpleNamespace(EventWriter=EventWriter)
+        clone = packet({"schema": "gc.incus-sandbox.source/v1", "kind": "clone", "commit": "a" * 40,
+                        "repository": "https://github.com/example/private.git"})
+        bundle = packet({"schema": "gc.incus-sandbox.source/v1", "kind": "bundle", "commit": "a" * 40}, b"bundle")
         with patch.dict(sys.modules, {"events": events}):
             with patch("tools.incus_sandbox.transfer.transfer"):
-                incus_transfer.audited_transfer(config, "agent-1", io.BytesIO(b"packet"), "clone")
+                incus_transfer.audited_transfer(config, "agent-1", io.BytesIO(clone), "clone")
             with patch("tools.incus_sandbox.transfer.transfer", side_effect=RuntimeError("failed")):
                 with self.assertRaises(RuntimeError):
-                    incus_transfer.audited_transfer(config, "agent-1", io.BytesIO(b"packet"), "bundle")
+                    incus_transfer.audited_transfer(config, "agent-1", io.BytesIO(bundle), "bundle")
         self.assertEqual([record["outcome"] for record in records], ["success", "failure"])
         with self.assertRaises(TransferError):
             incus_transfer.audited_transfer(config, "agent-1", io.BytesIO(b"packet"), "invalid")
+
+    def test_dirty_migration_requires_v2_root_owned_limits(self) -> None:
+        events = types.SimpleNamespace(EventWriter=lambda *_: types.SimpleNamespace(
+            ensure_available=lambda: None, write=lambda _: None,
+        ))
+        config = types.SimpleNamespace(event_log=Path("/tmp/events"), event_max_bytes=32,
+                                       project="gc-sandbox", state_dir=Path("/tmp/state"), migration=None)
+        with patch.dict(sys.modules, {"events": events}):
+            with self.assertRaises(TransferError) as result:
+                incus_transfer.audited_transfer(
+                    config, "agent-1", io.BytesIO(packet({"schema": "gc.incus-sandbox.migration/v1"})),
+                    "migration", caller_uid=1000,
+                )
+        self.assertIn("v2", str(result.exception))
+
+    def test_declared_bundle_cannot_smuggle_a_migration_packet(self) -> None:
+        records: list[dict[str, str]] = []
+
+        class EventWriter:
+            def __init__(self, *_: object) -> None:
+                pass
+
+            def ensure_available(self) -> None:
+                pass
+
+            def write(self, record: dict[str, str]) -> None:
+                records.append(record)
+
+        config = types.SimpleNamespace(event_log=Path("/tmp/events"), event_max_bytes=32,
+                                       project="gc-sandbox", state_dir=Path("/tmp/state"), migration=None)
+        events = types.SimpleNamespace(EventWriter=EventWriter)
+        source = packet({"schema": "gc.incus-sandbox.migration/v1"})
+        with patch.dict(sys.modules, {"events": events}), \
+             patch("tools.incus_sandbox.transfer.transfer") as transfer_call:
+            with self.assertRaisesRegex(TransferError, "kind does not match"):
+                incus_transfer.audited_transfer(config, "agent-1", io.BytesIO(source), "bundle")
+        transfer_call.assert_not_called()
+        self.assertEqual(records[-1]["outcome"], "failure")
+
+    def test_migration_schema_requires_active_owner_before_transfer(self) -> None:
+        writer = types.SimpleNamespace(ensure_available=lambda: None, write=lambda _: None)
+        events = types.SimpleNamespace(EventWriter=lambda *_: writer)
+        limits = types.SimpleNamespace(max_packet_bytes=1024, max_file_count=4,
+                                       max_file_bytes=128, max_handoff_bytes=64)
+        config = types.SimpleNamespace(event_log=Path("/tmp/events"), event_max_bytes=32,
+                                       project="gc-sandbox", state_dir=Path("/tmp/state"), migration=limits)
+        metadata = {
+            "entries": {"index": [], "worktree": [], "untracked": []},
+            "sections": [{"role": "handoff", "length": 1}], "handoff_section": 0,
+        }
+        source = packet({"schema": "gc.incus-sandbox.migration/v1"})
+        with patch.dict(sys.modules, {"events": events}), \
+             patch("tools.incus_sandbox.helper.LifecycleHelper.require_active_owner") as require_owner, \
+             patch("tools.incus_sandbox.migration.parse_migration_packet", return_value=(metadata, b"")), \
+             patch("tools.incus_sandbox.transfer.transfer") as transfer_call:
+            incus_transfer.audited_transfer(
+                config, "agent-1", io.BytesIO(source), "migration", caller_uid=1000,
+            )
+        require_owner.assert_called_once_with("agent-1")
+        transfer_call.assert_called_once()
 
     def test_transfer_entrypoint_checks_operator_identity_and_dispatches(self) -> None:
         config = types.SimpleNamespace(operator_uid=1000)
