@@ -6,7 +6,6 @@
   "packages": {
     ".": {
       "release-type": "simple",
-      "package-name": "ground-control",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
         {
