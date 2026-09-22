@@ -209,3 +209,12 @@ class VersionMirrorConsistencyChecksTest(unittest.TestCase):
             [],
             msg=f"real-repo version mirrors drifted: {[v.message for v in violations]}",
         )
+
+    def test_repo_release_pr_title_preserves_release_identity(self):
+        config = json.loads(
+            (REPO_ROOT / "release-please-config.json").read_text(encoding="utf-8")
+        )
+        pattern = config.get("group-pull-request-title-pattern", "")
+        self.assertIn("${scope}", pattern)
+        self.assertIn("${component}", pattern)
+        self.assertIn("${version}", pattern)
