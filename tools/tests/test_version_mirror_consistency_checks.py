@@ -215,5 +215,6 @@ class VersionMirrorConsistencyChecksTest(unittest.TestCase):
             (REPO_ROOT / "release-please-config.json").read_text(encoding="utf-8")
         )
         pattern = config.get("group-pull-request-title-pattern", "")
+        self.assertIn("${scope}", pattern)
         self.assertIn("${component}", pattern)
         self.assertIn("${version}", pattern)
