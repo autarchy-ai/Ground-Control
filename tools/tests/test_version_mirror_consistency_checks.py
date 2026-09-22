@@ -218,3 +218,11 @@ class VersionMirrorConsistencyChecksTest(unittest.TestCase):
         self.assertIn("${scope}", pattern)
         self.assertIn("${component}", pattern)
         self.assertIn("${version}", pattern)
+
+    def test_repo_grouped_root_release_does_not_require_a_branch_component(self):
+        config = json.loads(
+            (REPO_ROOT / "release-please-config.json").read_text(encoding="utf-8")
+        )
+        self.assertFalse(config["include-component-in-tag"])
+        self.assertFalse(config["separate-pull-requests"])
+        self.assertNotIn("package-name", config["packages"]["."])
