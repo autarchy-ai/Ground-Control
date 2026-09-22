@@ -56,8 +56,8 @@ describe("runCodexReview slices an over-cap diff (#1414, hermetic codex+gh shims
     writeFileSync(join(repoDir, "README"), "x\n");
     execFileSync("git", ["-C", repoDir, "add", "README"]);
     execFileSync("git", ["-C", repoDir, "commit", "-q", "-m", "init"]);
-    // Real origin so owner/repo resolves from the git remote, as production does. git ignores
-    // GH_REPO; the `gh repo view` fallback honours it.
+    // An integration base to diff against (#1694), and a real origin so owner/repo resolves (git ignores GH_REPO).
+    execFileSync("git", ["-C", repoDir, "update-ref", "refs/heads/dev", "HEAD"]);
     execFileSync("git", ["-C", repoDir, "remote", "add", "origin", "https://github.com/fake/repo.git"]);
 
     for (const name of ["alpha.txt", "beta.txt", "gamma.txt"]) {

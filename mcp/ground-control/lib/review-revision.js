@@ -78,7 +78,6 @@ export async function captureCandidateTreeOid(repoRoot, {
 async function seedCandidateIndex(gitDir, indexFile, run) {
   const source = join(gitDir, "index");
   try {
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are derived from git rev-parse and a random temp name
     copyFileSync(source, indexFile);
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- same derived path as the copy above
     const { atime, mtime } = statSync(source);
@@ -144,14 +143,12 @@ export function buildReviewRevision({
   };
 }
 
-async function resolveObjectId(repoRoot, refs, commandRunner) {
-  for (const ref of refs) {
-    try {
-      const { stdout } = await commandRunner("git", ["-C", repoRoot, "rev-parse", "--verify", ref], { cwd: repoRoot });
-      const oid = stdout.trim();
-      if (GIT_OBJECT_ID_RE.test(oid)) return oid;
-    } catch { /* try the next canonical ref */ }
-  }
+async function resolveHead(repoRoot, commandRunner) {
+  try {
+    const { stdout } = await commandRunner("git", ["-C", repoRoot, "rev-parse", "--verify", "HEAD"], { cwd: repoRoot });
+    const oid = stdout.trim();
+    if (GIT_OBJECT_ID_RE.test(oid)) return oid;
+  } catch { /* reported below as an unresolvable revision */ }
   return null;
 }
 
@@ -167,25 +164,17 @@ export async function captureReviewRevision({
   assertCheckoutConfiguration = assertSafeImplementCheckoutConfiguration,
 } = {}) {
   const capture = async (providedDiff = null) => {
-    const beforeHead = await resolveObjectId(repoRoot, ["HEAD"], commandRunner);
+    const beforeHead = await resolveHead(repoRoot, commandRunner);
     const diff = providedDiff ?? await computeDiff(repoRoot, baseBranch, uncommitted);
-    const beforeBase = await resolveObjectId(
-      repoRoot,
-      [diff.baseRefDescriptor, `origin/${baseBranch}`, baseBranch, beforeHead].filter(Boolean),
-      commandRunner,
-    );
-    const afterHead = await resolveObjectId(repoRoot, ["HEAD"], commandRunner);
-    const afterBase = await resolveObjectId(
-      repoRoot,
-      [diff.baseRefDescriptor, `origin/${baseBranch}`, baseBranch, afterHead].filter(Boolean),
-      commandRunner,
-    );
-    if (beforeHead !== afterHead || beforeBase !== afterBase) {
+    const afterHead = await resolveHead(repoRoot, commandRunner);
+    if (beforeHead !== afterHead) {
       throw Object.assign(new Error("review revision changed during capture"), { code: "review_revision_changed_during_capture" });
     }
     return { revision: buildReviewRevision({
       headOid: afterHead,
-      baseOid: afterBase,
+      // The object the patch was generated from, never a re-resolved ref: the
+      // base ref can advance without moving the diff base (issue #1694).
+      baseOid: diff.baseOid,
       candidateTreeOid: await captureCandidateTree(repoRoot, { commandRunner, assertCheckoutConfiguration }),
       diffText: diff.diffText,
       manifest: diff.manifest,
@@ -203,4 +192,31 @@ export async function captureReviewRevision({
     throw Object.assign(new Error("review input changed during capture"), { code: "review_revision_changed_during_capture" });
   }
   return second;
+}
+
+const REVIEW_DRIFT_MESSAGES = {
+  head_moved: "HEAD moved after the review ran, so the reviewed candidate is no longer the checkout's.",
+  candidate_changed: "The candidate tree changed after the review ran.",
+  base_moved: "The review's diff base moved after it ran while HEAD and the candidate tree did not; re-run the review against the current base.",
+  review_input_changed: "The reviewed input changed after the review ran (tracked diff, untracked path set, or tracked symlinks).",
+};
+export const REVIEW_DRIFT_CAUSES = Object.freeze(Object.keys(REVIEW_DRIFT_MESSAGES));
+
+/**
+ * Why a retained revision no longer matches the live one, or null when it still
+ * does. The digest binds what the reviewers saw and the candidate tree binds what
+ * a delivery would carry, so either moving makes the review stale; the cause
+ * keeps a base-only move from being reported as a working-tree change.
+ */
+export function describeReviewRevisionDrift(retained, observed) {
+  let cause = null;
+  if (retained.head_oid !== observed.head_oid) cause = "head_moved";
+  else if (retained.candidate_tree_oid !== observed.candidate_tree_oid) cause = "candidate_changed";
+  else if (retained.base_oid !== observed.base_oid) cause = "base_moved";
+  else if (retained.digest !== observed.digest) cause = "review_input_changed";
+  return cause && { cause, message: reviewDriftMessage(cause) };
+}
+
+export function reviewDriftMessage(cause) {
+  return REVIEW_DRIFT_MESSAGES[cause] ?? "The review input changed after the review ran.";
 }
