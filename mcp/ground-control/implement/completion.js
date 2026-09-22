@@ -115,6 +115,12 @@ export async function runReadiness(args, deps) {
     const invalid = requireField(args, field, action);
     if (invalid) return invalid;
   }
+  // Validate the consumer before either lane publishes a readiness record. The workflow
+  // registry is insufficient: GitHub keeps entries created by closed, unmerged PRs (#1702).
+  const phaseE = await deps.verifyPhaseEWorkflow({ repoPath: args.repoPath, prNumber: args.prNumber });
+  if (!phaseE.ok) {
+    return failure(action, phaseE.error, phaseE.message, phaseE.next_action, { phase_e: phaseE });
+  }
   if (args.lane === "quickfix") return quickfixReadiness(args, deps, action);
 
   const result = await deps.assertCompletion(mapCompletion(args, "pre_merge"));

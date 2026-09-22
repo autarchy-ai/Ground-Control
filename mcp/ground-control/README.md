@@ -54,7 +54,12 @@ grndctl doctor
 `grndctl init` also installs `.github/workflows/ground-control-phase-e.yml`, pinned to
 the exact installed version. That workflow finishes Phase E when a delivery pull request
 merges, so an agent can be terminated at a ready pull request and the merge alone closes
-out the issue (ADR-102). It never rewrites a copy the repository already has;
+out the issue (ADR-102). Readiness verifies the file from the delivery PR's base revision and refuses to
+record a handoff when the `pull_request: closed` trigger does not cover that base branch.
+If a valid handoff predates the workflow and its PR is already merged, install the workflow
+and dispatch **Ground Control Phase E** with the PR number, or run
+`grndctl finalize-merged-pr --pr <number>` from the merged checkout.
+It never rewrites a copy the repository already has;
 `grndctl doctor` reports one that is missing or has drifted.
 
 One more verb runs there rather than from an agent session:

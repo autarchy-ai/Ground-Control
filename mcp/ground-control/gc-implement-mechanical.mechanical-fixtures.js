@@ -52,6 +52,7 @@ export function baseDeps(overrides = {}) {
     remoteSnapshot: async () => ({ ok: true, head_sha: "a".repeat(40), branch: IMPLEMENT_BRANCH, failures: [], passed: true }),
     // Readiness binds the delivery handoff to the head whose hosted checks it read (#1671).
     readRemoteGates: async () => ({ ok: true, passed: true, state: "OPEN", head_sha: "a".repeat(40) }),
+    verifyPhaseEWorkflow: async () => ({ ok: true, base_ref: "dev", base_sha: "b".repeat(40) }),
     recordDeliveryReadiness: async () => ({ ok: true, record_comment_id: 4242 }),
     monitorSleep: async () => new Promise((resolve) => setImmediate(resolve)),
     watchCi: async () => ({ ok: true, conclusion: "success" }),

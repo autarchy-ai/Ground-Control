@@ -40,6 +40,7 @@ describe("runImplementMechanical quickfix lane", () => {
         sonar_status: "passed",
       },
     }, {
+      verifyPhaseEWorkflow: async () => ({ ok: true }),
       assertCompletion: async () => {
         assertionCalls += 1;
         return { ok: true };
@@ -81,6 +82,7 @@ describe("runImplementMechanical quickfix lane", () => {
       prNumber: 99,
       completion: { requirements: [], files: {}, reviews: [], ci_status: "green", sonar_status: "passed" },
     }, {
+      verifyPhaseEWorkflow: async () => ({ ok: true }),
       readRemoteGates: async () => ({
         ok: true, passed: true, state: "OPEN", head_sha: "c".repeat(40), branch: "1637-quickfix",
       }),
@@ -110,6 +112,7 @@ describe("runImplementMechanical quickfix lane", () => {
       prNumber: 99,
       completion: { requirements: [], files: {}, reviews: [], ci_status: "green", sonar_status: "passed" },
     }, {
+      verifyPhaseEWorkflow: async () => ({ ok: true }),
       readRemoteGates: async () => ({
         ok: true, passed: true, state: "OPEN", head_sha: "c".repeat(40), branch: "1637-quickfix",
       }),
@@ -132,6 +135,7 @@ describe("runImplementMechanical quickfix lane", () => {
       prNumber: 99,
       completion: { requirements: [], files: {}, reviews: [], ci_status: "green", sonar_status: "passed" },
     }, {
+      verifyPhaseEWorkflow: async () => ({ ok: true }),
       readRemoteGates: async () => ({
         ok: true, passed: true, state: "OPEN", head_sha: "c".repeat(40), branch: "1637-quickfix",
       }),
@@ -157,6 +161,7 @@ describe("runImplementMechanical quickfix lane", () => {
       prNumber: 99,
       completion: { requirements: [], files: {}, reviews: [], ci_status: "green", sonar_status: "passed" },
     }, {
+      verifyPhaseEWorkflow: async () => ({ ok: true }),
       readRemoteGates: async () => ({ ok: true, passed: false, state: "OPEN", head_sha: "c".repeat(40) }),
       recordDeliveryReadiness: async () => {
         recordCalls += 1;
@@ -211,6 +216,7 @@ describe("runImplementMechanical implement-lane readiness", () => {
       prNumber: 1680,
       completion: { requirements: [], files: {}, reviews: [], ci_status: "green", sonar_status: "passed" },
     }, {
+      verifyPhaseEWorkflow: async () => ({ ok: true }),
       assertCompletion: async () => ({ ok: true, readiness_report: { comment_id: 5 }, head_sha: "d".repeat(40) }),
       readRemoteGates: async () => { gateReads += 1; return { ok: true, passed: true, state: "OPEN", head_sha: "e".repeat(40) }; },
       recordDeliveryReadiness: async (input) => { recorded = input; return { ok: true, record_comment_id: 9 }; },
@@ -231,6 +237,7 @@ describe("runImplementMechanical implement-lane readiness", () => {
       prNumber: 1680,
       completion: { requirements: [], files: {}, reviews: [], ci_status: "green", sonar_status: "passed" },
     }, {
+      verifyPhaseEWorkflow: async () => ({ ok: true }),
       assertCompletion: async () => ({ ok: false, error: "completion_hosted_checks_not_green", message: "red" }),
       recordDeliveryReadiness: async () => { recordCalls += 1; return { ok: true }; },
     });
@@ -238,5 +245,31 @@ describe("runImplementMechanical implement-lane readiness", () => {
     assert.equal(result.ok, false);
     assert.equal(result.error, "completion_hosted_checks_not_green");
     assert.equal(recordCalls, 0);
+  });
+
+  it("publishes no readiness record when the Phase E workflow is unavailable", async () => {
+    let assertionCalls = 0;
+    let handoffCalls = 0;
+    const result = await runImplementMechanical({
+      action: "readiness",
+      repoPath: "/repo",
+      issueNumber: 1702,
+      prNumber: 99,
+      completion: { requirements: [], files: {}, reviews: [], ci_status: "green", sonar_status: "passed" },
+    }, {
+      verifyPhaseEWorkflow: async () => ({
+        ok: false,
+        error: "phase_e_workflow_missing",
+        message: "install it",
+        next_action: "install_phase_e_workflow_on_delivery_base_then_retry",
+      }),
+      assertCompletion: async () => { assertionCalls += 1; return { ok: true }; },
+      recordDeliveryReadiness: async () => { handoffCalls += 1; return { ok: true }; },
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "phase_e_workflow_missing");
+    assert.equal(assertionCalls, 0, "the implement readiness report must not be posted");
+    assert.equal(handoffCalls, 0, "the delivery handoff must not be posted");
   });
 });

@@ -31,6 +31,7 @@ import {
 } from "./lib.js";
 import { runRecordDeliveryReadiness } from "./lib/delivery-readiness.js";
 import { readRemoteGateSnapshot } from "./lib/remote-gates.js";
+import { verifyPhaseEReadiness } from "./lib/phase-e-readiness.js";
 import { runFinalize, runReadiness } from "./implement/completion.js";
 import { completionShape, execFileAsync, requirementShape, runBootstrap } from "./implement/gate-helpers.js";
 import { runMonitor, runPublish } from "./implement/publish.js";
@@ -135,6 +136,7 @@ const defaultDeps = {
   // Phase D delivery handoff (issue #1671): the readiness action binds the recorded
   // completion payload to the head whose hosted checks it just read.
   readRemoteGates: readRemoteGateSnapshot,
+  verifyPhaseEWorkflow: verifyPhaseEReadiness,
   recordDeliveryReadiness: runRecordDeliveryReadiness,
   // Which lane this run actually belongs to, from the trusted pickup record
   // rather than the caller's argument (issue #1679).
