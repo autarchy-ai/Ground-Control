@@ -2,9 +2,10 @@
   "mcpServers": {
     "ground-control": {
       "type": "stdio",
-      "command": "node",
-      "args": ["/home/atomik/src/Ground-Control/mcp/ground-control/index.js"],
-      "env": {}
+      "command": "grndctl",
+      "args": [
+        "mcp"
+      ]
     },
     "citation": {
       "type": "stdio",
