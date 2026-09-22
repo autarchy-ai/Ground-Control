@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > versioned sections are generated from Conventional Commit history when the
 > release PR merges. See ADR-063 (2026-07-15 amendment) and GC-P027.
 
+## [1.2.1](https://github.com/autarchy-ai/Ground-Control/compare/v1.2.0...v1.2.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **release:** align grouped release component identity ([e2be133](https://github.com/autarchy-ai/Ground-Control/commit/e2be13348c941d967d7bf5fb87f5a4cd0e5b5876))
+* **release:** align grouped release component identity ([9517c1f](https://github.com/autarchy-ai/Ground-Control/commit/9517c1fcef686594db4c15cfe1d39fdad6c95703))
+
 ## [1.2.0](https://github.com/autarchy-ai/Ground-Control/compare/v1.1.0...v1.2.0) (2026-09-22)
 
 
