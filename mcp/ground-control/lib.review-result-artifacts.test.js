@@ -273,7 +273,7 @@ describe("retained review-result artifacts (#1632)", () => {
   });
 
   it("fails when refs or diff inputs move during revision capture", async () => {
-    const diff = { diffText: "diff", manifest: "manifest", baseRefDescriptor: "origin/dev",
+    const diff = { diffText: "diff", manifest: "manifest", baseRefDescriptor: "origin/dev", baseOid: BASE,
       unreviewedUntrackedPaths: [], trackedSymlinks: [] };
     let headReads = 0;
     const movingRef = async (_command, args) => {

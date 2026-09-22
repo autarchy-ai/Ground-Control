@@ -8,6 +8,31 @@ Proposed
 
 2026-05-09
 
+> **Amended by issue #1694 (2026-09-22):** An uncommitted pre-push review is
+> the complete tracked feature candidate against the requested integration
+> base, not merely the index and worktree deltas from the feature branch's old
+> `HEAD`. The review path resolves one diff base per capture: the merge base of
+> the first existing requested base ref (`origin/<base>`, `<base>`, then the
+> existing `main` fallbacks) and the candidate commit, meaning `HEAD` plus any
+> pending `MERGE_HEAD` parents. Incoming base history that a resolved but
+> uncommitted merge brings in therefore belongs to the base, committed feature
+> work belongs to the candidate, and a base ref that only advances does not
+> move the diff base. Diffing against the base tip itself would render every
+> unmerged base change as a reverse-applied feature change. That one object is
+> used for the base-to-index diff, manifest, change kinds, and
+> `revision.base_oid`, and the manifest names the ref and object. Branch-mode
+> reviews use the same resolver. The ordinary index-to-worktree diff remains
+> additive so unstaged changes stay covered, and untracked bodies remain
+> outside the review consent boundary. Revision comparison keeps HEAD, candidate
+> tree, diff base, and reviewed-input digest distinct. Any movement makes the
+> result `review_revision_stale`, and the result names the movement in
+> `stale_cause` (`head_moved`, `candidate_changed`, `base_moved`,
+> `review_input_changed`) with `rerun_review_on_current_revision` as the next
+> action, rather than blaming the working tree. Deferred retention, verdict
+> publication, and non-verdict publication share that one comparison, so a
+> candidate-tree change now invalidates publication in all three. A stale or
+> incomplete execution remains unpublished and cycle-neutral.
+
 > **Amended by issue #1679 (2026-09-21):** A publication now names the delivery
 > it can authorize, and `wontfix` authority is verified rather than asserted.
 > The review revision gains a **candidate tree**: the Git tree `git add -A` would

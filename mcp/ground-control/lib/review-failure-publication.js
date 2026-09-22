@@ -2,7 +2,7 @@ import { buildStationObservationObligationId, parseExecutionObligationV2Markers 
 import { readIssueCommentsWithAuthors, resolveExecutionObligationTrust } from "./grc-legacy-compat-3.js";
 import { postStationObservationEscalation, postStationObservationOpened } from "./station-observation-records.js";
 import { readPriorCodexReviewPrePushCycleCount } from "./codex-verify-cap.js";
-import { captureReviewRevision, writeReviewResult } from "./review-result-artifacts.js";
+import { captureReviewRevision, describeReviewRevisionDrift, writeReviewResult } from "./review-result-artifacts.js";
 
 function failure(error, message) {
   return { ok: false, error, message, next_action: "retry_review_failure_publication" };
@@ -67,8 +67,10 @@ export async function publishReviewStationFailure({ repository, record, gitDir }
   } catch {
     return failure("review_revision_changed_during_capture", "The review input moved during failure publication.");
   }
-  if (observed.revision.digest !== record.revision.digest) {
-    return failure("review_revision_stale", "The retained non-verdict no longer matches the reviewed input.");
+  const drift = describeReviewRevisionDrift(record.revision, observed.revision);
+  if (drift) {
+    return { ...failure("review_revision_stale", drift.message), stale_cause: drift.cause,
+      next_action: "rerun_review_on_current_revision" };
   }
   const prior = await readPriorCycleCount(repository.repoRoot, repository.owner, repository.name, record.issue_number);
   if (prior !== record.expected_cycle - 1) {

@@ -54,8 +54,10 @@ function harness({ escalationFailsOnce = false, stale = false } = {}) {
     readResult: () => ({ ok: true, record }),
     acquireLock: async () => async () => {},
     failureDependencies: {
-      captureRevision: async () => ({ revision: stale
-        ? { ...record.revision, digest: "f".repeat(64) } : record.revision }),
+      captureRevision: async () => {
+        if (!stale) return { revision: record.revision };
+        return { revision: { ...record.revision, ...(stale === true ? { digest: "f".repeat(64) } : stale) } };
+      },
       readPriorCycleCount: async () => 0,
       readComments: async () => [...comments],
       resolveTrust: async () => ({ isTrusted: () => true }),
@@ -130,6 +132,18 @@ describe("separate non-verdict review publication (#1632)", () => {
     const wrongKind = await h.publish({ sanitized: { architectural_read: "caller text" } });
     assert.equal(wrongKind.error, "review_publication_wrong_kind");
     assert.deepEqual(h.calls, []);
+  });
+
+  it("names base and candidate-tree drift with the verdict path's semantics (#1694)", async () => {
+    for (const [change, cause] of [[{ base_oid: "f".repeat(40) }, "base_moved"],
+      [{ candidate_tree_oid: "e".repeat(40) }, "candidate_changed"]]) {
+      const h = harness({ stale: change });
+      const stale = await h.publish();
+      assert.equal(stale.error, "review_revision_stale");
+      assert.equal(stale.stale_cause, cause);
+      assert.equal(stale.next_action, "rerun_review_on_current_revision");
+      assert.deepEqual(h.calls, []);
+    }
   });
 
   it("holds the publication lock until non-verdict publication finishes", async () => {

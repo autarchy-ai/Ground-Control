@@ -6,6 +6,8 @@ import { classifyReviewFailureCauses } from "./review-failure-diagnostics.js";
 import {
   captureReviewRevision,
   createReviewResult,
+  describeReviewRevisionDrift,
+  reviewDriftMessage,
   readReviewResult,
   writeReviewResult,
 } from "./review-result-artifacts.js";
@@ -68,6 +70,7 @@ function retainedNotes(core, security) {
 
 function inspection(record, terminal) {
   let nextAction = terminal?.next_action ?? "repair_and_rerun_review";
+  if (record.publication_status === "stale") nextAction = "rerun_review_on_current_revision";
   if (record.publication_status === "unpublished") nextAction = "inspect_sanitize_and_publish_review";
   if (record.publication_status === "unpublished_failure") nextAction = "publish_non_verdict_failure";
   return {
@@ -75,7 +78,8 @@ function inspection(record, terminal) {
     ...(record.publication_status === "stale"
       ? {
           error: "review_revision_stale",
-          message: "The working tree changed while the review was running; this result is retained but cannot be published.",
+          stale_cause: record.terminal?.stale_cause ?? null,
+          message: `${reviewDriftMessage(record.terminal?.stale_cause)} This result is retained but cannot be published.`,
         }
       : {}),
     ...(record.publication_status === "not_publishable"
@@ -124,7 +128,8 @@ export async function retainDeferredCodexReview({
   stationObservation = null,
 }, overrides = {}) {
   const captured = await captureReviewRevision({ repoRoot, baseBranch, uncommitted }, overrides);
-  const revisionChanged = captured.revision.digest !== initialRevision.digest;
+  const drift = describeReviewRevisionDrift(initialRevision, captured.revision);
+  const revisionChanged = drift != null;
   const publishable = terminal?.ok === true && reviewCoverage?.complete === true && !revisionChanged;
   let publicationStatus = "not_publishable";
   if (revisionChanged) publicationStatus = "stale";
@@ -151,6 +156,7 @@ export async function retainDeferredCodexReview({
       next_action: terminal?.next_action ?? null,
       diff_mode: diffMode,
       station_observation: stationObservation,
+      ...(drift ? { stale_cause: drift.cause } : {}),
       ...(publicationStatus === "not_publishable"
         ? { failure_causes: classifyReviewFailureCauses(terminal?.parse_errors) } : {}),
     },

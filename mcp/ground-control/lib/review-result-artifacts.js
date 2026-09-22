@@ -18,12 +18,20 @@ import { isAbsolute, join, resolve, sep } from "node:path";
 import { GIT_OBJECT_ID_RE } from "./codex-workflow.js";
 import { validateDecisionRecordInput } from "./decision-records.js";
 import { REVIEW_FAILURE_CAUSES } from "./review-failure-diagnostics.js";
+import { REVIEW_DRIFT_CAUSES } from "./review-revision.js";
 import {
   DECISION_RECORD_CLASSIFICATIONS,
   DECISION_RECORD_DECISIONS,
   rejectReservedMarkerSequence,
 } from "./repo-vocabulary.js";
-export { buildReviewRevision, captureCandidateTreeOid, captureReviewRevision } from "./review-revision.js";
+export {
+  REVIEW_DRIFT_CAUSES,
+  buildReviewRevision,
+  captureCandidateTreeOid,
+  captureReviewRevision,
+  describeReviewRevisionDrift,
+  reviewDriftMessage,
+} from "./review-revision.js";
 
 export const REVIEW_RESULT_SCHEMA = "gc.review-result/v1";
 export const REVIEW_HANDLE_RE = /^rvw_[0-9a-f]{48}$/;
@@ -206,6 +214,10 @@ function validateReviewResultFailureState(record) {
     return "review_result_shape_invalid";
   }
   if (!validFailureCauses(record.terminal.failure_causes)) return "review_result_failure_invalid";
+  if (record.terminal.stale_cause !== undefined
+    && !(record.publication_status === "stale" && REVIEW_DRIFT_CAUSES.includes(record.terminal.stale_cause))) {
+    return "review_result_failure_invalid";
+  }
   if (record.kind === "non_verdict" && !validNonVerdictState(record)) {
     return "review_result_failure_invalid";
   }

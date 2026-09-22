@@ -41,7 +41,8 @@ describe("computeReviewDiff uncommitted tree coverage (#1414)", () => {
       assert.ok(result.diffText.includes("+unstaged content"), "unstaged content missing");
       // Deletion direction is preserved, not re-rendered as an addition.
       assert.ok(result.diffText.includes("-delete me"));
-      assert.equal(result.baseRefDescriptor, null);
+      // Uncommitted review is bound to its base too (#1694); here HEAD is the base tip.
+      assert.equal(result.baseRefDescriptor, "dev");
       assert.deepEqual(result.unreviewedUntrackedPaths, []);
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
