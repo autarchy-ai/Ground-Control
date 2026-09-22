@@ -11,18 +11,18 @@ from .core import REPO_ROOT, Violation, require_scanned
 def run_optional_mcp_boundary_contract(root: Path = REPO_ROOT) -> list[Violation]:
     """Keep personal Ground Control activation out of the tracked source repo."""
     config = root / ".mcp.json"
-    if not config.is_file():
-        return []
-    try:
-        document = json.loads(config.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        return [
-            Violation(
-                code="tracked-mcp-config-invalid",
-                message="The tracked .mcp.json cannot be checked for personal tooling entries.",
-                details=[str(error)],
-            )
-        ]
+    document = {}
+    if config.is_file():
+        try:
+            document = json.loads(config.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            return [
+                Violation(
+                    code="tracked-mcp-config-invalid",
+                    message="The tracked .mcp.json cannot be checked for personal tooling entries.",
+                    details=[str(error)],
+                )
+            ]
     servers = document.get("mcpServers", {})
     if not isinstance(servers, dict) or "ground-control" not in servers:
         return []
