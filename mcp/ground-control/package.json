@@ -1,6 +1,6 @@
 {
   "name": "grndctl",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Ground Control: the MCP server and workflow skills for gated agentic development (/implement, /quickfix, /review).",
   "license": "MIT",
   "repository": {
