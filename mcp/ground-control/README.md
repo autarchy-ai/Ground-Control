@@ -51,6 +51,23 @@ grndctl init      # in each repository: confirm settings, review changes, then w
 grndctl doctor
 ```
 
+`grndctl init` also installs `.github/workflows/ground-control-phase-e.yml`, pinned to
+the exact installed version. That workflow finishes Phase E when a delivery pull request
+merges, so an agent can be terminated at a ready pull request and the merge alone closes
+out the issue (ADR-102). Readiness verifies the file from the delivery PR's base revision and refuses to
+record a handoff when the `pull_request: closed` trigger does not cover that base branch.
+If a valid handoff predates the workflow and its PR is already merged, install the workflow
+and dispatch **Ground Control Phase E** with the PR number, or run
+`grndctl finalize-merged-pr --pr <number>` from the merged checkout.
+It never rewrites a copy the repository already has;
+`grndctl doctor` reports one that is missing or has drifted.
+
+One more verb runs there rather than from an agent session:
+
+```bash
+grndctl finalize-merged-pr --pr 1680   # what the merged-PR job runs; also a manual repair path
+```
+
 The server always runs from the installed package (`grndctl mcp`), never from a
 checkout. To run unreleased code deliberately, `npm link` from `mcp/ground-control`
 in a clone.
@@ -95,8 +112,8 @@ both the template and the code.
 | `GH_VERIFY_FINDING_AUTHORS` | Extra comma-separated GitHub logins `gc_codex_verify_finding` accepts as finding authors, for a service-identity deployment. |
 | `GC_KNOWLEDGE_INGEST_ANTHROPIC_API_KEY` | Anthropic key used only by the knowledge-ingest child, so ingestion can bill separately from the review engine. |
 | `SONAR_TOKEN` | Lets `gc_watch_sonar_analysis` read the SonarCloud quality gate. Without it the tool returns `sonar_watch_token_missing`, which `/implement` Step 11 treats as an infrastructure blocker for the operator rather than as SonarCloud findings for the agent. |
-| `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CONFIG_DIR`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` | Selects the review engine's auth mode. Declare exactly one; with none declared the Step 6.6 review refuses with `test_quality_review_auth_missing` before spawning `claude`. See "Test-quality review engine" in `docs/DEVELOPMENT_WORKFLOW.md`. |
-| `CLOUD_ML_REGION`, `GOOGLE_CLOUD_PROJECT`, `ANTHROPIC_VERTEX_PROJECT_ID`, `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_REGION`, `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `ANTHROPIC_BASE_URL` | Companion values the selected review-engine auth mode needs. |
+| `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CONFIG_DIR`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` | Optional authentication for the `gc_review_cap_disposition` gray-zone judge when that judge is enabled. |
+| `CLOUD_ML_REGION`, `GOOGLE_CLOUD_PROJECT`, `ANTHROPIC_VERTEX_PROJECT_ID`, `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_REGION`, `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `ANTHROPIC_BASE_URL` | Companion values for the selected optional disposition-judge auth mode. |
 | `OPENAI_API_KEY`, `CODEX_HOME` | Forwarded to the `codex` child. Neither is required: `codex` authenticates from its own profile directory when no key is declared. |
 
 The Citation MCP server (`mcp/citation`) has its own variables. They reach that
@@ -111,7 +128,7 @@ takes effect on the next server start.
 
 ## Tool surface
 
-The server registers **34 tools**. They are the `/implement`, `/quickfix`,
+The server registers **36 tools**. They are the `/implement`, `/quickfix`,
 `/integrate`, and `/review` workflow mechanics plus the coding-agent/reviewer separation - there is
 no entity CRUD surface and no ad-hoc REST escape hatch, because there is no
 backend behind them to read. Requirements and ADRs are read and written as repo
@@ -137,15 +154,22 @@ The complete keep/delete and placement record is in
 | `gc_get_repo_ground_control_context` | Read and validate the repo's `.ground-control.yaml`; returns workflow commands, routing, docs paths, and inlined plan rules |
 | `gc_create_github_issue` | Create a GitHub issue from a repo-local requirement and link it back |
 | `gc_update_issue_requirements` | Set the in-scope requirement UID list in an existing issue's `## Requirements` section; `add` unions, `remove` needs a repository writer's authorization comment, nothing else in the body moves |
+| `gc_issue_dependency` | `read`, `add`, or `remove` an issue's GitHub "blocked by" dependencies. Callers pass issue numbers; the tool resolves the blocking issue's REST id, which the endpoints key on, and sends it as a typed field. Idempotency is decided from the current relationship set, so a replay is `already_satisfied` and a failed write whose state now holds is `reconciled` rather than a claimed change. A dependency naming another repository keeps its repository and number and has the rest redacted, so the edge stays visible without the host credential serving content from outside the authorized checkout |
 | `gc_remember` | Capture a knowledge-base entry under the repo's configured knowledge directory |
 | `gc_post_implementation_plan` | Post the Step 4 plan to the issue thread; requires the preflight marker |
 | `gc_close_issue_after_merge` | Idempotent post-merge issue close, gated on the PR actually being merged |
+
+**Automated Phase E (`tools/phase-e.js`)**
+
+| Tool | Purpose |
+|---|---|
+| `gc_finalize_merged_pr` | Finish Phase E for an already-merged delivery PR from its number alone: resolve the issue through the trusted delivery pointer, verify the Phase D readiness record against the merged head, and replay its recorded payload through `finalize`. The merged-PR workflow is the normal caller; this registration is the repair path after a failed run |
 
 **Workflow mechanics (`tools/review-cap-disposition.js`)**
 
 | Tool | Purpose |
 |---|---|
-| `gc_implement_mechanical` | Run a deterministic phase - `bootstrap`, `verify`, `publish`, `monitor`, `readiness`, `finalize`. The long three accept `async` + `idempotency_key` and return a job handle |
+| `gc_implement_mechanical` | Run a shared deterministic phase - `bootstrap`, `publish`, `monitor`, `readiness`, or `finalize`; `lane: quickfix` reuses the compatible phases while rejecting requirement scope. `readiness` is lane-discriminated: both lanes record the trusted delivery handoff, and only `implement` also posts a pre-merge report. The two long actions accept `async` + `idempotency_key` and return a job handle |
 | `gc_prepare_implement_branch` | Same-checkout branch preparation for an issue |
 | `gc_mark_implement_issue_picked_up` | Apply the in-progress label and post the pickup comment |
 | `gc_synchronize_implement_branch` | Fetch and really merge the integration branch, verify the graph, push, and post the synchronization attestation |
@@ -154,7 +178,7 @@ The complete keep/delete and placement record is in
 | `gc_review_cap_disposition` | Record a review-cap disposition |
 | `gc_record_execution_obligation` | Append to the execution-obligation ledger |
 | `gc_authorize_execution_obligation_wontfix` | Record the user's authorization to close an obligation unfixed |
-| `gc_codex_job` | Poll or cancel any async review, preflight, or mechanical job |
+| `gc_codex_job` | Await, poll, or cancel any async review, preflight, or mechanical job. `action="await"` holds one request until the job is terminal (bounded by `wait_seconds`, default 1500, max 1800) instead of costing a model turn per poll tick |
 
 **Station-observation recovery (`tools/station-observation.js`)**
 
@@ -173,11 +197,13 @@ The complete keep/delete and placement record is in
 | Tool | Purpose |
 |---|---|
 | `gc_post_decision_record` | Render a review cycle's decision record from structured findings |
-| `gc_post_final_report` | Render the Step 19 / Q19 close comment; `lane` selects the `/implement` or `/quickfix` shape |
+| `gc_get_review_result` | Inspect a protected restart-durable deferred review by opaque handle, without a GitHub write |
+| `gc_publish_review_result` | Validate and idempotently publish a sanitized exact-revision review result with provenance |
+| `gc_post_final_report` | Render the trusted final record used inside the shared post-merge finalizer; `lane` selects the `/implement` or slim `/quickfix` shape |
 | `gc_assert_completion` | The merge-gated composite completion assertion |
 | `gc_render_pr_body` | Compose a PR body that satisfies `check_pr_body`'s policy gates from structured input |
 | `gc_get_issue_thread` | Fetch the issue body and comments through a content-addressed cache |
-| `gc_watch_ci_run` | Bounded watch of the PR's CI run |
+| `gc_watch_ci_run` | Bounded watch, bound to one head SHA, of every run that commit triggered |
 | `gc_watch_sonar_analysis` | Bounded watch of the SonarCloud analysis and quality gate |
 
 All of these filter sensitive content, post under a structured marker family,
@@ -192,10 +218,8 @@ enforcement layer every driver shares.
 |---|---|
 | `gc_codex_architecture_preflight` | Codex architecture preflight before planning |
 | `gc_codex_review` | Codex production-quality review with cycle caps |
-| `gc_codex_review_cycle` | Async-only, idempotent pre-push review cycle |
+| `gc_codex_review_cycle` | Async-only, idempotent pre-push review cycle; `publication_mode=deferred` retains locally without GitHub writes |
 | `gc_codex_verify_finding` | Verify a specific finding is resolved |
-| `gc_test_quality_review` | Test-quality review of the changed tests |
-| `gc_test_quality_review_cycle` | Async-only, idempotent pre-push test-quality cycle |
 
 **Maintainer PR review lane (`tools/pr-review.js`)**
 
@@ -255,7 +279,32 @@ Per ADR-027 and issue #793, the codex-backed review tools follow a strict separa
 - **Codex is the planner / reviewer.** It runs in a `read-only` sandbox with no GitHub credentials and returns structured payloads only. It must never invoke `gh`, `git`, or `curl` to post comments.
 - **The MCP server is the GitHub poster.** It validates codex's payloads against the schema below, then performs all GitHub writes (inline review comments, threaded replies, thread-resolution mutations, phase markers, cycle markers) from the host's authenticated `gh`.
 
-`gc_codex_review` consumes a `===FINDINGS===…===END===` JSON tail from each reviewer's stdout. The MCP server validates each finding lexically (path lives inside the repo, line is positive or null, body is non-empty and within GitHub's 65535-char limit) and then POSTs each finding to `/repos/{owner}/{repo}/pulls/{pr}/comments` with the PR's current head SHA. The `[core]` / `[security]` reviewer label is prepended to the comment body by the poster; codex does not include it in the JSON.
+For pre-push review, `publication_mode="deferred"` separates those boundaries.
+Execution stores the complete original result under protected per-worktree Git
+metadata and returns an opaque `review_handle`; it writes no finding, station,
+cycle, or decision comment and consumes no cycle. `gc_get_review_result`
+reauthorizes the repository before returning the bounded artifact.
+`gc_publish_review_result` accepts public prose for every stable finding id,
+requires the retained verdict and original classification, validates caller
+dispositions under the incumbent decision rules, rechecks the exact
+HEAD/base/diff identity and available cycle slot, applies the sensitive-content
+guards, and writes sanitized findings, cycle, and decision records in order.
+Hashes in each marker bind the local original, reviewed revision, and public
+rendering. Trusted versioned stage-marker reconciliation requires the latest
+consumed cycle to have a complete findings/cycle/decision tuple and makes a
+retry after a timeout or lost response resume without rerunning Codex or
+duplicating records. The `automatic` pre-push mode composes the same retained
+execution and publisher; if publication fails, its bounded response preserves
+the handle and directs the caller to retry publication, not execution.
+An exhausted non-verdict cycle instead retains a distinct `non_verdict`
+handle carrying only closed failure classes, local diagnostic causes, and
+attempt ordinals. Raw parser messages and engine output are not exposed. Explicit
+publication with `publication_kind="non_verdict"` and no reviewer prose posts
+only the station-observation opening and escalation; it consumes no cycle,
+writes no decision record, and retries reconcile those records. Only a trusted
+published decision record satisfies readiness or completion.
+
+`gc_codex_review` consumes a `===REVIEW===…===END===` JSON tail from each reviewer. The MCP server validates each finding lexically (repo-relative path, positive line, bounded non-empty body); automatic post-push publication then POSTs findings to `/repos/{owner}/{repo}/pulls/{pr}/comments` with the PR's current head SHA. The `[core]` / `[security]` label is prepended by the poster.
 
 Per-finding schema:
 
@@ -274,10 +323,10 @@ The MCP server owns diff retrieval end to end. Two independent facts are reporte
 
 | Field | Meaning |
 |-------|---------|
-| `diff_mode` | Transport. `inline` when the complete diff fit one prompt; `manifest` when it exceeded `GC_CODEX_REVIEW_MAX_DIFF_BYTES` (default 256 KiB; `0` disables the cap). |
+| `diff_mode` | Transport. `inline` when the complete diff plus its reviewer prompt wrapper fit the configured 256-KiB default; `manifest` when bounded slices were needed. `GC_CODEX_REVIEW_MAX_DIFF_BYTES=0` disables the cap. |
 | `review_coverage` | Coverage. `{strategy, chunks_total, chunks_completed, files_total, files_covered, oversized_slices, unreviewed_untracked_paths, complete}`. Counts and paths only, never diff content. `strategy` is `whole-diff`, `file-slices`, or `hunk-slices`. |
 
-Above the cap the server splits the authoritative diff into bounded inline slices and runs **both** reviewers over **every** slice as one logical review cycle. Boundaries are tried in descending order of fidelity: `diff --git` file blocks, then `@@` hunks, then whole lines. A single line larger than the budget is the smallest unit that survives splitting intact, so it is emitted whole and counted in `oversized_slices` rather than truncated; dropped bytes would read as reviewed content nobody saw.
+The planner reserves the exact reviewer prompt wrapper plus slice-metadata headroom before deciding whether to split the authoritative diff. It runs **both** reviewers over **every** slice as one logical review cycle. Boundaries are tried in descending order of fidelity: `diff --git` file blocks, then `@@` hunks, then whole lines. A single line larger than the budget is the smallest unit that survives splitting intact, so it is emitted whole and counted in `oversized_slices` rather than truncated; dropped bytes would read as reviewed content nobody saw.
 
 Every fragment is a valid standalone diff. Each slice goes to an independent reviewer process, so a sub-file fragment carries its `diff --git` attribution and, for a line-split hunk, a **recomputed** `@@` header whose old/new starts and counts describe that fragment. Repeating the original header would make every `line` in a finding from a later fragment point at the wrong code. The numstat manifest is still supplied, but as whole-change context only. Slices are not cycles: the per-issue cycle counter, the marker family, and the cap are unchanged no matter how many slices a diff needs.
 
@@ -289,7 +338,7 @@ Coverage is validated before any GitHub write. If any slice fails to yield a val
 
 ### Untracked files and the consent boundary
 
-An `uncommitted=true` review covers staged and unstaged changes. Untracked file **bodies are never transmitted**, and the prompt says so rather than claiming coverage it does not have.
+An `uncommitted=true` review covers the complete tracked candidate: committed, staged, and unstaged changes, diffed from one resolved base object. That object is the merge base of the requested base ref and the candidate commit (`HEAD` plus any pending `MERGE_HEAD`). A resolved but uncommitted integration merge therefore reviews only the feature work, a resumed branch's committed implementation is included, and a base that merely advances leaves the review valid. The manifest names the ref and object, and `revision.base_oid` binds the same object. If the review is invalidated anyway, the stale result names the movement in `stale_cause` (`head_moved`, `candidate_changed`, `base_moved`, `review_input_changed`) with `next_action: "rerun_review_on_current_revision"` (issue #1694). Untracked file **bodies are never transmitted**, and the prompt says so rather than claiming coverage it does not have.
 
 Untracked content is the one review input the developer never selected: it is simply present in the working directory, and the branch under review controls `.gitignore`. A narrowed ignore rule makes a developer's pre-existing local `.env`, `.pgpass`, or `.dockercfg` visible to `git ls-files --others`, and sending those bodies to the model provider is an egress decision a heuristic cannot authorize. Credential filenames are unbounded, and an opaque token is indistinguishable from ordinary text, so a deny-list is defense in depth at best, never the authorization boundary. `detectSensitiveBodyContent` does not help here either: it guards GitHub publication, which happens long after the prompt is built.
 

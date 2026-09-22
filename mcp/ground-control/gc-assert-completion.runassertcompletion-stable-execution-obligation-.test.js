@@ -91,6 +91,15 @@ function makeCompletionShimRepo({
     "repository-owner": "admin",
   },
 } = {}) {
+  const provenance = `schema="gc.review-publication/v2" publication="${"a".repeat(64)}" original="${"b".repeat(64)}" revision="${"c".repeat(64)}" sanitized="${"d".repeat(64)}" tree="${"1".repeat(40)}" findings="0"`;
+  comments = [...comments,
+    { id: 8997, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:review-publication stage="findings" reviewer="codex" issue="1416" cycle="1" ${provenance} -->\n\n**gc_codex_review** — sanitized deferred publication` },
+    { id: 8998, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:codex-prepush-cycle issue="1416" branch="1416-branch" cycle="1" ${provenance} -->\n\n_gc_codex_review pre-push cycle 1 complete` },
+    // Issue #1679 (core-F2): completion binds to the head that was synchronized,
+    // so the thread carries the trusted synchronization record for this delivery.
+    { id: 8996, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:implement-base-sync schema="gc.implement.remote-base-sync/v2" record="${"4".repeat(32)}" issue="1416" branch="1416-branch" base="dev" source="refs/remotes/origin/dev" pre="${"e".repeat(40)}" fetched="${"f".repeat(40)}" outcome="merged_clean" result="${"a".repeat(40)}" verified="${"5".repeat(40)}" settled="${"1".repeat(40)}" review="${"a".repeat(64)}" revision="${"c".repeat(64)}" lane="implement" -->` },
+    { id: 8999, user: { login: "fake" }, author_association: "OWNER", body: `<!-- gc:decision-record reviewer="codex" cycle="1" issue="1416" ${provenance} -->\n\n## Review decision record — codex cycle 1` },
+  ];
   // We need to handle multiple POSTs. Use a counter in a wrapper script.
   // Build a shim that cycles through commentIdSeq for each POST call.
   const repoDir = initGitRepo(mkdtempSync(join(tmpdir(), "gc-completion-shim-")));
@@ -102,6 +111,7 @@ function makeCompletionShimRepo({
   // PR's REST record, and gates on it being merged (issues #963, #1584).
   const restPull = restPullRequest({
     number: prNumber,
+    headRefName: "1416-branch",
     state: prMerged ? "MERGED" : "OPEN",
     mergedAt: prMerged ? "2026-06-22T02:00:00Z" : null,
   });

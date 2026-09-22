@@ -118,9 +118,22 @@ We use [MADR](https://adr.github.io/madr/) (Markdown Any Decision Records). Each
 | [096](096-host-wide-verification-dispatcher.md) | Host-Wide Verification Resource Dispatcher | Accepted |
 | [097](097-versioned-artifact-release-reservations.md) | Versioned Artifact-Release Identity Reservations | Accepted |
 | [098](098-native-agent-dashboard-connection.md) | Native Agent Dashboard Connection | Accepted |
+| [099](099-bounded-codex-review-and-test-quality-retirement.md) | Bounded Codex Review and Test-Quality Retirement | Accepted |
+| [100](100-thin-quickfix-shared-mechanical-lane.md) | Thin Quickfix Lane over Shared Mechanical Modules | Accepted |
+| [101](101-isolated-incus-coding-vms.md) | Isolated Incus VMs for Local Coding Sessions | Accepted |
+| [102](102-automated-post-merge-delivery-finalization.md) | Automated Post-Merge Delivery Finalization | Accepted |
+| [103](103-repository-scoped-sandbox-task-environment.md) | Repository-Scoped Environment for Sandbox Task Processes | Accepted |
 
 Prior ADRs from the old project frame are archived in `archive/architecture/adrs/`.
 
 Issue #1416 amends ADR-021, ADR-027, ADR-029, ADR-031, and ADR-036 to define
 `/implement` execution principles, same-checkout branch preparation, and
 durable execution-obligation completion gates.
+
+Issue #1669 amends ADR-021 and ADR-036 to add a bounded terminal wait
+(`gc_codex_job action="await"`) to the shared async job transport, so waiting on
+a background job costs one call rather than one model turn per poll tick.
+
+Issue #1671 amends ADR-021, ADR-029, and ADR-100 through ADR-102: Phase E is
+performed by a deterministic merged-pull-request executor bound to a trusted
+Phase D handoff record, so an agent may terminate once the pull request is ready.

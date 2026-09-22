@@ -84,6 +84,12 @@ function makePrepareExecFileFake(prs, stepHandlers = []) {
     execFile: async (file, argv, _options) => {
       calls.push([file, ...argv]);
 
+      // The pushed-head read (issue #1365) is answered ahead of the step
+      // handlers so adding it did not shift every existing handler index.
+      if (file === "git" && argv.includes("rev-parse")) {
+        return { stdout: `${"0".repeat(32)}pushedhead\n`, stderr: "" };
+      }
+
       // First check step handlers in order.
       if (handlerIdx < stepHandlers.length) {
         const handler = stepHandlers[handlerIdx];
@@ -123,7 +129,7 @@ function prepareDeps(overrides = {}) {
     acquireIntegrationLock: lockFake.acquireIntegrationLock,
     lockFake,
     writeHaltLedger: overrides.writeHaltLedger ?? (() => {}),
-    runCiWatcher: overrides.runCiWatcher ?? (async () => ({ conclusion: "skipped" })),
+    runCiWatcher: overrides.runCiWatcher ?? (async () => ({ conclusion: "success" })),
     runSonarWatcher: overrides.runSonarWatcher ?? (async () => ({ conclusion: "skipped" })),
     // Deterministic run ID.
     now: overrides.now ?? (() => 1748000000000),
@@ -185,7 +191,7 @@ describe("gc_integration_manager — prepare argv hygiene", () => {
       acquireIntegrationLock: lockFake.acquireIntegrationLock,
       lockFake,
       writeHaltLedger: () => {},
-      runCiWatcher: async () => ({ conclusion: "skipped" }),
+      runCiWatcher: async () => ({ conclusion: "success" }),
       runSonarWatcher: async () => ({ conclusion: "skipped" }),
       now: () => 1748000000000,
       randomId: () => "abc123",
@@ -232,7 +238,7 @@ describe("gc_integration_manager — prepare argv hygiene", () => {
       acquireIntegrationLock: lockFake.acquireIntegrationLock,
       lockFake,
       writeHaltLedger: () => {},
-      runCiWatcher: async () => ({ conclusion: "skipped" }),
+      runCiWatcher: async () => ({ conclusion: "success" }),
       runSonarWatcher: async () => ({ conclusion: "skipped" }),
       now: () => 1748000000000,
       randomId: () => "abc123",
@@ -286,7 +292,7 @@ describe("gc_integration_manager — prepare worktree path containment", () => {
       acquireIntegrationLock: lockFake.acquireIntegrationLock,
       lockFake,
       writeHaltLedger: () => {},
-      runCiWatcher: async () => ({ conclusion: "skipped" }),
+      runCiWatcher: async () => ({ conclusion: "success" }),
       runSonarWatcher: async () => ({ conclusion: "skipped" }),
       now: () => 1748000000000,
       // Five "../" levels escape past ".gc/integration-worktrees/<ts>-" and
@@ -412,21 +418,25 @@ describe("gc_integration_manager — CI watcher mapping", () => {
     assert.equal(result.results[0].failure_class, "ci_timed_out");
   });
 
-  it("runCiWatcher returns {conclusion:'skipped'} → treated as success (outcome:ready)", async () => {
+  // Inverted by issue #1679: a skip observes nothing, and GC-O011(c) requires the
+  // CI signal to be watched before a PR is marked ready. The production adapter no
+  // longer emits `skipped`, and the gate refuses it if anything else does.
+  it("runCiWatcher returns {conclusion:'skipped'} → blocked, not ready", async () => {
     const deps = ciWatcherDeps(async () => ({ conclusion: "skipped" }));
     const result = await runIntegrationManager(
       { action: "prepare", repo_path: "/some/repo" },
       deps,
     );
     assert.equal(result.ok, true);
-    assert.equal(result.results[0].outcome, "ready");
+    assert.equal(result.results[0].outcome, "blocked");
+    assert.equal(result.results[0].failure_class, "ci_unverified_for_head");
   });
 
   it("runCiWatcher is called with repo_path=repoRoot and branch=pr.head_ref", async () => {
     const ciWatcherCalls = [];
     const fakeCiWatcher = async (pr, ctx) => {
       ciWatcherCalls.push({ pr, ctx });
-      return { conclusion: "skipped" };
+      return { conclusion: "success" };
     };
     const deps = ciWatcherDeps(fakeCiWatcher, [makePr(7)]);
     await runIntegrationManager({ action: "prepare", repo_path: "/some/repo" }, deps);
@@ -434,5 +444,16 @@ describe("gc_integration_manager — CI watcher mapping", () => {
     const { pr, ctx } = ciWatcherCalls[0];
     assert.equal(pr.head_ref, "feature/pr-7", `expected head_ref='feature/pr-7', got: ${pr.head_ref}`);
     assert.ok(typeof ctx.repoRoot === "string" && ctx.repoRoot.length > 0, "ctx.repoRoot must be present");
+  });
+
+  it("names the rebased commit it pushed, so the watcher cannot read the pre-rebase run (issue #1365)", async () => {
+    const ciWatcherCalls = [];
+    const fakeCiWatcher = async (pr) => {
+      ciWatcherCalls.push(pr);
+      return { conclusion: "skipped" };
+    };
+    const deps = ciWatcherDeps(fakeCiWatcher, [makePr(7)]);
+    await runIntegrationManager({ action: "prepare", repo_path: "/some/repo" }, deps);
+    assert.equal(ciWatcherCalls[0].pushed_head_sha, `${"0".repeat(32)}pushedhead`);
   });
 });

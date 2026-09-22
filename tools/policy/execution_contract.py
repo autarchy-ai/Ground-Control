@@ -241,7 +241,7 @@ def _check_tdd_and_fix_evidence_contract(root: Path) -> list[Violation]:
         "fails when the named defect is reintroduced",
         "test file path and test-case or describe-block name",
         "prose-only, no executable surface to lock",
-        "auto-posted decision record is written before",
+        "published decision record is written before the repair",
     )
     missing_fix_evidence = [
         token for token in fix_evidence_tokens if token not in review_rules_flat
@@ -311,7 +311,7 @@ def _check_pre_pr_sync_contract(root: Path) -> list[Violation]:
     )
     missing_pr = [token for token in pr_tokens if token not in step9]
     mcp_tokens = (
-        "gc.implement.remote-base-sync/v1",
+        "gc.implement.remote-base-sync/v2",
         "+refs/heads/",
         "refs/remotes/origin/",
         "runSynchronizeImplementBranch",

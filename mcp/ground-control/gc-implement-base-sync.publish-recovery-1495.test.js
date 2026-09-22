@@ -26,6 +26,18 @@ const BASE = "2".repeat(40);
 const RESULT = "3".repeat(40);
 const RECORD = "4".repeat(32);
 const TREE = "5".repeat(40);
+
+// Issue #1679: synchronization binds the delivery to the review that authorized it.
+const deliveryBindingDeps = {
+  reviewEvidenceReader: async () => ({
+    ok: true, published: true, cycle: 1, comment_id: 12,
+    publication_id: "a".repeat(64), revision_digest: "c".repeat(64),
+    candidate_tree_oid: TREE, findings_count: 0, branch: BRANCH,
+  }),
+  laneReader: async () => ({ ok: true, lane: "implement" }),
+  // No earlier synchronization on this branch; the settlement is derived fresh.
+  latestSyncRecordReader: async () => ({ ok: true, record: null }),
+};
 // The base the external recovery re-merged against — a different integration
 // commit than the one this attempt fetched and recorded.
 const OTHER_BASE = "9".repeat(40);
@@ -135,6 +147,7 @@ describe("bounded mechanical-publish recovery (#1495)", () => {
     };
     const result = await runSynchronizeImplementBranch(completeInput(), {
       workspaceAuthorizationResolver: workspaceAuthorization,
+      ...deliveryBindingDeps,
       commandRunner: wrappedRunner,
       contextResolver: async () => context(),
       syncRecordReader: async () => ({ ok: false, error: "implement_pr_sync_record_missing" }),
@@ -157,6 +170,7 @@ describe("bounded mechanical-publish recovery (#1495)", () => {
     const { calls, runner } = recoveryRunner({ mergeHead: () => BASE });
     const result = await runSynchronizeImplementBranch(completeInput(), {
       workspaceAuthorizationResolver: workspaceAuthorization,
+      ...deliveryBindingDeps,
       commandRunner: runner,
       contextResolver: async () => context(),
       syncRecordReader: async () => ({ ok: false, error: "implement_pr_sync_record_missing" }),

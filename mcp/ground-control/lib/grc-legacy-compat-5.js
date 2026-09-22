@@ -93,7 +93,7 @@ export function validateReviewEnvelope(raw, repoRoot) {
     });
   }
   // Verdict / blocking consistency rules — shared with the decision-record
-  // and test-quality parsers (#931 codex cycle-1 F1).
+  // and other verdict-envelope parsers (#931 codex cycle-1 F1).
   const errs = checkVerdictBlockingConsistency({
     verdict: raw.verdict,
     blocking,

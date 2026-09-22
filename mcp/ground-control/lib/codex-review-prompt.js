@@ -28,7 +28,7 @@ function buildCommonReviewPreamble({ baseBranch, uncommitted, diffMode = "inline
   // content to the model provider), so claiming to review them would be the
   // same false-coverage claim #1414 exists to remove.
   const scope = uncommitted
-    ? "the staged and unstaged changes in the working tree of this repository"
+    ? `the complete tracked candidate in the working tree of this repository — its committed, staged, and unstaged changes — against its merge base with \`${baseBranch}\``
     : `the changes on the current branch against \`${baseBranch}\``;
   // Issue #1414: a manifest-mode prompt now carries one authoritative slice of
   // the change rather than a file list the reviewer was expected to expand

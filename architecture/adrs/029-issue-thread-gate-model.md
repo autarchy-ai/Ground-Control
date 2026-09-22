@@ -8,6 +8,60 @@ Accepted
 
 2026-05-03
 
+> **Amended by issue #1693 (2026-09-21):** Review execution and publication are
+> observational workflow records, not delivery authority. The synchronization,
+> PR-creation, readiness, and completion boundaries do not require a review
+> publication, bind a delivery to a reviewed revision, or infer a user's review
+> decision from a marker. A user decides whether additional review is warranted;
+> accepting a review cap advances the delivery without another review cycle.
+> Branch synchronization, hosted checks, requirement-state verification, and all
+> other delivery gates remain enforced. This supersedes the review-publication
+> authorization and delivery-binding portions of the #1632 and #1679 amendments.
+
+> **Amended by issue #1632 (2026-09-18):** Review execution and public
+> durable-record publication are separate operations. A pre-push Codex review
+> may run in `deferred` publication mode, which retains the exact reviewed
+> revision and complete original result in protected per-worktree Git metadata
+> and performs no GitHub write. `gc_publish_review_result` accepts a sanitized
+> one-to-one rendering, preserves the reviewer verdict and finding identity
+> and classification, validates caller dispositions, rechecks the revision
+> and cycle slot, then writes findings, cycle, and decision records in that
+> order with provenance. Trusted stage markers make retries idempotent. An
+> exhausted non-verdict result is a separate retained kind whose explicit
+> publication writes only closed-code station-observation opening and
+> escalation records; no decision record or cycle is consumed. `automatic`
+> pre-push mode composes the same executor and publisher. An unpublished local
+> result is never issue-thread gate evidence. Publication remains
+> observational and does not satisfy or block readiness or completion.
+
+> **Amended by issue #1679 (2026-09-21):** The `/quickfix` review waiver is now
+> read from the run's own recorded lane, not from an argument. It used to be
+> granted by a bare `lane` argument on the PR-creation call, so nothing recorded
+> the choice and an `/implement` run could take the waiver at its last step. A
+> lane is now a property of the run: the MCP server writes a pickup record when
+> a branch is bootstrapped, and the branch's lane is the lane of the newest exact
+> record by an author with effective repository write permission. Switching lanes
+> is itself recorded - when the maintainer tells an agent to move on without a
+> review, the agent bootstraps the
+> same branch as `/quickfix` and the thread says so. Synchronization, PR creation,
+> readiness and both completion phases all read the lane from that record and
+> refuse a caller that states a different one. The waiver still relaxes the
+> review-publication requirement and nothing else: head synchronization applies
+> to every lane, and a requirement-backed issue still cannot use `/quickfix`.
+> **No further human signal is required, by the maintainer's decision.** Choosing
+> the lane is the maintainer's instruction to the agent; the durable pickup
+> record, and the PR body's "review not run" attestation, make that choice
+> visible at merge - the single human touchpoint - instead of putting a ceremony
+> in front of it. An authorization comment and an issue label were both built and
+> removed during this issue.
+
+> **Amended by ADR-099 (2026-09-17):** The dedicated test-quality reviewer,
+> Step 6.6, its MCP tools, configuration, markers, and policy contract are
+> removed. The Codex cap bounds additional review iterations; after all known
+> findings are resolved, declining an extra cycle advances the workflow without
+> requiring a clean terminal verdict. Historical amendments below describe the
+> former mechanism and are not current operating guidance.
+
 > **Amended by issue #1462 (2026-07-28):** `gc_assert_traceability_reconciled` and the Step 17 composite `gc_assert_completion` now infer `project` from `repo_path`'s `.ground-control.yaml` when the parameter is omitted (explicit override still wins), and propagate backend `project_required` with its structured `detail` through the completion envelope instead of flattening it into a lookup-failure message. The issue-thread gate model is unchanged: reconciliation still posts the `traceability_reconciled` marker only after successful lookups, failures remain side-effect free, and Phase E still merge-gates the reconciled final report. See `skills/implement/steps/step-17-completion.md` for the Step 17 contract.
 
 > **Style sync for issue #751 (2026-06-14):** Repository-wide Vale cleanup normalized punctuation in workflow prose. This ADR's issue-thread gate model stays the same.
@@ -54,11 +108,24 @@ and decisions on findings.
 
 ### Touchpoints
 
-- **PR merge** is the only synchronous human gate. The user reviews the issue
-  thread (plan + findings + decisions) and the PR diff, then merges.
+- **PR merge** is the only *scheduled* synchronous human gate. The user reviews
+  the issue thread (plan + findings + decisions) and the PR diff, then merges.
+  Every other step runs to completion without waiting for a person.
 - **No plan-approval gate.** The `/implement` skill posts the plan to the
   GitHub issue as a comment via `gh issue comment` and proceeds directly to
   TDD. No `EnterPlanMode` call. No synchronous user-approval wait.
+- **Exception-path pauses are not scheduled gates** (issue #1679). A run stops
+  and asks only on a documented pause class from
+  `skills/implement/_development-principles.md` - an enforced cycle cap, an
+  unresolved ambiguity, a significant architecture or security decision,
+  unexpectedly material scope expansion, destructive or externally consequential
+  authority, or a hard external dependency. The review cap that ADR-099 §1 puts
+  at the last in-cap cycle is one of these: it does not occur on a clean run, it
+  asks a bounded binary question, and declining it advances the workflow. Work
+  size, difficulty, elapsed time, context pressure, and inconvenience are never
+  pause classes. "One human touchpoint" counts the gates the workflow schedules,
+  not the exceptions it escalates; a contract that admitted no escalation at all
+  would force an agent to guess at exactly the decisions a person should make.
 
 ### Issue thread as durable record
 
@@ -67,8 +134,8 @@ comment on the GitHub issue:
 
 - **Plan**: posted as a comment when `/implement` enters Phase A. Includes
   context, approach, files-to-change, verification steps, risks.
-- **Review findings**: every finding from codex review, refactor review,
-  test-quality review, and SonarCloud is posted to its native location (PR
+- **Review findings**: every finding from codex review, refactor review, and
+  SonarCloud is posted to its native location (PR
   review comment for codex; issue comment summary for review aggregates).
   The issue thread carries a summary linking back to the PR comments.
 - **Decisions on findings**: for every finding, the agent records its
@@ -185,6 +252,11 @@ the pre-push cap key; those are audit context or post-push direct-caller
 defense-in-depth context, not reset levers for the canonical Step 6.5 cap.
 
 ### Test-quality review uses the same decision-record contract
+
+> **Superseded by ADR-099 (2026-09-17).** The dedicated test-quality reviewer,
+> its MCP tools, marker family, configuration, and Step 6.6 were removed. This
+> section is retained as provenance for why the decision-record contract is
+> shaped the way it is; nothing in it is current operating guidance.
 
 The test-quality review step (Step 6.6 per the #906 amendment; formerly
 Step 13) via the `gc_test_quality_review` MCP tool records every cycle on
@@ -734,3 +806,66 @@ commit, and refuses to post when that identity cannot be read. GitHub has no
 conditional comment create, so the projection is at-least-once. No gate reads
 these records, and the marker sits in the reserved `gc:` family that caller text
 cannot carry.
+
+**2026-09-18 (issue #1639, starting-worktree boundary and immediate Phase E).**
+The canonical checkout where a run begins is the mutation boundary for the run
+and every delegated step. Agents and delegated agents may inspect another
+repository or worktree read-only, but MUST NOT create, edit, or delete files,
+change Git state, or invoke write-capable repository tools there without
+explicit user authorization naming that repository or worktree. A separately
+invoked lane such as `/integrate` authorizes only its documented isolated
+worktrees, targets, and operations; it does not create general authority to
+mutate other checkouts.
+
+The linked PR becoming merged is also the complete transition condition from
+pre-merge readiness into Phase E. Once merge is observed, the run enters Phase
+E immediately. It does not wait for target-branch GitHub Actions, release jobs,
+security scans, sibling-agent work, or any other post-merge action to finish.
+The merge-revision requirement verification, final-report gate, and canonical
+issue close remain unchanged and still fail closed on their own prerequisites.
+
+## 2026-09-20 amendment: the /quickfix review carve-out reaches PR creation
+
+`/quickfix` runs AI review only under `--review`. The final report and both
+completion assertions have carried a `lane: "quickfix"` carve-out for that since
+issue #906, and `gc_render_pr_body` renders the lane's "pre-push Codex review not
+run" attestation. The PR-creation boundary introduced with the review
+execution/publication split (issue #1632) did not: it required a complete trusted
+review-publication tuple from every caller. The lane's default path could
+therefore render a pull request body it was structurally unable to submit, and
+the condition was unrecoverable in place, because a pre-push review reads the
+working tree and a post-push review needs the pull request that cannot yet exist.
+
+`gc_create_synchronized_implement_pr` now takes the same `lane` input and waives
+that tuple, and only that tuple, for `lane: "quickfix"`. Every other piece of
+evidence the boundary revalidates is unchanged. The waiver is granted against the
+issue's authoritative `## Requirements` section, which the boundary already reads
+to bind the body's closing keyword, not against the caller's word: a
+requirement-backed issue is not a legal quickfix, so it keeps the mandatory
+review. An unrecognized lane is refused rather than read as `/implement`.
+
+**2026-09-20 (issue #1671, the delivery handoff and a verified automation author).**
+Two records join the durable issue-thread surface this ADR governs. A
+**delivery-readiness record** on the issue carries the exact tool-shaped completion
+payload, digest-bound to the issue, the pull request, and the pull-request head OID
+whose required hosted checks readiness verified; a **delivery pointer** on the pull
+request names the issue and that record, for discovery only. Pull-request title,
+body, labels, branch name, and closing keywords confer no authority. Both are
+versioned, and an unknown version or lane fails closed.
+
+The final-report marker keeps its exact shape, and trust for it is still repository
+write permission on the author. One narrow class is added: the repository's own
+GitHub Actions identity, which the collaborator endpoint reports as
+`permission: "none"` and which `isTrusted` therefore correctly rejects. A separate
+`gc:finalizer-run` marker on the same comment names the run, and the gate accepts it
+only when that run resolves through the Actions API to this repository's pinned
+finalizer workflow and is bound to this pull request. The class is scoped to that one
+gate: execution-obligation `wontfix` authorization, the merged-state override, and the
+delivery-readiness record itself still require a repo-write human, so automation
+cannot author the evidence that authorizes it.
+
+Final-report publication becomes idempotent, treating an existing trusted marker for the
+same issue and pull request as a success rather than a second report, and a failed
+finalization writes one bounded, scrubbed, idempotently keyed `gc:delivery-finalization-failed`
+record and leaves the issue OPEN. The single-human-touchpoint contract is unchanged.
+See ADR-102.

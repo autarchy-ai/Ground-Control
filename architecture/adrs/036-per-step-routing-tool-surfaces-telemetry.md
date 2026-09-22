@@ -8,6 +8,15 @@ Accepted
 
 2026-05-11
 
+> **Issue #1632 amendment (2026-09-18):** The deterministic durable-record
+> surface now includes `gc_get_review_result` and
+> `gc_publish_review_result`. Review execution can return an opaque,
+> restart-durable handle without a GitHub write; explicit publication validates
+> a sanitized complete mapping, exact revision, cycle slot, and trusted
+> provenance before writing the canonical issue-thread records. Publication
+> retry reconciliation uses those records, while the original review remains
+> local. No backend, database, or new telemetry state is introduced.
+
 > **Issue #1303 amendment (2026-09-11):** The #1500 MCP-only re-platform removed
 > the persistence targets for step, workflow-run, and tool-call measurements.
 > The remaining telemetry emitters, lifecycle adapters, configuration knob, and
@@ -135,27 +144,22 @@ the colon per issue #1593 (no compound `security/docs:` prefixes)
 and a lowercase-leading subject (`^[a-z].*$`, uppercase acronyms reshaped).
 The body renderer and the title validator are independent concerns living in
 the same Step 9; the renderer is an MCP tool, the title rule is a local
-predicate the agent re-applies on every reshape.** Step 6.5 calls `gc_post_decision_record` for every cycle; **Step 6.6
-calls `gc_test_quality_review`** (per #884 v2; the prior `Skill("review-tests")`
-boundary returned prose findings that the autoregressive parent agent
-kept echoing back to the user instead of fixing in-turn, defeating the
-SKILL.md prose rule; the MCP tool returns a structured envelope with
-`next_action` that the agent reads as a directive). Issue #906 moved this
-call pre-push (former Step 13 → new Step 6.6) so the PR opens with both
-AI-assisted reviewers clean; the same #906 amendment dropped the default
-pre-push cap for both reviewers from 3 to 1, configurable per repo via
-`workflow.codex_review.pre_push_cap` and `workflow.test_quality_review.pre_push_cap`.
-The MCP tool itself is unchanged; only its workflow placement and default
-cap value shifted. After Step 6.6's
-cycle the parent calls `gc_post_decision_record` with the
-`fix`/`wontfix`/`not-applicable` dispositions (cycle counter, durable
-record); a clean cycle is the structured advance-to-Phase-C signal once
-that post returns `ok: true` (the string was `..._advance_to_step_14`
-before issue #906 collapsed Step 14 into Step 10's existing CI watch;
-new MCP envelope returns `..._advance_to_phase_c`). See
-`architecture/notes/test-quality-review-engine.md` for the full MCP
-tool mechanism (claude CLI exec, `ANTHROPIC_API_KEY` strip / OAuth,
-cycle markers, failure modes). Step 19 calls `gc_post_final_report`.
+predicate the agent re-applies on every reshape.** Step 6.5 publishes every
+retained review with `gc_publish_review_result`, which posts the findings,
+cycle, and decision records with the `fix`/`wontfix`/`not-applicable`
+dispositions (cycle counter, durable record); a clean cycle is the structured
+advance-to-Phase-C signal once that publication returns `ok: true`. A `wontfix`
+is accepted only there, because only a published review names the run its
+authorization must postdate (ADR-031, issue #1679). Step 19 calls
+`gc_post_final_report`.
+
+> **Superseded in part by ADR-099 (2026-09-17), corrected here for issue #1679.**
+> This paragraph previously directed Step 6.6 to call `gc_test_quality_review`
+> and described `workflow.test_quality_review.pre_push_cap` as live
+> configuration. The dedicated test-quality reviewer, its MCP tools, its
+> configuration block, its marker family and Step 6.6 were all removed; the text
+> above now describes only what exists. The routing and durable-record contract
+> this ADR establishes is otherwise unchanged.
 
 ### Telemetry contract
 
@@ -368,11 +372,12 @@ which loops execute**.
      decision the cycle tool can record without user authorization). A
      subagent that has obtained user authorization for a wontfix calls
      `gc_post_decision_record` directly with the override AFTER the cycle.
-   - `gc_test_quality_review_cycle`: same shape as the codex wrapper, for
-     test-quality reviews. Both cycle wrappers share one parameterized
-     internal seam (`_runReviewCycleShared`) parameterized by reviewer and
-     cap source; there is exactly one cycle implementation, not one per
-     reviewer.
+   - `gc_test_quality_review_cycle` *(removed by ADR-099; retained here as a
+     record of what this ADR originally decided, not as a live tool)*: same
+     shape as the codex wrapper, for test-quality reviews. Both cycle wrappers
+     shared one parameterized internal seam (`_runReviewCycleShared`)
+     parameterized by reviewer and cap source; there was exactly one cycle
+     implementation, not one per reviewer.
    - `gc_watch_ci_run`: server-side GitHub Actions poller. Replaces the
      per-poll agent turn cost of /implement Step 10. Returns one terminal
      envelope `{conclusion, failed_steps[], log_summary}` after the run
@@ -1026,3 +1031,37 @@ worktree's `config.worktree`, which let a checkout with
 required signature with an unsigned commit. When the signature cannot be
 produced, publish, base-sync completion, and remediation return
 `implement_commit_signing_failed`, no commit is created, and nothing is pushed.
+
+**2026-09-20 (issue #1669, bounded terminal wait on the async job transport).**
+The #937 async job model above traded a client-timeout failure for a cost that
+scales with job duration. `gc_codex_job` exposed only an immediate `poll`, so
+the agent had no way to ask the server to hold, and every tick of a multi-minute
+preflight, review cycle, or CI/Sonar monitor was a full-context model turn that
+read back `status: "running"`. The saving `gc_watch_ci_run` and
+`gc_watch_sonar_analysis` make by holding server-side was given back at the
+generic transport in front of them.
+
+`gc_codex_job` gains a third action, `await`. It observes the same bounded
+`job_id` and returns the same envelope `poll` returns, including a completed job
+whose `result.ok` is `false`. A red gate stays a completed originating action,
+never a transport failure. The registry owns the wait and releases it from the
+job's own terminal transition, so no status loop runs server-side either. One
+optional `wait_seconds` is the only public timing seam: it bounds the request
+and nothing else, with a server-owned default of 1500 s (covering a
+default-capped codex child) and a maximum of 1800 s (the hold
+`gc_watch_sonar_analysis` already performs, well under the 3,600,000 ms
+`MCP_TOOL_TIMEOUT` this repository configures). No `.ground-control.yaml` key
+and no environment variable are added, so no caller or repository can set a job
+execution deadline.
+
+Expiry returns the ordinary running envelope while the job continues; it is not
+a cancellation, a retry, a TTL extension, or a result. `poll` remains the
+immediate observability operation and `cancel` keeps its truthful
+`job_not_cancellable` answer for mechanical and review-cycle jobs, so awaiting
+grants no cancellation. Jobs stay process-local: restart and the 30-minute
+terminal retention still yield `job_not_found` under each originating tool's
+existing recovery contract, and a waiter never makes a job restart-durable.
+Authorization, idempotency, single-flight, requirement binding, and action
+dispatch all happen at job start and are untouched. The `/implement` and
+`/quickfix` prose retires its fixed polling cadences in favor of `await`; the
+async start, idempotency-key, and `job_not_found` recovery rules are unchanged.

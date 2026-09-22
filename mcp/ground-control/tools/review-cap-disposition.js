@@ -5,6 +5,8 @@ import { z } from "zod";
 import {
   ASYNC_JOB_ID_MAX,
   ASYNC_JOB_ID_RE,
+  ASYNC_JOB_WAIT_SECONDS_DEFAULT,
+  ASYNC_JOB_WAIT_SECONDS_MAX,
   EXACT_REQUIREMENT_UID_RE,
   EXECUTION_OBLIGATION_CATEGORIES,
   EXECUTION_OBLIGATION_DISPOSITIONS,
@@ -14,6 +16,7 @@ import {
   IMPLEMENT_BASE_SYNC_OUTCOMES,
   IMPLEMENT_CHECKOUT_MODES,
   TELEMETRY_TIERS,
+  awaitAsyncJob,
   cancelAsyncJob,
   pollAsyncJob,
   runAuthorizeExecutionObligationWontfix,
@@ -55,11 +58,11 @@ export function registerReviewCapDisposition(server, ctx) {
 function _registerGcReviewCapDisposition(server) {
   server.tool(
     "gc_review_cap_disposition",
-    "Optional, config-gated auto-disposition of the pre-push review cap (workflow.review_disposition; disabled by default — when disabled this returns {ok:true,skipped:true,disposition:null} and does nothing else). Scores the change with a deterministic risk model (diff size, changed-surface class, security-finding shape, prior auto-overrides) and returns one of disposition='proceed' | 'one_more_cycle' | 'escalate_to_human' with a next_action directive. Cap/cycle authority is derived SERVER-SIDE (the effective reviewer cap from config, the over-cap count from durable cycle markers); the passed cycle/cap are advisory display only, and the call is refused (disposition_before_cap_boundary) before the cap boundary is reached. In mode='shadow' (default) the returned next_action is clamped to escalation — the disposition is recorded for agreement data but never drives control flow. A one_more_cycle disposition records a durable over-cap auto-grant (carrying its issuance mode + server-derived cap boundary) that gc_codex_review_cycle / gc_test_quality_review_cycle verify (via auto_grant=true) before running an over-cap cycle — honored only when posted by the trusted MCP identity, issued under authoritative mode, bound to the current cap, and not already spent. The hard ceiling (max_auto_overrides) is enforced in the scorer and re-clamped after any judge so the auto path can never grant a 2nd over-cap cycle. Returns {ok, disposition, next_action, mode, effective_cap, rationale, decided_by, risk_score, signals_snapshot, over_cap_grant_number, decision_record_url}.",
+    "Optional, config-gated auto-disposition of the Codex pre-push review cap (workflow.review_disposition; disabled by default — when disabled this returns {ok:true,skipped:true,disposition:null} and does nothing else). Scores the change with a deterministic risk model (diff size, changed-surface class, security-finding shape, prior auto-overrides) and returns one of disposition='proceed' | 'one_more_cycle' | 'escalate_to_human' with a next_action directive. Cap/cycle authority is derived SERVER-SIDE (the effective Codex cap from config, the over-cap count from durable cycle markers); the passed cycle/cap are advisory display only, and the call is refused (disposition_before_cap_boundary) before the cap boundary is reached. In mode='shadow' (default) the returned next_action is clamped to escalation — the disposition is recorded for agreement data but never drives control flow. A one_more_cycle disposition records a durable over-cap auto-grant that gc_codex_review_cycle verifies before running an over-cap cycle. Returns {ok, disposition, next_action, mode, effective_cap, rationale, decided_by, risk_score, signals_snapshot, over_cap_grant_number, decision_record_url}.",
     {
       repo_path: z.string(),
       issue_number: z.number().int().positive(),
-      reviewer: z.enum(["codex", "test-quality"]),
+      reviewer: z.literal("codex"),
       cycle: z.number().int().positive(),
       cap: z.number().int().positive(),
       base_branch: z.string().nullable().optional(),
@@ -85,8 +88,8 @@ function _registerGcReviewCapDisposition(server) {
         .nullable()
         .optional()
         .describe(
-          "The last-in-cap cycle's server-produced findings summary (from the gc_codex_review_cycle / " +
-            "gc_test_quality_review_cycle envelope). Feeds the risk scorer's finding-shape signal. When omitted, " +
+          "The last-in-cap cycle's server-produced findings summary from gc_codex_review_cycle. " +
+            "Feeds the risk scorer's finding-shape signal. When omitted, " +
             "the scorer treats finding shape as unknown and refuses the proceed fast-path (fail-safe).",
         ),
       async: z.boolean().optional().describe(ASYNC_REVIEW_PARAM_DESC),
@@ -118,10 +121,15 @@ function _registerGcReviewCapDisposition(server) {
 function _registerGcCodexJob(server) {
   server.tool(
     "gc_codex_job",
-    "Poll or cancel a shared async job started by gc_codex_review, gc_codex_review_cycle, " +
-      "gc_codex_architecture_preflight, gc_test_quality_review, gc_test_quality_review_cycle, or " +
+    "Await, poll, or cancel a shared async job started by gc_codex_review, gc_codex_review_cycle, " +
+      "gc_codex_architecture_preflight, or " +
       "gc_implement_mechanical with async=true. action='poll' returns {ok:true,status:'running'} while " +
       "work continues, and {ok:true,status:'done',result:<original tool envelope>} once it finishes. " +
+      "action='await' is the same observation held open server-side until the job is terminal, so waiting " +
+      "costs one call instead of one model turn per tick; prefer it over repeated polling. Its optional " +
+      "wait_seconds bounds only that request (default 1500, max 1800) and expiry returns the ordinary " +
+      "running envelope while the job continues — never a cancellation, retry, or result. Awaiting grants " +
+      "no cancellation and changes no job deadline, retention, or idempotency behavior. " +
       "A running poll may carry a bounded `progress` snapshot (current gate phase plus last child-output " +
       "activity and byte counts) so a slow-but-healthy verification sweep is distinguishable from a dead job; " +
       "it is observability only, never a liveness or cancellation guarantee. " +
@@ -135,11 +143,21 @@ function _registerGcCodexJob(server) {
       "error='job_not_found'. For a review-cycle job, refresh and reconcile the authoritative issue thread before " +
       "another attempt; for other jobs, follow the originating tool's retry contract.",
     {
-      action: z.enum(["poll", "cancel"]),
+      action: z.enum(["poll", "await", "cancel"]),
       job_id: z.string().min(1).max(ASYNC_JOB_ID_MAX).regex(ASYNC_JOB_ID_RE),
+      wait_seconds: z.number().int().min(1).max(ASYNC_JOB_WAIT_SECONDS_MAX).optional()
+        .describe("action='await' only: bounds this request, not the job. Defaults to "
+          + `${ASYNC_JOB_WAIT_SECONDS_DEFAULT}; expiry returns the running envelope.`),
     },
-    async ({ action, job_id }) => {
+    async ({ action, job_id, wait_seconds }) => {
       try {
+        if (action === "await") {
+          const awaited = await awaitAsyncJob(
+            job_id,
+            wait_seconds === undefined ? undefined : wait_seconds * 1000,
+          );
+          return ok(JSON.stringify(awaited, null, 2));
+        }
         const result = action === "cancel" ? cancelAsyncJob(job_id) : pollAsyncJob(job_id);
         return ok(JSON.stringify(result, null, 2));
       } catch (e) { return err(e); }
@@ -269,9 +287,13 @@ function _registerGcCreateSynchronizedImplementPr(server) {
     "Inputs are repo_path, issue_number, branch_name, synchronization record_id, title, and the body rendered by " +
     "gc_render_pr_body. Immediately before the GitHub write it re-fetches the configured integration branch, verifies " +
     "the trusted issue-thread record, verified tree, local feature SHA, remote feature SHA, fetched base SHA, ancestry, " +
-    "repository identity, repository-scoped existing PR identity/content, and configured Conventional Commit title policy. " +
-    "Any stale or missing evidence refuses with a next_action returning " +
-    "the workflow to gc_synchronize_implement_branch; callers must not fall back to direct gh pr create.",
+    "repository identity, repository-scoped existing PR identity/content, " +
+    "and configured Conventional Commit title policy. Any stale or missing evidence refuses with a next_action returning " +
+    "the workflow to the named repair or synchronization boundary; callers must not fall back to direct gh pr create. " +
+    "The lane is read from the newest trusted pickup record for the branch, not taken " +
+    "from the input; a caller lane that disagrees refuses with implement_pr_lane_mismatch. Bootstrapping a branch in " +
+    "another lane records the switch on the issue before it takes effect. Review execution and publication remain " +
+    "observational records and do not authorize PR creation or delivery.",
     {
       repo_path: z.string(),
       issue_number: z.number().int().positive(),
@@ -279,8 +301,9 @@ function _registerGcCreateSynchronizedImplementPr(server) {
       record_id: z.string().regex(/^[0-9a-f]{32}$/),
       title: z.string().min(1).max(256),
       body: z.string().min(1).max(65535),
+      lane: z.enum(["implement", "quickfix"]).optional(),
     },
-    async ({ repo_path, issue_number, branch_name, record_id, title, body }) => {
+    async ({ repo_path, issue_number, branch_name, record_id, title, body, lane }) => {
       try {
         return ok(JSON.stringify(await runCreateSynchronizedImplementPr({
           repoPath: repo_path,
@@ -289,6 +312,7 @@ function _registerGcCreateSynchronizedImplementPr(server) {
           recordId: record_id,
           title,
           body,
+          lane: lane ?? "implement",
         }), null, 2));
       } catch (e) { return err(e); }
     },

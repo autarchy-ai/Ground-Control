@@ -248,25 +248,6 @@ describe("review-cycle async transport (issue #943)", () => {
     assert.equal(contended.error, "job_execution_contended");
   });
 
-  it("keeps codex and test-quality single-flight scopes disjoint", async () => {
-    _resetAsyncJobsForTest();
-    const codex = await runReviewCycleTransport(
-      cycleInput({ runCycle: () => new Promise(() => {}) }),
-      trustedDeps(),
-    );
-    const testQuality = await runReviewCycleTransport(
-      cycleInput({
-        reviewer: "test-quality",
-        idempotencyKey: "issue-943-test-quality-cycle-1",
-        runCycle: () => new Promise(() => {}),
-      }),
-      trustedDeps(),
-    );
-    assert.equal(codex.ok, true);
-    assert.equal(testQuality.ok, true);
-    assert.notEqual(codex.job_id, testQuality.job_id);
-  });
-
   it("does not advertise cancellation as rollback", async () => {
     _resetAsyncJobsForTest();
     const started = await runReviewCycleTransport(

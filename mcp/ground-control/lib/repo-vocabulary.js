@@ -6,6 +6,7 @@
 
 import { readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { buildReviewPublicationMarkerAttributes } from "./review-publication-markers.js";
 
 const ARCH_VOCABULARY_TOP_KEYS = new Set(["patterns", "canonical_helpers", "boundary_contract", "binding_adrs", "anti_recommendations"]);
 const ARCH_PATTERN_KEYS = new Set(["name", "applies_to", "example_path"]);
@@ -193,7 +194,7 @@ export function normalizeArchitectureConfig(raw) {
   if (errors.length) return { ok: false, errors };
   return { ok: true, value: { vocabulary: vocabResult.value } };
 }
-export const DECISION_RECORD_REVIEWERS = Object.freeze(["codex", "refactor", "test-quality", "sonarcloud"]);
+export const DECISION_RECORD_REVIEWERS = Object.freeze(["codex", "refactor", "sonarcloud"]);
 export const DECISION_RECORD_DECISIONS = Object.freeze(["fix", "wontfix", "not-applicable"]);
 export const DECISION_RECORD_CLASSIFICATIONS = Object.freeze(["one-off", "class"]);
 const DECISION_RECORD_MARKER_PREFIX = "<!-- gc:decision-record";
@@ -217,8 +218,11 @@ export function rejectReservedMarkerSequence(text, fieldName) {
   }
   return null;
 }
-export function buildDecisionRecordMarker({ reviewer, cycle, issueNumber }) {
-  return `<!-- gc:decision-record reviewer="${reviewer}" cycle="${cycle}" issue="${issueNumber}" -->`;
+export function buildDecisionRecordMarker({ reviewer, cycle, issueNumber, provenance = null }) {
+  const attrs = provenance == null
+    ? ""
+    : ` ${buildReviewPublicationMarkerAttributes(provenance)}`;
+  return `<!-- gc:decision-record reviewer="${reviewer}" cycle="${cycle}" issue="${issueNumber}"${attrs} -->`;
 }
 export const SONAR_BASE_URL = "https://sonarcloud.io";
 const SONAR_SEVERITY_RANK = {
@@ -370,7 +374,6 @@ export const DEFAULT_IMPLEMENT_ROUTING_STAGES = Object.freeze({
   pr_body: { tier: "low" },
   ci_monitor: { tier: "low" },
   sonarcloud: { tier: "low" },
-  test_quality_review: { tier: "medium" },
   transition_reconcile: { tier: "medium" },
   final_report: { tier: "low" },
   close_issue_after_merge: { tier: "low" },

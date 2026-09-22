@@ -32,7 +32,6 @@ from tools.policy.checks import (
     run_repo_identity_drift,
     run_no_deferral_disposition_check,
     run_pr_body_check,
-    run_test_quality_decision_record_contract,
     run_version_mirror_consistency_check,
     run_workflow_routing_contract,
     run_implement_execution_contract,
@@ -89,6 +88,20 @@ class ImplementExecutionChecksTest(PolicyChecksFixture):
                 text.replace(anchor, "covers the changed code"),
                 encoding="utf-8",
             )
+            violations = run_implement_execution_contract(root=root)
+            self.assertIn(
+                "implement-review-fix-evidence-contract",
+                {item.code for item in violations},
+            )
+
+    def test_implement_execution_contract_requires_published_decision_before_repair(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = self._implement_contract_root(tmp_dir)
+            rules = root / "skills/implement/steps/_review-loop-rules.md"
+            text = rules.read_text(encoding="utf-8")
+            anchor = "published decision record is written before the repair"
+            self.assertIn(anchor, text)
+            rules.write_text(text.replace(anchor, "decision record is optional"), encoding="utf-8")
             violations = run_implement_execution_contract(root=root)
             self.assertIn(
                 "implement-review-fix-evidence-contract",
@@ -181,6 +194,67 @@ class ImplementExecutionChecksTest(PolicyChecksFixture):
             {item.code for item in violations},
         )
 
+    def test_quickfix_contract_requires_shared_boundaries_and_secret_scanning(self):
+        mutations = (
+            (
+                'action: "bootstrap"',
+                'action: "start"',
+            ),
+            (
+                "pre-commit boundary and its secret scanning are non-negotiable",
+                "pre-commit is optional",
+            ),
+            (
+                "one automatic repair and re-analysis round",
+                "automatic repair rounds",
+            ),
+        )
+        for anchor, replacement in mutations:
+            with self.subTest(anchor=anchor), tempfile.TemporaryDirectory() as tmp_dir:
+                root = self._implement_contract_root(tmp_dir)
+                path = root / "skills/quickfix/SKILL.md"
+                text = path.read_text(encoding="utf-8")
+                self.assertIn(anchor, text)
+                path.write_text(text.replace(anchor, replacement), encoding="utf-8")
+                violations = run_implement_execution_contract(root=root)
+                self.assertIn(
+                    "quickfix-thin-lane-drift",
+                    {item.code for item in violations},
+                )
+
+    def test_quickfix_contract_rejects_retired_review_ceremony(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = self._implement_contract_root(tmp_dir)
+            path = root / "skills/quickfix/SKILL.md"
+            path.write_text(
+                path.read_text(encoding="utf-8") + "\n## Amendments\n",
+                encoding="utf-8",
+            )
+            violations = run_implement_execution_contract(root=root)
+            drift = [
+                item for item in violations if item.code == "quickfix-thin-lane-drift"
+            ]
+            self.assertEqual(len(drift), 1)
+            self.assertIn("retired token remains: ## Amendments", drift[0].details)
+
+    def test_quickfix_contract_caps_runtime_instruction_size(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = self._implement_contract_root(tmp_dir)
+            path = root / "skills/quickfix/SKILL.md"
+            path.write_text(
+                path.read_text(encoding="utf-8") + ("\nBounded filler." * 60),
+                encoding="utf-8",
+            )
+            violations = run_implement_execution_contract(root=root)
+            drift = [
+                item for item in violations if item.code == "quickfix-thin-lane-drift"
+            ]
+            self.assertEqual(len(drift), 1)
+            self.assertTrue(
+                any("maximum is 200" in detail for detail in drift[0].details),
+                drift[0].details,
+            )
+
     def test_implement_execution_contract_rejects_dropped_review_batching_token(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = self._implement_contract_root(tmp_dir)
@@ -214,6 +288,64 @@ class ImplementExecutionChecksTest(PolicyChecksFixture):
                     "implement-phase-e-noop-contract",
                     {item.code for item in violations},
                 )
+
+    def test_implement_execution_contract_requires_starting_worktree_boundary(self):
+        anchor = (
+            "MUST NOT make repository changes outside the starting worktree without "
+            "explicit user authorization"
+        )
+        surfaces = (
+            "AGENTS.md",
+            "skills/implement/_development-principles.md",
+            "skills/implement/steps/step-01-issue-branch-resolution.md",
+            "docs/DEVELOPMENT_WORKFLOW.md",
+        )
+        for rel in surfaces:
+            with self.subTest(surface=rel), tempfile.TemporaryDirectory() as tmp_dir:
+                root = self._implement_contract_root(tmp_dir)
+                path = root / rel
+                text = path.read_text(encoding="utf-8")
+                pattern = r"\s+".join(re.escape(part) for part in anchor.split())
+                mutated, replacements = re.subn(
+                    pattern, "MUTATION BOUNDARY REMOVED", text, count=1
+                )
+                self.assertEqual(replacements, 1)
+                path.write_text(mutated, encoding="utf-8")
+                violations = run_implement_execution_contract(root=root)
+                self.assertIn(
+                    "agent-starting-worktree-boundary",
+                    {item.code for item in violations},
+                )
+
+    def test_implement_execution_contract_requires_immediate_phase_e_after_merge(self):
+        anchors = (
+            "Once the linked PR is observed as merged, enter Phase E immediately.",
+            "Do not wait for post-merge GitHub Actions or other additional actions to complete",
+        )
+        surfaces = (
+            "skills/implement/SKILL.md",
+            "skills/implement/steps/step-17-completion.md",
+            "docs/DEVELOPMENT_WORKFLOW.md",
+        )
+        for rel in surfaces:
+            for anchor in anchors:
+                with (
+                    self.subTest(surface=rel, anchor=anchor),
+                    tempfile.TemporaryDirectory() as tmp_dir,
+                ):
+                    root = self._implement_contract_root(tmp_dir)
+                    path = root / rel
+                    text = path.read_text(encoding="utf-8")
+                    self.assertIn(anchor, text)
+                    path.write_text(
+                        text.replace(anchor, "PHASE E DELAYED"),
+                        encoding="utf-8",
+                    )
+                    violations = run_implement_execution_contract(root=root)
+                    self.assertIn(
+                        "implement-phase-e-immediate-after-merge",
+                        {item.code for item in violations},
+                    )
 
     def test_implement_verification_contract_is_proportionate_and_mandatory(self):
         principles = (

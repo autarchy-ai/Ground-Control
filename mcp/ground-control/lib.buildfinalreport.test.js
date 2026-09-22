@@ -54,7 +54,7 @@ describe("buildFinalReport", () => {
       },
       reviews: [
         { reviewer: "codex", summary: "2 cycles, all fix, 0 remaining." },
-        { reviewer: "test-quality", summary: "0 findings." },
+        { reviewer: "codex", summary: "0 findings." },
       ],
       traceability: {
         added: ["IMPLEMENTS:GC-O007→a.js"],
@@ -252,7 +252,7 @@ describe("buildPrBody", () => {
   it("includes the exact repo-neutral Ground Control Checks lines (policy: pr-ground-control-checks)", () => {
     const body = buildPrBody(baseInput());
     assert.ok(body.includes(PR_BODY_POLICY_CHECK_LINE));
-    assert.ok(body.includes("- [x] Pre-push code review and test-quality review completed; all findings fixed or dispositioned"));
+    assert.ok(body.includes("- [x] Pre-push Codex review completed; all findings fixed or dispositioned"));
     // The former checks named tools removed with the #1500 teardown (issue #1199).
     assert.ok(!body.includes("gc_evaluate_quality_gates"), "must not attest a removed tool");
     assert.ok(!body.includes("gc_run_sweep"), "must not attest a removed tool");

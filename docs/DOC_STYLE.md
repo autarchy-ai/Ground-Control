@@ -232,10 +232,6 @@
 
 > **Sync note for issue #1006 / ADR-080 (2026-07-01):** The `gc_research_run` MCP tool gained `record_methodology_requirements_contract` and `get_methodology_requirements_contract` actions (`POST`/`GET /api/v1/research-runs/{id}/methodology/requirements-contract`) in `mcp/ground-control/index.js` + `lib.js` for the structured phase-1 methodology requirements contract. The surface change is recorded in the ADR-054 amendment, `docs/API.md`, and `docs/research/RESEARCH_WORKFLOW.md`; no style rule changed.
 
-> **Sync note for issue #1124 / GC-GRC-011 (2026-07-05):** The `gc_test_quality_review` rubric in `mcp/ground-control/lib.js` (`buildTestQualityReviewPrompt`) gained a critical category flagging control efficacy tests that only prove existence rather than detecting control removal, with a matching key-phrase assertion in `lib.test.js`. This is a workflow-record-tool prompt-contract change, not a documentation-classifier change: the documentation-coverage classifier (`classifyChangedSurface`), `outcome_required` mapping, Vale rule set, `tools/install-vale.sh`, and `.vale.ini` are unchanged, and no new DOC_STYLE.md style rule is established.
-
-> **Sync note for issue #1364 (2026-07-12):** The `gc_test_quality_review` rubric category added by #1124 above is rewritten in a screening-independent form. ADR-089 retired the machinery it depended on, so it conditioned on a security control "identified for" the change (identification was the now-tombstoned Step 3.5) and routed to a GC-GRC-015 disposition that no longer exists. The category now keys off the diff: production logic enforcing a protection must ship a test that fails when the enforcement is removed, bypassed, or materially weakened. The prompt-contract assertion in `lib.test.js` and the implementer-facing rule in `skills/implement/steps/step-04.4-tdd.md` are updated in lockstep. This is a workflow-record-tool prompt-contract change, not a documentation-classifier change: the documentation-coverage classifier (`classifyChangedSurface`), `outcome_required` mapping, Vale rule set, `tools/install-vale.sh`, and `.vale.ini` are unchanged, and no new DOC_STYLE.md style rule is established.
-
 ## Rules
 
 Docs describe the system as it ships on the current commit. Write in present
@@ -450,7 +446,7 @@ the tool description strings in `index.js` and the skill prose under
 GC-O012 / #1099, `gc_assert_grc_reconciled` for #1100,
 `gc_assert_quality_gates` for #1101, `plain_english_outcome` /
 `next_issue_recommendation` for #1156, and `gc_review_cap_disposition` (plus
-the `auto_grant` field on `gc_codex_review_cycle` / `gc_test_quality_review_cycle`)
+the `auto_grant` field on `gc_codex_review_cycle`)
 for the automated review-cap disposition gate in #1245. The matching policy check in
 `tools/policy/checks.py` is the prose-side guardrail. The surface addition is
 recorded in the ADR-054 amendment and the changelog fragment; no new
@@ -494,7 +490,7 @@ Bumping the `CLAUDE_MODEL_BY_TIER.high` routing-default model id in `mcp/ground-
 
 Adding `expected_model` and `model_matches_expected` to the `/implement` step-telemetry record in `mcp/ground-control/lib.js` (issue #1181, schema `gc.implement.telemetry/v2`) is a telemetry-record field addition documented in ADR-036 and recorded in an ADR-054 amendment, not a new doc page or style rule.
 
-Bumping the `CLAUDE_MODEL_BY_TIER.medium` routing-default model id and the `TEST_QUALITY_REVIEW_DEFAULT_MODEL` engine default in `mcp/ground-control/lib.js` from `claude-sonnet-4-6` to `claude-sonnet-5`, and loosening the routing model-id validator to accept single-segment canonical ids (issue #1264), is a constant change plus a validator relaxation recorded in an ADR-054 amendment, not a new doc page or style rule.
+Bumping the `CLAUDE_MODEL_BY_TIER.medium` routing-default model id and loosening the routing model-id validator to accept single-segment canonical ids (issue #1264) is a constant change plus a validator relaxation recorded in an ADR-054 amendment, not a new doc page or style rule.
 
 New `/implement` workflow-gate configuration under `.ground-control.yaml`
 (for example, `workflow.dev_start_gate` for GC-O007 / #1194) follows the same

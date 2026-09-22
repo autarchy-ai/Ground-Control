@@ -1,0 +1,32 @@
+{
+  "schema": "gc.incus-sandbox/v3",
+  "project": "gc-sandbox",
+  "profile": "gc-sandbox-default",
+  "pool": "gc-sandbox-pool",
+  "bridge": "gcbr0",
+  "image": "images:0000000000000000000000000000000000000000000000000000000000000000",
+  "state_dir": "/var/lib/gc-incus-sandbox/state",
+  "event_log": "/var/log/gc-incus-sandbox/lifecycle.jsonl",
+  "event_max_bytes": 1048576,
+  "observation_max_age_seconds": 60,
+  "operator_uid": 1000,
+  "vm": { "cpu": 2, "memory_mib": 4096, "disk_gib": 16 },
+  "host": {
+    "reserve_memory_mib": 2048,
+    "reserve_disk_gib": 32,
+    "max_cpu": 8,
+    "max_memory_mib": 32768,
+    "max_disk_gib": 512,
+    "overhead_disk_gib": 16
+  },
+  "migration": {
+    "max_packet_bytes": 1073741824,
+    "max_file_count": 2048,
+    "max_file_bytes": 67108864,
+    "max_handoff_bytes": 65536
+  },
+  "task_environment": {
+    "max_value_bytes": 16384,
+    "repositories": {}
+  }
+}

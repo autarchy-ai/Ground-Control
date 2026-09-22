@@ -3,7 +3,7 @@
 // The module had reached 1,231 lines against the repo's 500-LOC limit
 // (docs/CODING_STANDARDS.md). gc-implement-mechanical.js remains the tool entry point.
 
-import { detectSensitiveBodyContent, extractInScopeRequirementUids, requestedRequirementUidAuthorization } from "../lib.js";
+import { currentPickupLane, detectSensitiveBodyContent, extractInScopeRequirementUids, getAuthenticatedGitHubLogin, requestedRequirementUidAuthorization } from "../lib.js";
 import { z } from "zod";
 
 export { execFile as execFileAsync } from "../lib/runtime-primitives.js";
@@ -40,7 +40,7 @@ export const completionShape = z.object({
   sonar_status: z.string().min(1),
   plan_comment_url: z.string().url().nullable().optional(),
   summary: z.string().min(1).optional(),
-  plain_english_outcome: z.string().min(1),
+  plain_english_outcome: z.string().min(1).optional(),
   touched_files: z.array(z.string()).optional(),
   project: z.string().min(1).optional(),
 });
@@ -163,16 +163,30 @@ async function loadIssueRequirementContext(args, deps, context, requirementUids,
   }
 }
 
-// Record the /implement pickup comment unless the thread already carries one for
+// Record the lane-specific pickup comment unless the thread already carries one for
 // this branch. Returns the pickup record on success (reused or freshly written)
 // or a bounded failure envelope; both carry `ok`, so the caller branches on it.
 async function ensureIssuePickup(args, deps, thread, branch, action) {
-  const pickupAlreadyRecorded = (thread.comments ?? []).some((comment) =>
-    typeof comment?.body === "string"
-    && comment.body.includes("Picked up by /implement")
-    && comment.body.includes(`\`${branch}\``),
-  );
-  if (pickupAlreadyRecorded) {
+  const lane = args.lane === "quickfix" ? "quickfix" : "implement";
+  // The shared lane reader accepts only exact records by repository-write
+  // authors. Reusing its result keeps bootstrap and every later gate aligned.
+  const derived = await deps.readRunLane({
+    repoPath: args.repoPath,
+    issueNumber: args.issueNumber,
+    branchName: branch,
+  });
+  if (!derived.ok) {
+    return failure(action, derived.error, derived.message, derived.next_action);
+  }
+  // Release reservation is deliberately bound to this server's `/implement`
+  // pickup. Keep that separate ownership evidence when a different trusted
+  // author established the lane record.
+  const ownImplementPickup = lane === "implement" && currentPickupLane(
+    (thread.comments ?? []).map((comment) => ({ id: comment?.id, body: comment?.body, authorLogin: comment?.author })),
+    await (deps.authenticatedLogin ?? getAuthenticatedGitHubLogin)(args.repoPath),
+    branch,
+  ) === "implement";
+  if (derived.pickup_found && derived.lane === lane && (lane !== "implement" || ownImplementPickup)) {
     return { ok: true, reused: true };
   }
   const pickup = await deps.markPickedUp({
@@ -180,6 +194,7 @@ async function ensureIssuePickup(args, deps, thread, branch, action) {
     issueNumber: args.issueNumber,
     driver: args.driver,
     branchName: branch,
+    lane,
   });
   if (!pickup.ok) {
     return failure(action, pickup.error, pickup.message, "repair_pickup_record_and_retry");
@@ -201,6 +216,32 @@ export async function runBootstrap(args, deps) {
       "repair_ground_control_context_and_retry",
     );
   }
+  const thread = await deps.getIssueThread({
+    repoPath: args.repoPath,
+    issueNumber: args.issueNumber,
+  });
+  if (!thread.ok) {
+    return failure(action, thread.error, thread.message, "repair_issue_access_and_retry");
+  }
+  const requirementUids = extractInScopeRequirementUids(thread.body);
+  if (args.lane === "quickfix" && requirementUids.length > 0) {
+    return failure(
+      action,
+      "quickfix_requirements_in_scope",
+      `Issue #${args.issueNumber} has requirements in scope and cannot use the requirement-free quickfix lane`,
+      "use_implement_for_this_issue",
+      { requirement_uids: requirementUids },
+    );
+  }
+  // Bootstrap already holds the authoritative thread, so it binds against that
+  // body directly rather than re-reading it.
+  const authorized = requestedRequirementUidAuthorization(
+    thread.body,
+    args.requestedRequirementUid,
+  );
+  if (!authorized.ok) {
+    return failure(action, authorized.error, authorized.message, authorized.next_action);
+  }
   const prepared = await deps.prepareBranch({
     repoPath: args.repoPath,
     invocationRoot: args.invocationRoot,
@@ -211,23 +252,6 @@ export async function runBootstrap(args, deps) {
   });
   if (!prepared.ok) {
     return failure(action, prepared.error, prepared.message, prepared.next_action ?? "repair_branch_and_retry");
-  }
-  const thread = await deps.getIssueThread({
-    repoPath: args.repoPath,
-    issueNumber: args.issueNumber,
-  });
-  if (!thread.ok) {
-    return failure(action, thread.error, thread.message, "repair_issue_access_and_retry");
-  }
-  const requirementUids = extractInScopeRequirementUids(thread.body);
-  // Bootstrap already holds the authoritative thread, so it binds against that
-  // body directly rather than re-reading it.
-  const authorized = requestedRequirementUidAuthorization(
-    thread.body,
-    args.requestedRequirementUid,
-  );
-  if (!authorized.ok) {
-    return failure(action, authorized.error, authorized.message, authorized.next_action);
   }
   const requirementContext = await loadIssueRequirementContext(args, deps, context, requirementUids, action);
   if (!requirementContext.ok) return requirementContext;
@@ -255,6 +279,8 @@ export async function runBootstrap(args, deps) {
     in_scope_requirements: requirements,
     issue_traceability_links: issueTraceabilityLinks,
     pickup,
-    next_action: "run_agent_architecture_assessment_and_plan",
+    next_action: args.lane === "quickfix"
+      ? "implement_the_bounded_fix_and_run_targeted_tests"
+      : "run_agent_architecture_assessment_and_plan",
   };
 }

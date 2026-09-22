@@ -12,7 +12,6 @@ import {
 
 const REVIEW_CYCLE_KINDS = Object.freeze({
   codex: "codex_review_cycle",
-  "test-quality": "test_quality_review_cycle",
 });
 
 function transportFailure(error, message) {
@@ -23,7 +22,7 @@ export async function runReviewCycleTransport(input, overrides = {}) {
   if (input?.asyncMode === false) {
     return transportFailure(
       "review_cycle_async_required",
-      "Review-cycle tools are async-only; omit async or pass async=true and poll gc_codex_job.",
+      "Review-cycle tools are async-only; omit async or pass async=true and await gc_codex_job.",
     );
   }
   const kind = REVIEW_CYCLE_KINDS[input?.reviewer];

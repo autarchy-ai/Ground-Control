@@ -53,7 +53,6 @@ export function emptyWorkflowConfig() {
     // default" (issue #906 lowered the tool default from 3 to 1; repos that
     // want the old behavior set `pre_push_cap: 3` explicitly).
     codex_review: { pre_push_cap: null, non_verdict_retry_limit: null },
-    test_quality_review: { pre_push_cap: null, non_verdict_retry_limit: null },
     // PR title validation config (issue #896). `null` means "use the canonical
     // defaults declared in step-09-pr-body.md".
     pr_title: null,

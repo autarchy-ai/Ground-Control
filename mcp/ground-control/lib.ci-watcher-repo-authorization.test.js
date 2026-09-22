@@ -87,8 +87,13 @@ describe("runWatchCiRun — the privileged run lookup is authorized", () => {
         authorizeRepoRead: async () => ({ ok: true, repoSlug: "authorized-owner/authorized-repo" }),
       }));
       const calls = shim.ghCalls().map((line) => JSON.parse(line));
-      assert.ok(calls.length > 0, "expected the run lookup to reach gh");
-      assert.deepEqual(calls[0].slice(0, 2), ["--repo", "authorized-owner/authorized-repo"]);
+      assert.ok(calls.length > 0, "expected the branch-tip read to reach gh");
+      // The branch-tip read (issue #1365) comes first. `gh api` takes no
+      // `--repo`, so the authorized slug is pinned in its path instead.
+      assert.deepEqual(
+        calls[0],
+        ["api", "repos/authorized-owner/authorized-repo/commits/main", "--jq", ".sha"],
+      );
       assert.equal(
         calls.some((argv) => argv.includes("private-org/private-repo")),
         false,

@@ -6,7 +6,7 @@ Install once per machine.
 
 - Node.js 22 or newer
 - `git`, and the GitHub CLI (`gh`) signed in with `gh auth login`
-- The Codex CLI (`codex`) for code review, and Claude Code (`claude`) for test-quality review
+- The Codex CLI (`codex`) for code review
 
 ## Install the package
 

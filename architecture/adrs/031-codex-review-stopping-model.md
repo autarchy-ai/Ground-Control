@@ -8,6 +8,88 @@ Proposed
 
 2026-05-09
 
+> **Amended by issue #1694 (2026-09-22):** An uncommitted pre-push review is
+> the complete tracked feature candidate against the requested integration
+> base, not merely the index and worktree deltas from the feature branch's old
+> `HEAD`. The review path resolves one diff base per capture: the merge base of
+> the first existing requested base ref (`origin/<base>`, `<base>`, then the
+> existing `main` fallbacks) and the candidate commit, meaning `HEAD` plus any
+> pending `MERGE_HEAD` parents. Incoming base history that a resolved but
+> uncommitted merge brings in therefore belongs to the base, committed feature
+> work belongs to the candidate, and a base ref that only advances does not
+> move the diff base. Diffing against the base tip itself would render every
+> unmerged base change as a reverse-applied feature change. That one object is
+> used for the base-to-index diff, manifest, change kinds, and
+> `revision.base_oid`, and the manifest names the ref and object. Branch-mode
+> reviews use the same resolver. The ordinary index-to-worktree diff remains
+> additive so unstaged changes stay covered, and untracked bodies remain
+> outside the review consent boundary. Revision comparison keeps HEAD, candidate
+> tree, diff base, and reviewed-input digest distinct. Any movement makes the
+> result `review_revision_stale`, and the result names the movement in
+> `stale_cause` (`head_moved`, `candidate_changed`, `base_moved`,
+> `review_input_changed`) with `rerun_review_on_current_revision` as the next
+> action, rather than blaming the working tree. Deferred retention, verdict
+> publication, and non-verdict publication share that one comparison, so a
+> candidate-tree change now invalidates publication in all three. A stale or
+> incomplete execution remains unpublished and cycle-neutral.
+
+> **Amended by issue #1679 (2026-09-21):** A publication now names the delivery
+> it can authorize, and `wontfix` authority is verified rather than asserted.
+> The review revision gains a **candidate tree**: the Git tree `git add -A` would
+> stage, captured through a temporary index seeded from the repository's current
+> index, which is exactly what the publish action commits and therefore the one
+> identity that survives the commit. Seeding from HEAD instead would drop a path
+> force-added from an ignored location, which the publisher does commit. Because
+> staging runs configured clean and process filters, the capture applies the same
+> executable-Git-configuration guard the other staging paths use, on every caller
+> path; this is the first operation on the review path that reads untracked file
+> contents rather than only their names. The
+> publication marker family moves to `gc.review-publication/v2`, carrying that
+> tree and the cycle's finding count alongside the existing digests; v1 markers
+> stay readable for audit but cannot authorize a delivery.
+> `readTrustedReviewPublicationEvidence` surfaces the revision digest, candidate
+> tree, finding count and reviewed branch instead of discarding them, and the
+> synchronization record carries the binding forward. Enforcement is placed where
+> the evidence to enforce it exists: the **tree** binding is checked at the
+> synchronization boundary and again at PR creation, which are the two points
+> that hold the settled tree, and **both completion phases** check that the
+> authorizing review ran on the branch the pull request delivers and record the
+> revision it covered. Recording a binding is not checking one - the first
+> version of this change reported the fields at completion without comparing
+> them, which left a publication from another branch acceptable. The binding is
+> asymmetric on purpose: a **zero-finding**
+> cycle had nothing to repair, so the delivered tree must be the tree it read,
+> while a **finding-bearing** cycle is expected to be followed by repairs under
+> ADR-099, so its settled tree is recorded without claiming Codex reviewed it.
+> Requiring equality in both cases would reverse ADR-099 into a clean-verdict
+> requirement. Separately, a `wontfix` disposition is accepted only when
+> `user_authorization` resolves to an issue comment on this repository and issue
+> whose body is exactly `/ground-control authorize-review-wontfix <finding-id>`,
+> the same shape the repository already uses for execution-obligation wontfix.
+> Finding ids are positional and recur in every cycle, so the approval is bound to
+> its review run by time rather than by anything the person types: it counts only
+> for a review run already under way when it was posted, and an older approval
+> can never close a newer run's finding. The direct
+> decision-record surface has no review run to bind a `wontfix` to and refuses
+> it; such dispositions are recorded through `gc_publish_review_result`. The
+> authorizing comment's author must have effective write permission, and the
+> check runs at the repository boundary before the first publication write. The cap, severity
+> rubric, and stopping semantics are unchanged.
+
+> **Amended by issue #1632 (2026-09-18):** Executing a deferred review does not
+> consume a cycle. The cycle is consumed only when the exact reviewed revision's
+> sanitized record is published, after the server proves a complete one-to-one
+> mapping to the retained findings and preserves classification and disposition.
+> A stale or incomplete result is retained for diagnosis but cannot be
+> published. This changes the publication boundary, not the cap or stopping
+> semantics established here and amended by ADR-099.
+
+> **Superseded in part by ADR-099 (2026-09-17):** The Codex cap is a bound on
+> review iterations, not a clean-verdict delivery gate. After known findings are
+> fixed or explicitly dispositioned and verified, declining another cycle
+> advances the workflow. ADR-099 also removes the separate test-quality review
+> stage and all of its tool surfaces.
+
 > **Style sync for issue #751 (2026-06-14):** Repository-wide Vale cleanup normalized punctuation in workflow prose. This ADR's review stopping model stays the same.
 
 > **Amended by issue #906 (2026-05-13):** The "three pre-push cycles per issue" baseline this ADR builds on is now a **configurable default of 1 cycle**. The cap value lives on the MCP tool as `CODEX_REVIEW_PREPUSH_HARD_CAP` and is overridden per-repo via `.ground-control.yaml::workflow.codex_review.pre_push_cap` (bounds `[1, 10]`). Repos that want the historical 3-cycle baseline this ADR describes set the knob explicitly. The severity rubric, stopping model, and `override_cap` escape semantics this ADR proposes are **unchanged**; only the default-cap-value assumption shifts. Empirical observation behind the drop: cycles 2 and 3 historically compounded the agent's own fix-introduced bugs more than they caught net-new bugs (for example, PR #903's 4-cycle run), and the catch-rate-vs-loop-cost tradeoff favors cycle-1 + CI / SonarCloud / human review for the typical diff. The "Sometimes a run goes 5+ cycles deep with real bugs every cycle" failure mode below still benefits from the `override_cap` escape; the "Sometimes a run reaches cycle 3 with all-Minor cosmetic findings" failure mode is moot under cap-1 (the cycle 3 boundary doesn't exist by default).
@@ -304,7 +386,7 @@ job retention, durable-write ordering, and stopping decisions are unchanged.
 
 **2026-06-22 (issue #963 post-merge reconciliation ordering).** The pre-push Codex review stopping model is **unchanged** by issue #963. The review still runs in Phase C (Step 6.5), pre-push, with the same severity rubric, cycle caps, and durable findings/decision records on the issue thread. Issue #963 only moves the requirement transition, traceability reconciliation, and final report from Phase D (pre-merge) to a new Phase E (post-merge); that reordering is entirely downstream of the review and does not alter when or how Codex review runs, nor the reviewer-of-record invariant.
 
-**2026-06-28 (issue #1245 automated review-cap disposition gate).** A new optional, config-gated gate automates the over-cap escalation this ADR's stopping model routes to the user. When `workflow.review_disposition.enabled` is true (default **false**; with it off, behavior is byte-for-byte unchanged: last-in-cap findings still return `fix_findings_then_summarize_and_escalate`, and the human `override_cap` plus quoted-authorization escape stays the only over-cap path), the orchestrator calls the new `gc_review_cap_disposition` MCP tool **after** the last-in-cap findings are fixed, self-verified, and re-staged (so fix churn is measurable). The tool scores the post-fix change with a deterministic risk model (diff size, changed-surface class, Step 3.5 GRC verdict, finding shape, prior auto-overrides) and returns `proceed` | `one_more_cycle` | `escalate_to_human`. A hard ceiling (`max_auto_overrides`, default 1) is enforced in the scorer **and** re-clamped after any gray-zone LLM judge, so the auto path can never grant a second over-cap cycle (effective maximum two cycles, beyond which only a human `override_cap` proceeds). Authority for the single auto-granted over-cap cycle comes from a durable `gc:review-auto-disposition` marker the tool posts (schema `gc.implement.review-auto-disposition/v1`), **not** from agent-supplied `override_reason` text: `gc_codex_review_cycle` / `gc_test_quality_review_cycle` verify that marker (via a new `auto_grant=true` parameter) before honoring the override. The pure cap evaluators (`evaluateCodexReviewPrePushCycleCap` / `evaluateTestQualityReviewCycleCap`), the severity rubric, and the per-issue cycle counter are unchanged. The deterministic ceiling and fast paths are authoritative; the LLM judge ranks only the gray zone. GC-O007's statement is amended in lockstep. See `architecture/notes/review-cap-disposition-gate-preflight.md` for the binding preflight guidance.
+**2026-06-28 (issue #1245 automated review-cap disposition gate).** A new optional, config-gated gate automates the over-cap escalation this ADR's stopping model routes to the user. When `workflow.review_disposition.enabled` is true (default **false**; with it off, behavior is byte-for-byte unchanged: last-in-cap findings still return `fix_findings_then_ask_over_cap_or_proceed`, and the human `override_cap` plus quoted-authorization escape stays the only over-cap path), the orchestrator calls the new `gc_review_cap_disposition` MCP tool **after** the last-in-cap findings are fixed, self-verified, and re-staged (so fix churn is measurable). The tool scores the post-fix change with a deterministic risk model (diff size, changed-surface class, Step 3.5 GRC verdict, finding shape, prior auto-overrides) and returns `proceed` | `one_more_cycle` | `escalate_to_human`. A hard ceiling (`max_auto_overrides`, default 1) is enforced in the scorer **and** re-clamped after any gray-zone LLM judge, so the auto path can never grant a second over-cap cycle (effective maximum two cycles, beyond which only a human `override_cap` proceeds). Authority for the single auto-granted over-cap cycle comes from a durable `gc:review-auto-disposition` marker the tool posts (schema `gc.implement.review-auto-disposition/v1`), **not** from agent-supplied `override_reason` text: `gc_codex_review_cycle` / `gc_test_quality_review_cycle` verify that marker (via a new `auto_grant=true` parameter) before honoring the override. The pure cap evaluators (`evaluateCodexReviewPrePushCycleCap` / `evaluateTestQualityReviewCycleCap`), the severity rubric, and the per-issue cycle counter are unchanged. The deterministic ceiling and fast paths are authoritative; the LLM judge ranks only the gray zone. GC-O007's statement is amended in lockstep. See `architecture/notes/review-cap-disposition-gate-preflight.md` for the binding preflight guidance.
 
 **2026-07-01 (issue #1264 Sonnet-tier refresh).** The `medium`-tier routing-default model id and the `gc_test_quality_review` engine default were bumped from `claude-sonnet-4-6` to `claude-sonnet-5`, and the routing model-id validator was loosened to accept single-segment canonical ids. This changes which Claude model runs the medium-tier stages (including the `gc_test_quality_review` Step 6.6 engine when no per-call `model` override is passed). The pre-push Codex and test-quality stopping model (severity rubric, cycle caps, per-issue cycle counters, and the reviewer-of-record invariant) is unchanged.
 

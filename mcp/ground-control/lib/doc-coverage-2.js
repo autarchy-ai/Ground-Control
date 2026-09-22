@@ -5,21 +5,22 @@
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
 import { buildFinalReportMarker, renderCiStatus, renderDocumentationSection, renderSonarStatus } from "./doc-coverage.js";
+import { buildFinalizerRunMarker } from "./final-report-marker.js";
 import { extractGhErrorMessage } from "./grc-legacy-compat-2.js";
 import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { refuseFinalReportBody, refuseFinalReportInput, rejectFinalReportReservedMarkers } from "./final-report-input-gates.js";
-import { buildQuickfixCloseComment, validateFinalReportInput } from "./plan-posting.js";
+import { FINAL_REPORT_FILE_KINDS, buildQuickfixCloseComment, validateFinalReportInput } from "./plan-posting.js";
 import { execFile } from "./runtime-primitives.js";
-import { FINAL_REPORT_FILE_KINDS } from "./test-quality-prompt.js";
 
 // Each section returns a `string[]` so buildFinalReport assembles the body by
 // spreading them into one array (kept under the S138 length cap and the S7778
 // no-repeated-push rule without changing a byte of the rendered output).
-function _finalReportHeader({ isPreMerge, issueNumber, prNumber, planCommentUrl, plainEnglishOutcome, summary }) {
+function _finalReportHeader({ isPreMerge, issueNumber, prNumber, planCommentUrl, plainEnglishOutcome, summary, automationRunId }) {
   return [
     isPreMerge
       ? `<!-- gc:phase phase="ready_for_review" issue="${issueNumber}" -->`
       : buildFinalReportMarker({ issueNumber, prNumber }),
+    ...(isPreMerge ? [] : buildFinalizerRunMarker({ prNumber, runId: automationRunId })),
     "",
     isPreMerge ? `## Ready for review — issue #${issueNumber}` : `## Final report — issue #${issueNumber} complete`,
     "",
@@ -71,7 +72,14 @@ function _finalReportReviewsSection(reviews) {
 
 function _finalReportTraceabilitySection({ isPreMerge, traceability }) {
   if (isPreMerge) {
-    return [`### Traceability reconciliation`, "", `- Pending — requirement status transition and IMPLEMENTS/TESTS reconciliation run in Phase E once the PR merges.`];
+    const count = (key) => (Array.isArray(traceability[key]) ? traceability[key].length : 0);
+    return [
+      `### Traceability reconciliation`, "",
+      "_Proposed in this PR — verified against the merged tree in Phase E._", "",
+      `- IMPLEMENTS / TESTS / DOCUMENTS added: ${count("added")}`,
+      `- Links updated: ${count("updated")}`,
+      `- Stale links removed: ${count("deleted")}`,
+    ];
   }
   const count = (key) => (Array.isArray(traceability[key]) ? traceability[key].length : 0);
   const notes =
@@ -91,7 +99,7 @@ function _finalReportStatusSection({ isPreMerge, ciStatus, sonarStatus, document
     `- CI: ${renderCiStatus(ciStatus)}`,
     `- SonarCloud: ${renderSonarStatus(sonarStatus)}`,
     isPreMerge
-      ? `- PR ready for user review and merge. Ground Control reconciliation (requirement status + traceability) runs on merge (Phase E).`
+      ? `- PR ready for user review and merge. Phase E validates the merged requirement state, posts the final report, and closes the issue automatically once this PR merges.`
       : `- PR ready for user review and merge.`,
     ...(documentation_outcome == null ? [] : ["", ...renderDocumentationSection(documentation_outcome)]),
   ];
@@ -102,7 +110,7 @@ export function buildFinalReport(input) {
   if (!validation.ok) {
     throw new Error(`buildFinalReport input invalid: ${validation.errors.join("; ")}`);
   }
-  const { issueNumber, prNumber, requirements, files = {}, reviews, traceability = {}, ciStatus, sonarStatus, planCommentUrl, summary, lane, plainEnglishOutcome, phase = "post_merge", mergeRevision = null, requirementStateOverrideReason = null } = input;
+  const { issueNumber, prNumber, requirements, files = {}, reviews, traceability = {}, ciStatus, sonarStatus, planCommentUrl, summary, lane, plainEnglishOutcome, phase = "post_merge", mergeRevision = null, requirementStateOverrideReason = null, automationRunId = null } = input;
   // Slim quickfix renderer (issue #906 codex cycle-3 F2). When lane='quickfix'
   // the close comment is structurally smaller: no "In-scope requirements",
   // no "Traceability reconciliation", no "Reviews" section when empty.
@@ -110,7 +118,7 @@ export function buildFinalReport(input) {
   // run; the slim renderer matches the SKILL.md Step Q19 contract.
   if (lane === "quickfix") {
     return buildQuickfixCloseComment({
-      issueNumber, prNumber, files, reviews, ciStatus, sonarStatus, planCommentUrl, summary,
+      issueNumber, prNumber, files, reviews, ciStatus, sonarStatus, planCommentUrl, summary, automationRunId,
     });
   }
   // Phase D (pre_merge) renders a "ready for review" record carrying a
@@ -120,7 +128,7 @@ export function buildFinalReport(input) {
   // report carrying the `gc:final-report` marker.
   const isPreMerge = phase === "pre_merge";
   return [
-    ..._finalReportHeader({ isPreMerge, issueNumber, prNumber, planCommentUrl, plainEnglishOutcome, summary }),
+    ..._finalReportHeader({ isPreMerge, issueNumber, prNumber, planCommentUrl, plainEnglishOutcome, summary, automationRunId }),
     ..._finalReportRequirementsSection({ requirements, isPreMerge, mergeRevision, requirementStateOverrideReason }),
     ..._finalReportFilesSection(files),
     ..._finalReportReviewsSection(reviews),
@@ -149,7 +157,7 @@ export async function runPostFinalReport(input, { workspaceAuthorizationResolver
   // The traceability-reconciliation prerequisite (former issue #1058) is retired
   // with the backend (issue #1500): reconciliation is no longer a workflow phase,
   // so there is no `traceability_reconciled` marker to require. The report's real
-  // gates — CI green, Sonar pass-or-legit-skipped, mandatory Codex review, and the
+  // gates — CI green, Sonar pass-or-legit-skipped, and the
   // sensitive/defer/reserved-marker scrubs above — remain the bar for a "PR ready"
   // record. The agent records requirement status and traceability directly in the
   // requirement files, reviewed in the PR.

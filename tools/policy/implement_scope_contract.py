@@ -51,10 +51,32 @@ SCOPE_WRITER_TOOL = "gc_update_issue_requirements"
 SCOPE_WRITER_RECONCILIATION = "reconcile the cached scope"
 
 SCOPE_WRITER_TOKENS = (SCOPE_WRITER_TOOL, SCOPE_WRITER_RECONCILIATION)
+STEP1_REL = "skills/implement/steps/step-01-issue-branch-resolution.md"
 
 SCOPE_WRITER_SURFACES = (
-    "skills/implement/steps/step-01-issue-branch-resolution.md",
+    STEP1_REL,
     "skills/implement/steps/step-04-planning.md",
+)
+
+STARTING_WORKTREE_BOUNDARY = (
+    "MUST NOT make repository changes outside the starting worktree without "
+    "explicit user authorization"
+)
+STARTING_WORKTREE_SURFACES = (
+    "AGENTS.md",
+    "skills/implement/_development-principles.md",
+    STEP1_REL,
+    "docs/DEVELOPMENT_WORKFLOW.md",
+)
+
+PHASE_E_IMMEDIATE_TOKENS = (
+    "Once the linked PR is observed as merged, enter Phase E immediately.",
+    "Do not wait for post-merge GitHub Actions or other additional actions to complete",
+)
+PHASE_E_IMMEDIATE_SURFACES = (
+    "skills/implement/SKILL.md",
+    "skills/implement/steps/step-17-completion.md",
+    "docs/DEVELOPMENT_WORKFLOW.md",
 )
 
 
@@ -67,13 +89,50 @@ def _missing_scope_writer_surfaces(root: Path) -> list[str]:
     return missing
 
 
+def _missing_contract_tokens(
+    root: Path, surfaces: tuple[str, ...], tokens: tuple[str, ...]
+) -> list[str]:
+    """Return missing token/surface pairs for a mirrored instruction contract."""
+    missing = []
+    for rel in surfaces:
+        text = " ".join((root / rel).read_text(encoding="utf-8").split())
+        missing.extend(f"missing {token} in {rel}" for token in tokens if token not in text)
+    return missing
+
+
+def _mirrored_contract_violations(root: Path) -> list[Violation]:
+    """Check the agent mutation boundary and immediate Phase E contract."""
+    contracts = (
+        (
+            STARTING_WORKTREE_SURFACES,
+            (STARTING_WORKTREE_BOUNDARY,),
+            "agent-starting-worktree-boundary",
+            "Agent and implement surfaces must prohibit repository mutations "
+            "outside the starting worktree without explicit user authorization.",
+        ),
+        (
+            PHASE_E_IMMEDIATE_SURFACES,
+            PHASE_E_IMMEDIATE_TOKENS,
+            "implement-phase-e-immediate-after-merge",
+            "Phase E must begin immediately after merge without waiting for "
+            "unrelated post-merge actions.",
+        ),
+    )
+    violations = []
+    for surfaces, tokens, code, message in contracts:
+        missing = _missing_contract_tokens(root, surfaces, tokens)
+        if missing:
+            violations.append(Violation(code=code, message=message, details=missing))
+    return violations
+
+
 def check_scope_and_completion_contract(root: Path) -> list[Violation]:
     """Reject bypass language and require completion-obligation enforcement."""
     violations: list[Violation] = []
     paths = {
         "skill": root / "skills/implement/SKILL.md",
         "principles": root / "skills/implement/_development-principles.md",
-        "step1": root / "skills/implement/steps/step-01-issue-branch-resolution.md",
+        "step1": root / STEP1_REL,
     }
     completion = (root / "skills/implement/steps/step-17-completion.md").read_text(
         encoding="utf-8"
@@ -107,6 +166,8 @@ def check_scope_and_completion_contract(root: Path) -> list[Violation]:
                 details=missing_scope_writer,
             )
         )
+
+    violations.extend(_mirrored_contract_violations(root))
 
     contradictory = _contradictory_scope_sources(root, implement_sources)
     if contradictory:

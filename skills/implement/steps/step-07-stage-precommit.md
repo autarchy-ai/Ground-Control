@@ -9,8 +9,8 @@ tier: low
 On the normal path, Steps 7, 8, and 8.5 are one
 `gc_implement_mechanical action="publish"` background job. Call it with
 `async=true` and one bounded `idempotency_key` for the publish attempt, then
-poll the returned `job_id` through `gc_codex_job` until `status="done"` and
-dispatch on `result`. Reuse the same key only when the start response was lost.
+await the returned `job_id` through `gc_codex_job` (`action="await"`) until
+`status="done"` and dispatch on `result`. Reuse the same key only when the start response was lost.
 After repairing a hook failure or resolving synchronization conflicts, create a
 new key for that new attempt and pass the returned `retry_input` as
 `synchronization`. The action screens changed paths before staging, runs

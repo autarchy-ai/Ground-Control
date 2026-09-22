@@ -7,29 +7,32 @@
 import { _fetchCiRunFailedLog, _fetchCiRunSnapshot, _sleepMs, ciRunQueuedSeconds, evaluateCiPollState, extractFailedStepsFromJobsJson, summarizeCiLogFailedOutput } from "./doc-coverage.js";
 import { ensureGitRepo } from "./grc-legacy-compat-4.js";
 import { authorizeWatcherRepoRead } from "./watcher-repo-authorization.js";
-import { FINDING_CLASSIFICATIONS, FINDING_SWEEP_EVIDENCE_MAX, truncateReviewProse } from "./grc-legacy-compat.js";
 import { buildCiWatchGhArgs } from "./doc-coverage.js";
 import { execFile } from "./runtime-primitives.js";
 
-export const TEST_QUALITY_REVIEW_DEFAULT_MODEL = "claude-sonnet-5";
-// Hard timeout for a single review call. Repository-scale test cutovers can
-// legitimately require more than ten minutes of read-only inspection. The
-// async job owns cancellation and result polling; this 30-minute ceiling is a
-// final stuck-child bound, not an MCP request-lifetime surrogate.
-export const TEST_QUALITY_REVIEW_TIMEOUT_MS = 1_800_000;
-export const TEST_QUALITY_FINDING_FIELDS_DESCRIPTION = [
-  '    `severity`        — exactly "critical" or "warning".',
-  "    `location`        — `<file>::<TestClass>::<test_method>` OR `<file>:<line>`.",
-  "    `problem`         — what's wrong (non-empty).",
-  "    `why_it_matters`  — what regression this test would miss (optional but recommended).",
-  "    `fix`             — specific fix, not vague advice (non-empty).",
-  '    `classification`  — exactly "one-off" or "class". Same rules as the codex reviewer.',
-  '    `sweep_evidence`  — REQUIRED when classification is "one-off". One-line statement of what you swept and what you did NOT find. Forbidden when classification is "class".',
-  '    `category`        — REQUIRED when classification is "class"; forbidden when "one-off". Object: `shape` and `instances` (non-empty array).',
-  "    `structural_blocker` — optional boolean. Set on a one-off that warrants verdict=don't-ship.",
-].join("\n");
-export const TEST_QUALITY_FINDING_EXAMPLE = '{"severity":"critical","location":"backend/src/test/java/com/keplerops/groundcontrol/unit/domain/FooServiceTest.java::FooServiceTest::createFoo_returns_the_new_foo","problem":"Test calls fooService.create(...) but only verifies that the mock fooRepository.save was called. No assertion on the returned Foo.","why_it_matters":"Refactoring FooService.create to return null would still pass this test.","fix":"Assert on the returned Foo (id, name, status) after calling create().","classification":"class","category":{"shape":"@Test method that only verifies a mock interaction without asserting on the SUT\'s return value or state change","instances":["backend/src/test/java/com/keplerops/groundcontrol/unit/domain/FooServiceTest.java:42","backend/src/test/java/com/keplerops/groundcontrol/unit/domain/BarServiceTest.java:55"]}}';
-export async function _resolveCiRunsForBranch(repoRoot, repoSlug, branch) {
+// GitHub run selection compares `headSha` by exact equality, so a CI head
+// identity is the provider's full 40-character SHA-1 - never a Git abbreviation
+// that local Git would happily resolve. Deliberately separate from the
+// repository's generic `GIT_OBJECT_ID_RE`, which also admits 64-character
+// SHA-256 object ids: a future GitHub object-format change gets this one seam
+// rather than a hunt through every caller (issue #1679).
+export const GITHUB_HEAD_SHA_RE = /^[0-9a-f]{40}$/;
+
+export async function _resolveBranchHeadSha(repoRoot, repoSlug, branch) {
+  // The branch tip, read from GitHub rather than from the newest run gh
+  // reports. The newest run is exactly what cannot be trusted here: right after
+  // a push it still belongs to the previous commit (issue #1365). `gh api`
+  // takes no `--repo`, so the authorized slug is spelled into the path, which
+  // leaves `GH_REPO` no target to retarget.
+  const { stdout } = await execFile(
+    "gh",
+    ["api", `repos/${repoSlug}/commits/${branch}`, "--jq", ".sha"],
+    { cwd: repoRoot },
+  );
+  return stdout.trim();
+}
+
+export async function _resolveCiRunsForBranch(repoRoot, repoSlug, branch, headSha) {
   const { stdout } = await execFile(
     "gh",
     buildCiWatchGhArgs(repoSlug, [
@@ -40,11 +43,11 @@ export async function _resolveCiRunsForBranch(repoRoot, repoSlug, branch) {
       "--limit",
       "20",
       "--json",
-      "status,conclusion,databaseId,url,createdAt,headSha",
+      "status,conclusion,databaseId,url,createdAt,headSha,workflowName,event",
     ]),
     { cwd: repoRoot },
   );
-  return selectCiRunsForHeadSha(JSON.parse(stdout));
+  return selectCiRunsForHeadSha(JSON.parse(stdout), headSha);
 }
 
 export function aggregateCiRunOutcomes(snapshots) {
@@ -66,118 +69,46 @@ export function aggregateCiRunOutcomes(snapshots) {
   };
 }
 
-export function selectCiRunsForHeadSha(runs) {
+// Selection is by the head SHA the watch is bound to, never by whichever run
+// gh listed first. The old "newest run wins" reading was the defect in issue
+// #1365: a run list is ordered by creation, so before the pushed commit's runs
+// register the newest entry is the previous commit's - and its success would
+// have been reported as this commit's gate.
+export function selectCiRunsForHeadSha(runs, headSha) {
+  if (typeof headSha !== "string" || headSha.length === 0) {
+    throw new Error("selectCiRunsForHeadSha: a head SHA is required");
+  }
   if (!Array.isArray(runs) || runs.length === 0) {
     return [];
-  }
-  const headSha = runs[0]?.headSha;
-  if (typeof headSha !== "string" || headSha.length === 0) {
-    // Older gh versions, or a payload without headSha: fall back to the prior
-    // single-run behavior rather than watching an arbitrary mixed set.
-    return [runs[0]];
   }
   return runs.filter((run) => run?.headSha === headSha);
 }
 
-export function validateTestQualityFinding(raw, i) {
-  if (raw == null || typeof raw !== "object") {
-    throw new Error(`test-quality review blocking[${i}] is not an object`);
+// The run ids GitHub currently lists for the bound head. Returns a failure
+// envelope instead of ids when the lookup itself could not answer, so an
+// unobservable head can never read as an empty - and therefore passing - set.
+async function discoverRunIdsForHead({ resolveRuns, repoRoot, repoSlug, branch, boundHeadSha }) {
+  let listed;
+  try {
+    listed = await resolveRuns(repoRoot, repoSlug, branch, boundHeadSha);
+  } catch (e) {
+    return {
+      ok: false,
+      error: "ci_watch_run_lookup_failed",
+      message: e?.message ?? "gh run list failed",
+      branch,
+      head_sha: boundHeadSha,
+    };
   }
-  const { severity, location, problem, why_it_matters, fix, classification } = raw;
-  if (severity !== "critical" && severity !== "warning") {
-    throw new Error(
-      `test-quality review blocking[${i}].severity must be 'critical' or 'warning', got ${JSON.stringify(severity)}`,
-    );
-  }
-  if (typeof location !== "string" || location.trim() === "") {
-    throw new Error(`test-quality review blocking[${i}].location must be a non-empty string`);
-  }
-  if (typeof problem !== "string" || problem.trim() === "") {
-    throw new Error(`test-quality review blocking[${i}].problem must be a non-empty string`);
-  }
-  if (typeof fix !== "string" || fix.trim() === "") {
-    throw new Error(`test-quality review blocking[${i}].fix must be a non-empty string`);
-  }
-  if (why_it_matters != null && typeof why_it_matters !== "string") {
-    throw new Error(
-      `test-quality review blocking[${i}].why_it_matters must be a string when set`,
-    );
-  }
-  if (!FINDING_CLASSIFICATIONS.has(classification)) {
-    throw new Error(
-      `test-quality review blocking[${i}].classification must be 'one-off' or 'class', got ${JSON.stringify(classification)}`,
-    );
-  }
-
-  // Class: require category{shape, instances>=1}; reject sweep_evidence.
-  let category = null;
-  if (classification === "class") {
-    if (raw.category == null || typeof raw.category !== "object" || Array.isArray(raw.category)) {
-      throw new Error(
-        `test-quality review blocking[${i}] has classification 'class' but is missing required object field 'category' ({shape, instances})`,
-      );
-    }
-    if (typeof raw.category.shape !== "string" || raw.category.shape.trim() === "") {
-      throw new Error(`test-quality review blocking[${i}].category.shape must be a non-empty string`);
-    }
-    if (!Array.isArray(raw.category.instances) || raw.category.instances.length === 0) {
-      throw new Error(
-        `test-quality review blocking[${i}].category.instances must be a non-empty array`,
-      );
-    }
-    raw.category.instances.forEach((inst, j) => {
-      if (typeof inst !== "string" || inst.trim() === "") {
-        throw new Error(`test-quality review blocking[${i}].category.instances[${j}] must be a non-empty string`);
-      }
-    });
-    if (raw.sweep_evidence !== undefined && raw.sweep_evidence !== null) {
-      throw new Error(
-        `test-quality review blocking[${i}] has classification 'class' but also carries 'sweep_evidence' — class findings use category.instances instead`,
-      );
-    }
-    category = { shape: raw.category.shape.trim(), instances: raw.category.instances.map((s) => s.trim()) };
-  } else {
-    // one-off: require sweep_evidence; reject category.
-    if (raw.category !== undefined && raw.category !== null) {
-      throw new Error(
-        `test-quality review blocking[${i}] has classification 'one-off' but also carries 'category' — omit it for one-off findings`,
-      );
-    }
-    if (typeof raw.sweep_evidence !== "string" || raw.sweep_evidence.trim() === "") {
-      throw new Error(
-        `test-quality review blocking[${i}] has classification 'one-off' but is missing required 'sweep_evidence' (one-line statement of what you swept)`,
-      );
-    }
-  }
-
-  let structuralBlocker = false;
-  if (raw.structural_blocker !== undefined && raw.structural_blocker !== null) {
-    if (typeof raw.structural_blocker !== "boolean") {
-      throw new Error(`test-quality review blocking[${i}].structural_blocker must be a boolean when set`);
-    }
-    if (raw.structural_blocker === true && classification === "class") {
-      throw new Error(
-        `test-quality review blocking[${i}] has classification 'class' so structural_blocker is implicit — set it only on one-off`,
-      );
-    }
-    structuralBlocker = raw.structural_blocker === true;
-  }
-
-  const finding = {
-    severity,
-    location: location.trim(),
-    problem: problem.trim(),
-    why_it_matters: typeof why_it_matters === "string" ? why_it_matters.trim() : "",
-    fix: fix.trim(),
-    classification,
+  return {
+    ok: true,
+    ids: listed
+      .map((run) => (typeof run.databaseId === "number" ? run.databaseId : null))
+      .filter((id) => id !== null),
+    listedCount: listed.length,
   };
-  if (category !== null) finding.category = category;
-  if (raw.sweep_evidence != null && classification === "one-off") {
-    finding.sweep_evidence = truncateReviewProse(raw.sweep_evidence.trim(), FINDING_SWEEP_EVIDENCE_MAX);
-  }
-  if (structuralBlocker) finding.structural_blocker = true;
-  return finding;
 }
+
 export async function runWatchCiRun({
   repoPath,
   branch,
@@ -186,7 +117,9 @@ export async function runWatchCiRun({
   queuedTimeoutSeconds = 300,
   totalTimeoutSeconds = 2700,
   pollIntervalSeconds = 15,
+  runRegistrationTimeoutSeconds = 300,
   authorizeRepoRead = authorizeWatcherRepoRead,
+  resolveHeadSha = _resolveBranchHeadSha,
   resolveRuns = _resolveCiRunsForBranch,
   fetchRunSnapshot = _fetchCiRunSnapshot,
   fetchFailedLog = _fetchCiRunFailedLog,
@@ -224,6 +157,7 @@ export async function runWatchCiRun({
     ["queued_timeout_seconds", queuedTimeoutSeconds],
     ["total_timeout_seconds", totalTimeoutSeconds],
     ["poll_interval_seconds", pollIntervalSeconds],
+    ["run_registration_timeout_seconds", runRegistrationTimeoutSeconds],
   ]) {
     if (
       typeof value !== "number" ||
@@ -259,60 +193,129 @@ export async function runWatchCiRun({
   if (!authorized.ok) return authorized;
   const repoSlug = authorized.repoSlug;
 
+  // The total cap is spent from here, so the wait for a run to register cannot
+  // buy the poll loop a second budget (issue #1365).
+  const startMs = now();
+
   // Resolve the run set. An explicit runId watches exactly that run; otherwise
-  // watch every run the branch's newest commit triggered, so the gate cannot
-  // pass on an unrelated workflow that happened to finish first (issue #1461).
+  // the watch binds to one head commit - the caller's when it supplied one,
+  // else the branch tip read from GitHub - and watches every run that commit
+  // triggered, so the gate can pass on neither an unrelated workflow that
+  // finished first (issue #1461) nor an earlier commit's run (issue #1365).
   let watchedRunIds = [];
-  if (runId !== null && runId !== undefined) {
+  let boundHeadSha = typeof expectedHeadSha === "string" && expectedHeadSha.length > 0
+    ? expectedHeadSha
+    : null;
+  // An abbreviation never matches a listed run, so accepting one only ever
+  // produced a misleading "no run registered" refusal further down. Name the
+  // real problem at the boundary instead (issue #1679).
+  if (boundHeadSha !== null && !GITHUB_HEAD_SHA_RE.test(boundHeadSha)) {
+    return {
+      ok: false,
+      error: "ci_watch_head_sha_invalid",
+      message:
+        "expected_head_sha must be a full 40-character GitHub commit SHA; "
+        + "run selection compares GitHub's headSha by exact equality",
+      branch,
+    };
+  }
+  // Discovery stays open for this long so a workflow that registers after the
+  // first one still joins the watch (ADR-091; issue #1679). A pinned run_id
+  // watches exactly that run and opens no discovery window.
+  const registrationSeconds = Math.min(runRegistrationTimeoutSeconds, totalTimeoutSeconds);
+  const discoveryDeadlineMs = startMs + registrationSeconds * 1000;
+  const pinnedRun = runId !== null && runId !== undefined;
+  if (pinnedRun) {
     watchedRunIds = [runId];
   } else {
-    let selected;
-    try {
-      const deadline = now() + totalTimeoutSeconds * 1000;
-      do {
-        selected = await resolveRuns(repoRoot, repoSlug, branch);
-        if (!expectedHeadSha) break;
-        selected = selected.filter((run) => run.headSha === expectedHeadSha);
-        if (selected.length || now() >= deadline) break;
-        await sleep(pollIntervalSeconds * 1000);
-      } while (true);
-    } catch (e) {
+    if (boundHeadSha === null) {
+      try {
+        boundHeadSha = await resolveHeadSha(repoRoot, repoSlug, branch);
+      } catch (e) {
+        return {
+          ok: false,
+          error: "ci_watch_head_sha_unresolved",
+          message: e?.message ?? "gh api commits lookup failed",
+          branch,
+        };
+      }
+    }
+    // Failing closed is the point: with no commit to bind to there is no run
+    // set this watch could honestly report on. The shape is checked because a
+    // lookup that answered with something other than a commit did not answer.
+    if (typeof boundHeadSha !== "string" || !GITHUB_HEAD_SHA_RE.test(boundHeadSha)) {
       return {
         ok: false,
-        error: "ci_watch_run_lookup_failed",
-        message: e?.message ?? "gh run list failed",
+        error: "ci_watch_head_sha_unresolved",
+        message: `could not resolve the head commit of branch '${branch}'`,
         branch,
       };
     }
-    if (selected.length === 0) {
+    // GitHub registers a push's runs seconds to minutes after the push, so an
+    // empty set means "not yet", not "never". Wait, bounded by the smaller of
+    // the registration cap and what is left of the total cap.
+    let listedCount = 0;
+    while (true) {
+      const discovered = await discoverRunIdsForHead({
+        resolveRuns, repoRoot, repoSlug, branch, boundHeadSha,
+      });
+      if (!discovered.ok) return discovered;
+      watchedRunIds = discovered.ids;
+      listedCount = discovered.listedCount;
+      if (listedCount > 0) break;
+      const remainingMs = discoveryDeadlineMs - now();
+      if (remainingMs <= 0) break;
+      await sleep(Math.min(pollIntervalSeconds * 1000, remainingMs));
+    }
+    if (listedCount === 0) {
       return {
         ok: false,
-        error: "ci_watch_no_run_for_branch",
-        message: `no CI runs found for branch '${branch}'`,
+        error: "ci_watch_no_run_for_head_sha",
+        message:
+          `no CI run registered for branch '${branch}' at head ${boundHeadSha} ` +
+          `within ${registrationSeconds}s`,
         branch,
+        head_sha: boundHeadSha,
       };
     }
-    if (expectedHeadSha) selected = selected.filter((run) => run.headSha === expectedHeadSha);
-    watchedRunIds = selected
-      .map((run) => (typeof run.databaseId === "number" ? run.databaseId : null))
-      .filter((id) => id !== null);
     if (watchedRunIds.length === 0) {
       return {
         ok: false,
         error: "ci_watch_run_lookup_failed",
         message: "gh run list returned no databaseId",
         branch,
+        head_sha: boundHeadSha,
       };
     }
   }
-  const startMs = now();
   const firstQueuedObservedMs = new Map();
   let observed = [];
+  // A pinned run_id watches exactly that run and opens no discovery window.
+  let discoveryClosed = pinnedRun;
   while (true) {
+    // Re-list while the registration window is open so a workflow that
+    // registered after the first one joins the watch rather than being reported
+    // on by silence (ADR-091; issue #1679).
+    if (!discoveryClosed) {
+      // Read the clock before the listing: the window closes on a listing taken
+      // at or after the deadline, never on the clock alone. Stopping at the
+      // deadline would drop a run that registered between the previous poll and
+      // it - inside the window the watch promised to cover (core-F2).
+      const atOrPastDeadline = now() >= discoveryDeadlineMs;
+      const discovered = await discoverRunIdsForHead({
+        resolveRuns, repoRoot, repoSlug, branch, boundHeadSha,
+      });
+      if (!discovered.ok) return discovered;
+      for (const id of discovered.ids) {
+        if (!watchedRunIds.includes(id)) watchedRunIds.push(id);
+      }
+      if (atOrPastDeadline) discoveryClosed = true;
+    }
     observed = [];
     for (const id of watchedRunIds) {
+      let snapshot;
       try {
-        observed.push({ id, snapshot: await fetchRunSnapshot(repoRoot, repoSlug, id) });
+        snapshot = await fetchRunSnapshot(repoRoot, repoSlug, id);
       } catch (e) {
         return {
           ok: false,
@@ -321,6 +324,20 @@ export async function runWatchCiRun({
           run_id: id,
         };
       }
+      // A pinned `run_id` is the one path that reaches here unbound by the
+      // selection above; a caller that also named a head gets it checked.
+      if (boundHeadSha && typeof snapshot?.headSha === "string" && snapshot.headSha !== boundHeadSha) {
+        return {
+          ok: false,
+          error: "ci_watch_run_head_mismatch",
+          message: `run ${id} ran on ${snapshot.headSha}, not the watched head ${boundHeadSha}`,
+          run_id: id,
+          branch,
+          head_sha: boundHeadSha,
+          run_head_sha: snapshot.headSha,
+        };
+      }
+      observed.push({ id, snapshot });
     }
     const nowMs = now();
     const elapsedSeconds = Math.floor((nowMs - startMs) / 1000);
@@ -329,8 +346,7 @@ export async function runWatchCiRun({
       ["failure", "cancelled", "timed_out", "action_required", "startup_failure"].includes(snapshot?.conclusion)
       || (snapshot?.jobs ?? []).some((job) => ["failure", "timed_out", "cancelled"].includes(job.conclusion)));
     if (failed) {
-      return { ...ciWatchEnvelope(failed, "failure", elapsedSeconds, observed),
-        head_sha: failed.snapshot?.headSha ?? expectedHeadSha,
+      return { ...ciWatchEnvelope(failed, "failure", elapsedSeconds, observed, boundHeadSha),
         failed_steps: extractFailedStepsFromJobsJson(failed.snapshot),
         pending_run_ids: observed.filter((run) => run.snapshot?.status !== "completed").map((run) => run.id),
         log_summary: failed.snapshot?.status === "completed"
@@ -342,7 +358,12 @@ export async function runWatchCiRun({
     // read as another run's stuck queue (issue #1581).
     const pending = observed.filter((run) => run.snapshot?.status !== "completed");
     if (pending.length === 0) {
-      break;
+      // Every run *so far* is green. That is not the head's verdict until the
+      // registration window has closed over the whole set (issue #1679); a
+      // failure still returns above without waiting.
+      if (discoveryClosed) break;
+      await sleep(Math.min(pollIntervalSeconds * 1000, Math.max(1, discoveryDeadlineMs - nowMs)));
+      continue;
     }
     let timedOut = null;
     for (const run of pending) {
@@ -362,14 +383,14 @@ export async function runWatchCiRun({
         totalTimeoutSeconds,
       });
       if (decision.action === "queued_too_long") {
-        return ciWatchEnvelope(run, "queued_too_long", elapsedSeconds, observed);
+        return ciWatchEnvelope(run, "queued_too_long", elapsedSeconds, observed, boundHeadSha);
       }
       if (decision.action === "timed_out") {
         timedOut ??= run;
       }
     }
     if (timedOut) {
-      return ciWatchEnvelope(timedOut, "timed_out", elapsedSeconds, observed);
+      return ciWatchEnvelope(timedOut, "timed_out", elapsedSeconds, observed, boundHeadSha);
     }
     await sleep(pollIntervalSeconds * 1000);
   }
@@ -388,6 +409,8 @@ export async function runWatchCiRun({
       conclusion: "success",
       status: "completed",
       url: only ? ciRunSummary(only).url : null,
+      head_sha: boundHeadSha ?? observed[0]?.snapshot?.headSha ?? null,
+      workflow: only ? ciRunSummary(only).workflow : null,
       duration_seconds: elapsedSeconds,
       failed_steps: [],
       log_summary: null,
@@ -403,7 +426,7 @@ export async function runWatchCiRun({
     ghConclusion === "action_required" ||
     ghConclusion === "startup_failure";
 
-  const envelope = ciWatchEnvelope(failingRun, ghConclusion, elapsedSeconds, observed);
+  const envelope = ciWatchEnvelope(failingRun, ghConclusion, elapsedSeconds, observed, boundHeadSha);
   if (isFailure) {
     envelope.failed_steps = extractFailedStepsFromJobsJson(failingRun.snapshot);
     const rawLog = await fetchFailedLog(repoRoot, repoSlug, failingRun.id);
@@ -426,7 +449,7 @@ function ciRunSummary({ id, snapshot }) {
 
 // Every identifying field comes from the one run the conclusion is about: the
 // id is the one that run was fetched by, never a different member of the set.
-function ciWatchEnvelope(run, conclusion, elapsedSeconds, observed) {
+function ciWatchEnvelope(run, conclusion, elapsedSeconds, observed, boundHeadSha = null) {
   const summary = ciRunSummary(run);
   return {
     ok: true,
@@ -434,6 +457,8 @@ function ciWatchEnvelope(run, conclusion, elapsedSeconds, observed) {
     conclusion,
     status: summary.status,
     url: summary.url,
+    head_sha: summary.head_sha || boundHeadSha || null,
+    workflow: summary.workflow || null,
     duration_seconds: elapsedSeconds,
     failed_steps: [],
     log_summary: null,

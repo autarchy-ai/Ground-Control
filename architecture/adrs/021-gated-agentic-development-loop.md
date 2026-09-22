@@ -51,7 +51,7 @@ Codify the gated agentic development loop as a first-class requirement (GC-O007)
 > **Amended by issue #848 (2026-05-10):** Phase B's "CHANGELOG update" artifact is replaced by a **changelog fragment** convention. Per-PR release notes ship as files under `changelog.d/<issue>.<type>.md` (or `+<slug>.<type>.md` for issue-free entries), where `<type>` is one of the six Keep-a-Changelog categories (`security`, `added`, `changed`, `deprecated`, `removed`, `fixed`). CI-only and docs-only diffs may ship without a fragment; there is no "pure refactor" carve-out because the enforcement is path-based and cannot distinguish a behavior-preserving refactor from a feature change, so refactors under application source still file a fragment. A direct `CHANGELOG.md` edit does NOT satisfy a source-changing diff (it would re-open the rebase-storm pathology this change exists to prevent); direct edits are reserved for release-collation commits whose diff is `CHANGELOG.md` plus the consumed fragments. Release-time `uvx towncrier build` collates fragments into `CHANGELOG.md` at the `<!-- towncrier release notes start -->` marker. The change exists so concurrent PRs cannot conflict on the same `CHANGELOG.md` line range, eliminating a structural rebase-storm pathology that costs CI capacity and engineering time with no behavioural benefit. Enforcement is repo-native: `tools/policy/checks.py::run_changelog_fragment_check` (codes `changelog-signal-missing`, `changelog-fragment-invalid-name`, `changelog-fragment-infrastructure`) covers the completion gate; `.claude/hooks/verify-implementation.sh` mirrors the same vocabulary as a host-local Stop hook, and the `hook-matches-policy-vocabulary` policy test keeps the two layers in sync. The convention itself is the template for other Ground-Control-aware repos. These files are copied/adapted, not generated: `towncrier.toml`, `changelog.d/_template.md.jinja`, `changelog.d/README.md`, the `CHANGELOG.md` marker, the `.gitattributes` `CHANGELOG.md merge=union` belt-and-suspenders rule, and the `.gc/plan-rules.md` fragment rule. Issue-thread planning (ADR-029), Codex review routing (ADR-029 + #804), traceability semantics (Step 16), and release automation triggers (per-repo) are unchanged. See `skills/implement/SKILL.md` Step 4 / Step 6 / Step 4.4 / Step 15 / Step 16 for the operative prose, `changelog.d/README.md` for the convention, and `architecture/notes/changelog-fragments-preflight.md` for the preflight design context.
 
 1. **Phase A: Plan and Implement**: Fetch the requirement and issue context, run architecture preflight, explore the codebase, post the plan to the issue thread, implement with the clause-level TDD path, and verify clause-by-clause.
-2. **Phase B: Quality Gate and Pre-Push Review**: Run the configured completion and policy commands, satisfy quality gates, and complete the bounded pre-push Codex and test-quality review cycles. Release Please owns changelog and product-version artifacts.
+2. **Phase B: Quality Gate and Pre-Push Review**: Run the configured completion and policy commands, satisfy quality gates, and complete the bounded pre-push Codex review cycles (the dedicated test-quality reviewer was removed by ADR-099). Release Please owns changelog and product-version artifacts.
 3. **Phase C: Publish and Synchronize**: Run the configured pre-commit boundary, commit and push the feature branch, merge the latest integration branch into it, and verify the synchronized tree before PR creation.
 4. **Phase D: Ship Pipeline**: Create the synchronized PR, monitor CI and SonarCloud, then post the pre-merge readiness record and present the PR for human merge.
 5. **Phase E: Post-Merge Reconciliation**: After merge, transition in-scope requirements, reconcile repo-local traceability against the shipped diff, post the reconciled final report, and close the issue idempotently.
@@ -93,7 +93,10 @@ The requirement:
 
 ## Amendments
 
-**2026-05-19 (issue #931).** The pre-push review gate (Step 6.5 codex + Step
+**2026-05-19 (issue #931).** *Superseded in part by ADR-099 (2026-09-17): Step
+6.6 and the test-quality reviewer no longer exist, and a clean terminal verdict
+is no longer required before push. The verdict-envelope shape described here is
+still what Step 6.5 consumes.* The pre-push review gate (Step 6.5 codex + Step
 6.6 test-quality) now consumes a verdict envelope (`verdict` +
 `architectural_read` + `blocking` + capped `notes`) rather than a
 findings-only payload. The gate contract is unchanged: both reviewers must
@@ -147,6 +150,25 @@ order, and terminal review envelope are unchanged.
 
 **2026-06-14 (issue #1103 Phase D consolidation).** The former Steps 17 (verify), 18 (label removal), and 19 (final report) are collapsed into a single Step 17. The new consolidated step calls `gc_assert_completion`, which sequences `gc_assert_traceability_reconciled`, `gc_assert_grc_reconciled`, and `gc_post_final_report` in one deterministic MCP tool call. The `in-progress` label removal is now optional best-effort, not a mandatory step gate; the label lifecycle is operational-only and the issue is closed at Phase E. Phase D boundary is now Steps 9 → 17. The single-human-touchpoint contract is unchanged.
 
+**2026-09-21 (issue #1686 pickup-label lifecycle owner).** The `in-progress` label is now
+dropped by `gc_close_issue_after_merge`, at the shared close boundary, once the issue is
+actually closed. The #1103 amendment above made its removal an optional best-effort agent
+step after Step 17, which held while an agent still ran Phase E; ADR-102 (#1671) moved Phase
+E into a merged-pull-request workflow and let the agent terminate permanently at Phase D, so
+the step kept its place in the contract and lost its executor and every delivery closed still
+flagged in progress. Placing it at the close boundary gives it an owner every caller reaches:
+the merged-pull-request workflow, `gc_finalize_merged_pr`, an agent re-invoked after a merge,
+and `/quickfix` Q7. It is best-effort there, and only the removal is: a cleanup failure never
+changes the close outcome, the returned envelope, or whether finalization is reported as
+successful, because a stale label is a cheaper outcome than a completed delivery reported as
+failed. It removes the single issue-label association rather than replacing the label set or
+deleting the repository label, and it runs strictly after a successful close, including the
+idempotent `already_closed` path so a replay converges. A refused or failed close removes
+nothing: an issue left open really is still in progress. The label still confers no authority
+and gates nothing. Step 17's own optional-removal recipe is retired: that step is reached
+before the merge as well, where the label is accurate and removing it would invert the signal
+on the one issue most in need of it.
+
 **2026-06-19 (issue #1189 Cursor CLI driver).** The agent-neutral `/implement` skill is invocable from Cursor CLI via `bin/install-skills.sh` (hard-copy into `~/.cursor/skills/<name>`) and, in Ground-Control repos, a project wrapper at `.cursor/skills/implement/SKILL.md` (real file pointing at `skills/implement/SKILL.md`; symlinked skill folders fail Cursor discovery). The GC-O007 gate model is unchanged: Cursor CLI is a third orchestrator driver alongside Claude Code and Codex; Codex remains reviewer-of-record; poll-loop stages stay on the parent session. See `docs/DEVELOPMENT_WORKFLOW.md § Cursor CLI`.
 
 **2026-06-22 (issue #963 post-merge reconciliation ordering).** A new **Phase E** is added to the gated loop's phase structure. The requirement `DRAFT→ACTIVE` transition (Step 15), traceability reconciliation (Step 16), and the reconciled final report (Step 17) move from Phase D (pre-merge) to Phase E (post-merge), so Ground Control state never runs ahead of shipped code: a reviewed-but-abandoned PR no longer leaves a requirement flipped ACTIVE with links to code that never merged. Phase D's terminal step becomes a pre-merge **readiness** record (`gc_assert_completion phase="pre_merge"`, carrying a `ready_for_review` marker); the Phase E completion (`gc_assert_completion phase="post_merge"`, the default) is merge-gated and refuses with `completion_pr_not_merged` unless the linked PR is merged, mirroring the #1058 close gate. The single-human-touchpoint contract (PR merge) is unchanged - Phase E runs autonomously when the user re-invokes `/implement <issue>` after merge. The A/B/C structure is unchanged. GC-O007 statement (B)/(D) are amended and a clause (E) added in lockstep (see ADR-029 §2026-06-22 for the full mechanism).
@@ -154,6 +176,20 @@ order, and terminal review envelope are unchanged.
 **2026-07-03 (issue #1271, ADR-081 program).** ADR-081 adopts the Temporal dev workflow and console program (milestone 17) and defines the **skill-lane cutover model**: ownership of a workflow phase transfers from this skill lane to the GC-O009 Temporal workflow only when the per-phase parity harness is green, the issue-thread marker enforcement stays authoritative up to the transfer, and the transfer is recorded as a dated amendment to this ADR and ADR-029 naming the phase and the enforcement that moved server-side. Until such an amendment exists for a phase, this ADR's gate contract for that phase is unchanged and must not be weakened by bridge or engine work. The gate model itself (one human touchpoint, phase structure A-E, zero deferral, cycle caps) is not modified by ADR-081.
 
 **2026-07-11 (issue #1346, ADR-089 reversal of the Phase E recommendation clause).** The 2026-06-13 (#1156) amendment above bundled two unrelated changes. Its `plain_english_outcome` clause remains in force unchanged. Its `next_issue_recommendation` clause is reversed: `gc_close_issue_after_merge`'s Phase E close envelope no longer performs a best-effort next-issue lookup or returns `next_issue_recommendation` / `next_issue_recommendation_reason` / `next_issue_recommendation_error` in any form, including `null`. Step 20 now returns only the linked-PR resolution, merge-state verification, and idempotent close result. The one-human-touchpoint contract, the merge-verification gate, and every other Phase E decision in this ADR are unaffected. See ADR-089 for the full retirement decision.
+
+**2026-09-21 (issue #1679, scheduled gates versus exception pauses).** "One
+human touchpoint" in this ADR, in ADR-029 and in GC-O007 counts the human gates
+the workflow **schedules**: PR merge, and nothing else. It never meant that a run
+may not escalate. A bounded exception-path pause on a documented pause class from
+`skills/implement/_development-principles.md` - an enforced cycle cap, an
+unresolved ambiguity, a significant architecture or security decision,
+unexpectedly material scope expansion, destructive or externally consequential
+authority, a hard external dependency - is not a scheduled gate and does not
+change the count. This resolves the conflict reported in issue #1679 between
+ADR-099 §1's review-cap question and the sole-touchpoint statement here: the cap
+question is an exception pause, not a second gate. No mechanism changes; ADR-099,
+the review-cycle dispatch vocabulary, `_review-loop-rules.md`, and the optional
+auto-disposition surface are unaffected.
 
 **2026-07-15 (issue #1399, GC-P027 Release Please adoption).** The issue-#848 changelog-fragment convention (the Phase B amendment above) is **retired**: Release Please now owns `CHANGELOG.md` and the product version, feature PRs no longer file `changelog.d/` fragments or edit `CHANGELOG.md`, and the Towncrier machinery (`changelog.d/`, `towncrier.toml`, `run_changelog_fragment_check`, the `.gitattributes` `merge=union` rule, and the Stop-hook fragment vocabulary) is removed. The changelog is generated from Conventional Commit history on `main`. The #901 conventional-commit PR-title rule (blockquote above) is now enforced **authoritatively in CI** by `.github/workflows/pr-title.yml` (`amannn/action-semantic-pull-request`), in addition to the skill's local check, using the same canonical type vocabulary and lowercase-subject rule. `run_changelog_fragment_check` is replaced by `run_version_mirror_consistency_check` (code `version-mirror-drift`), and `gc_render_pr_body` gains a `changelog_mode` input (`fragments` default | `release-please`), which the workflow passes for any repo that ships a root `release-please-config.json`, so Release Please repos require no fragment (#1336). The gate model (one human touchpoint, phase structure A–E, zero deferral, cycle caps) is unchanged; only the changelog artifact and its ownership move. See ADR-063 (2026-07-15 amendment) and `architecture/notes/release-please-preflight.md`; the `workflow-guardrail-sync` rule keeps `skills/implement`, `docs/DEVELOPMENT_WORKFLOW.md`, `docs/WORKFLOW.md`, ADR-021/029/031/036, and the /quickfix lane in lockstep.
 
@@ -322,3 +358,50 @@ before unrelated checks finish, preserving child job handles for ongoing
 observation. Readiness reads required hosted checks for the current head SHA and
 refuses missing, pending, failed, or unavailable evidence. A later push invalidates
 old-head completion claims. Review and human merge gates remain in place.
+
+## 2026-09-20 amendment: the CI gate's evidence is bound to a commit
+
+The 2026-09-17 amendment above put broad verification in CI and made readiness
+read required hosted checks for the current head SHA. The CI watch that feeds it
+carried no such binding. `gc_watch_ci_run` grouped runs by the head SHA of the
+newest run `gh run list` reported, and a push's own runs register seconds to
+minutes after the push, so the newest run during that window is the previous
+commit's. The gate could therefore be satisfied by a commit nobody had built
+(issue #1365).
+
+The watch now binds to one commit before selecting any run: the caller's
+expected head, or the branch tip read from GitHub. An unregistered run set is a
+bounded wait and then a refusal, never a pass, and the terminal envelope names
+the head SHA and workflow it reports on. `/implement` monitoring supplies the
+pull request head, and `/integrate` supplies the commit it force-pushed. The
+loop's gates are otherwise unchanged; the mechanics live in the ADR-027
+2026-09-20 amendment.
+
+**2026-09-20 (issue #1669).** The start-then-poll wait the #937 amendment
+introduced now has a terminal-wait form: `gc_codex_job action="await"` holds one
+request until the job is terminal, so waiting on architecture preflight, a
+review cycle, or the CI/Sonar monitor costs roughly one model turn instead of
+one per tick. The GC-O007 gate contract is unchanged: the same gates run, the
+same caps apply, the same durable records post to the issue thread, and a bounded
+wait's expiry returns the running envelope rather than any kind of pass. Only how
+the agent waits changes. See ADR-036 (2026-09-20) for the transport model and
+`skills/implement/SKILL.md` plus the step files for the operative prose.
+
+## 2026-09-20 amendment: Phase E finishes without an agent (issue #1671)
+
+Phase E has been deterministic since #1541 made it validation-only, but it still
+needed a model or agent session to re-enter the workflow after the merge and call
+the finalizer. A delivered issue therefore stayed open until somebody remembered
+to finish it.
+
+Phase D now records a trusted delivery handoff: the exact completion payload,
+digest-bound to the issue, the pull request, and the head whose hosted checks
+readiness verified. The agent may then terminate permanently at a ready pull
+request. A merged-pull-request GitHub Actions job replays that payload through
+the unchanged `gc_implement_mechanical action="finalize"`.
+
+The phase structure A–E and the single human touchpoint are unchanged; the
+touchpoint simply becomes the end of human and agent involvement rather than a
+pause in it. Re-invoking `/implement` after a merge remains supported as the
+fallback. `readiness` becomes lane-discriminated so `/quickfix` records the same
+neutral handoff without gaining implement-only gates. See ADR-102.

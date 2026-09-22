@@ -9,23 +9,29 @@ tier: low
 On the normal path, Steps 10 and 11 are one
 `gc_implement_mechanical action="monitor"` background job. Call it with
 `async=true` and one bounded `idempotency_key` for this remote-gate attempt,
-then poll the returned `job_id` through `gc_codex_job` until `status="done"` and
-dispatch on `result`. Reuse the same key only when the start response was lost;
+then await the returned `job_id` through `gc_codex_job` (`action="await"`) until
+`status="done"` and dispatch on `result`. An expired bounded wait returns the
+running envelope; await again. Reuse the same key only when the start response was lost;
 after pushing a repair, create a new key for the new attempt. The job waits for
 CI and then SonarCloud, advancing without another model turn when both pass. It
 stops before Sonar when CI fails and returns `agent_required: true` with the
 failed stage and bounded diagnostics.
 
 Replaces the previous "poll `gh run view` every 15 seconds for up to 45
-minutes" inline loop with one server-side watcher behind a short start-and-poll
-transport. The agent polls only Ground Control's compact job envelope; CI and
-Sonar polling remains server-side and raw logs remain there. (Issues #934 and
-#1473.)
+minutes" inline loop with one server-side watcher behind a start-and-await
+transport. The agent makes one waiting call for Ground Control's compact job
+envelope; CI and Sonar polling remains server-side and raw logs remain there.
+(Issues #934, #1473, and #1669.)
 
 1. Pass the absolute repository path, cached feature branch, and PR number to
    the mechanical `monitor` action. Its internal `gc_watch_ci_run` boundary
    applies the configured queued, total, and poll limits; the workflow does not
-   supply caller-selected timing controls.
+   supply caller-selected timing controls. `monitor` binds both watchers to the
+   pull request's current head SHA, so a green run from an earlier commit can
+   never stand in for this one (issue #1365). When the pushed commit's runs have
+   not registered yet, the CI watch waits for them and then reports
+   `ci_watch_no_run_for_head_sha`; treat that as CI evidence that is missing,
+   not as a pass.
 
 2. Read the CI result inside the completed mechanical envelope:
    - `conclusion: "success"` → CI passed. Advance to Step 11.
@@ -37,6 +43,21 @@ Sonar polling remains server-side and raw logs remain there. (Issues #934 and
    staging, hook, commit, push, and synchronization guardrails apply. After the
    new commit lands, call `monitor` with a new idempotency key to watch the new
    run.
+
+### GitGuardian findings are user-owned
+
+`GitGuardian Security Checks` is a hosted-app check and is an explicit exception
+to the diagnose-and-fix rule above. Agents must never investigate, remediate,
+dismiss, suppress, bypass, or work around a GitGuardian finding. Do not open the
+GitGuardian dashboard, request or handle suspected secret values, rotate
+credentials, rewrite history, or change code, configuration, and allowlists in
+response to the finding.
+
+Report only the GitHub check name, status, and check URL. State that the user
+owns every GitGuardian investigation and resolution, then stop and wait. Once
+the user reports that the finding is resolved, re-read only the GitHub check
+status and continue when it passes. Never route a GitGuardian result into the
+progressive-remediation loop.
 
 ## Return contract
 
@@ -59,6 +80,6 @@ When `ci_conclusion` is not `"success"` and the agent was unable to recover, ret
 Begin diagnosis and repair as soon as any CI job or Sonar findings are actionable.
 Do not wait for unrelated pending gates. The mechanical monitor observes CI and
 Sonar concurrently and returns `head_sha`, `monitor_jobs`, and `resume` on failure.
-Poll the remaining child jobs through `gc_codex_job` while batching related fixes.
+Await the remaining child jobs through `gc_codex_job` while batching related fixes.
 A new push starts monitoring the new head; old results are diagnostic only.
 Required current-head checks must all pass before readiness.

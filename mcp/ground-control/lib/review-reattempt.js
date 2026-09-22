@@ -17,15 +17,13 @@
 // architecture/notes/unobserved-station-recovery-preflight.md.
 
 /** Canonical reviewer ids shared by the retry and issue-thread observation ledgers. */
-export const REVIEW_STATION_IDS = Object.freeze(["codex_review", "test_quality_review"]);
+export const REVIEW_STATION_IDS = Object.freeze(["codex_review"]);
 
 /**
  * Stable error codes that mean "the station ran but rendered no verdict, and wrote nothing".
  *
  * Verified against the producers rather than assumed:
- * - `test_quality_review_engine_failed` / `test_quality_review_parse_failed` return before
- *   `postFindingsRecordAndCycleMarker`, so the cap is untouched (lib/test-quality-runner-2.js).
- * - `review_coverage_incomplete` is the codex analogue: a slice engine failure breaks out of the
+ * - `review_coverage_incomplete`: a slice engine failure breaks out of the
  *   reviewer loop and fails the coverage gate before any write (lib/grc-legacy-compat-6.js,
  *   lib/api-controls.js).
  *
@@ -35,8 +33,6 @@ export const REVIEW_STATION_IDS = Object.freeze(["codex_review", "test_quality_r
  * it would burn a review to retry a GitHub write).
  */
 export const NON_VERDICT_FAILURE_CLASSES = Object.freeze({
-  test_quality_review_engine_failed: "engine_invocation_failed",
-  test_quality_review_parse_failed: "unparseable_validated_output",
   review_coverage_incomplete: "incomplete_reviewer_coverage",
 });
 

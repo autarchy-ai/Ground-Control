@@ -88,13 +88,13 @@ def _check_adr_impact(body: str) -> Violation | None:
 # `gc_run_sweep` lines named tools removed with the #1500 teardown.
 PR_BODY_POLICY_CHECK_LINE = "- [x] Repository policy checks required in CI before merge"
 
-# The pre-push review attestation (Steps 6.5/6.6) has two accurate forms
-# (issue #1551): /implement runs both reviewers before the body is rendered,
+# The pre-push review attestation (Step 6.5) has two accurate forms
+# (issue #1551): /implement runs Codex review before the body is rendered,
 # while /quickfix leaves them off unless the user passes --review. A body must
 # carry exactly one of these; the attestation is never optional, only accurate.
 PR_BODY_REVIEW_CHECK_LINES = (
-    "- [x] Pre-push code review and test-quality review completed; all findings fixed or dispositioned",
-    "- [x] Pre-push code review and test-quality review not run for this lane; "
+    "- [x] Pre-push Codex review completed; all findings fixed or dispositioned",
+    "- [x] Pre-push Codex review not run for this lane; "
     "CI and repository policy gates enforced",
 )
 
@@ -163,15 +163,6 @@ def check_pr_body(body: str) -> list[Violation]:
 
 
 IMPLEMENT_SKILL_PATH = "skills/implement/SKILL.md"
-
-
-# After issue #934 the monolithic SKILL.md is a thin orchestrator and the
-# per-step prose lives at `skills/implement/steps/step-NN-<id>.md`. The
-# test-quality contract check reads from the step file when the
-# orchestrator no longer carries the Step 6.6 heading inline.
-IMPLEMENT_STEP_TEST_QUALITY_PATH = (
-    "skills/implement/steps/step-06.6-test-quality-review.md"
-)
 
 
 # Matches a Markdown step heading at any level (`#` through `####`) whose

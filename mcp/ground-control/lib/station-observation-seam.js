@@ -9,7 +9,6 @@ import { getOwnerRepo } from "./grc-legacy-compat-3.js";
 import { ensureGitRepo, readTrustedExecutionObligationState } from "./grc-legacy-compat-4.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { readPriorCodexReviewPrePushCycleCount } from "./codex-verify-cap.js";
-import { readPriorTestQualityReviewCycleCount } from "./test-quality-runner.js";
 import { resolveNonVerdictRetryLimit, runStationWithNonVerdictRetry } from "./review-reattempt.js";
 import {
   postStationObservationEscalation,
@@ -19,11 +18,9 @@ import {
 /** `.ground-control.yaml` block name for each reviewer. */
 const REVIEWER_CONFIG_BLOCK = Object.freeze({
   codex: "codex_review",
-  "test-quality": "test_quality_review",
 });
 export const REVIEW_STATION_BY_REVIEWER = Object.freeze({
   codex: "codex_review",
-  "test-quality": "test_quality_review",
 });
 
 const DEFAULT_LEDGER_DEPS = Object.freeze({
@@ -49,6 +46,7 @@ export async function _runStationWithObservationLedger({
   issueNumber,
   invokeReview,
   signal,
+  recordDurably = true,
   deps = DEFAULT_LEDGER_DEPS,
 }) {
   const stationId = REVIEW_STATION_BY_REVIEWER[reviewer];
@@ -71,6 +69,9 @@ export async function _runStationWithObservationLedger({
   // opened by an EARLIER invocation is invisible to this one's in-memory state, so a verdict
   // rendered here posted no `reobserved` and the obligation stranded. The durable ledger is the
   // only record that spans invocations, so the wrapper must consult it before it can render.
+  // Deferred execution remains read-only, but it still recovers an obligation
+  // opened by an earlier invocation so the later publication can resolve it
+  // between the findings record and cycle marker.
   const recovered = await _recoverOpenObservation({ repoPath, issueNumber, reviewer, stationId, deps });
   let { ledger, logicalCycle, obligationId } = recovered;
   let observationOpened = recovered.open;
@@ -91,6 +92,7 @@ export async function _runStationWithObservationLedger({
       }),
     onAttempt: async (attempt) => {
       if (attempt.station_result !== "not_evaluable") return;
+      if (!recordDurably) return;
       if (observationOpened) return;
       ledger = await deps.resolveLedgerTarget(repoPath, ledger);
       if (ledger == null) return;
@@ -116,7 +118,7 @@ export async function _runStationWithObservationLedger({
     && run.attempts.length > 0
     && run.attempts.every((a) => a.station_result === "not_evaluable");
 
-  if (exhaustedNonVerdict && observationOpened) {
+  if (recordDurably && exhaustedNonVerdict && observationOpened) {
     ledger = await deps.resolveLedgerTarget(repoPath, ledger);
     if (ledger != null) {
       await deps.postEscalation({
@@ -175,9 +177,7 @@ async function _resolveLedgerTarget(repoPath, cached) {
 
 async function _resolveLogicalCycle({ repoRoot, owner, name }, issueNumber, reviewer) {
   try {
-    const prior = reviewer === "codex"
-      ? await readPriorCodexReviewPrePushCycleCount(repoRoot, owner, name, issueNumber)
-      : await readPriorTestQualityReviewCycleCount(repoRoot, owner, name, issueNumber);
+    const prior = await readPriorCodexReviewPrePushCycleCount(repoRoot, owner, name, issueNumber);
     return (Number.isInteger(prior) ? prior : 0) + 1;
   } catch {
     // An unreadable thread falls back to the first cycle rather than inventing an ordinal. The

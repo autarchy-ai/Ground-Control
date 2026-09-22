@@ -135,7 +135,6 @@ async function pushRebasedHead(pr, tmpRef, worktreePath, execFile) {
       "origin",
       `${tmpRef}:${pr.head_ref}`,
     ]);
-    return null;
   } catch (e) {
     const errText = (e.stderr ?? e.stdout ?? e.message ?? "").toString();
     if (isLeaseMismatch(errText, e.message)) {
@@ -161,9 +160,29 @@ async function pushRebasedHead(pr, tmpRef, worktreePath, execFile) {
       next_action: "check_remote_access",
     };
   }
+  return null;
+}
+
+// The commit this lane is about to publish, for the readiness watchers to bind
+// to. Best-effort on purpose: the watchers bind to the branch tip on their own
+// when this is null, which is the same guarantee against a stale run. Naming
+// the commit only closes the narrower window where someone else's push lands
+// between ours and the watcher's read.
+async function rebasedHeadSha(tmpRef, worktreePath, execFile) {
+  try {
+    const { stdout } = await execFile("git", ["-C", worktreePath, "rev-parse", tmpRef]);
+    const sha = stdout.trim();
+    return sha.length > 0 ? sha : null;
+  } catch {
+    return null;
+  }
 }
 
 // CI conclusions that block a PR, with the record each one produces.
+// `unverified` is the watcher declining to answer for the bound head, or
+// answering with a run that observed nothing. GC-O011(c) requires the CI signal
+// to be watched before a PR is ready, so it blocks rather than passing as a
+// skip (issue #1679).
 const CI_BLOCKERS = {
   queued_too_long: {
     failure_class: "ci_queued_too_long",
@@ -173,6 +192,19 @@ const CI_BLOCKERS = {
   timed_out: {
     failure_class: "ci_timed_out",
     summary: "CI run did not complete within the configured total timeout",
+    next_action: "check_ci_run",
+  },
+  unverified: {
+    failure_class: "ci_unverified_for_head",
+    summary: "CI was not observed for this pull request's head commit",
+    next_action: "check_ci_run",
+  },
+  // The production adapter no longer emits this, but the hook contract still
+  // carries the value; a gate that requires observation must refuse it at both
+  // layers rather than relying on one of them.
+  skipped: {
+    failure_class: "ci_unverified_for_head",
+    summary: "CI was not observed for this pull request's head commit",
     next_action: "check_ci_run",
   },
 };
@@ -217,12 +249,14 @@ async function runReadinessWatchers(pr, ctx, deps, cfg) {
   }
   const ciBlocker = CI_BLOCKERS[ciResult.conclusion];
   if (ciBlocker) {
+    const cause = ciResult.reason ? ` (watcher reported ${ciResult.reason})` : "";
     return {
       pr_number: pr.pr_number,
       outcome: "blocked",
       failure_class: ciBlocker.failure_class,
-      summary: safeSummary(ciBlocker.summary),
+      summary: safeSummary(`${ciBlocker.summary}${cause}`),
       next_action: ciBlocker.next_action,
+      ...(ciResult.head_sha ? { ci_head_sha: ciResult.head_sha } : {}),
     };
   }
 
@@ -377,11 +411,15 @@ async function preparePullRequestBranch(pr, ctx, deps) {
     if (gateFailure) return gateFailure;
 
     // Push BEFORE the CI/Sonar watchers so they observe the rebased commit.
+    const pushedHeadSha = await rebasedHeadSha(tmpRef, worktreePath, execFile);
     const pushFailure = await pushRebasedHead(pr, tmpRef, worktreePath, execFile);
     if (pushFailure) return pushFailure;
 
-    // Watchers run after the push so they observe the rebased commit.
-    const watcherFailure = await runReadinessWatchers(pr, ctx, deps, cfg);
+    // Watchers run after the push AND bound to the commit it published: a push
+    // and its workflow runs are seconds to minutes apart, so "after" alone
+    // still lets the pre-rebase run answer for the rebase (issue #1365).
+    const watcherFailure = await runReadinessWatchers(
+      { ...pr, pushed_head_sha: pushedHeadSha }, ctx, deps, cfg);
     if (watcherFailure) return watcherFailure;
 
 

@@ -7,9 +7,9 @@ import {
   CODEX_REVIEW_PREPUSH_HARD_CAP,
   EXACT_REQUIREMENT_UID_RE,
   GITHUB_REPO_RE,
+  ISSUE_DEPENDENCY_ACTIONS,
   KNOWLEDGE_SOURCE_TYPES,
   REQUIREMENT_SCOPE_OPERATIONS,
-  TEST_QUALITY_REVIEW_HARD_CAP,
   buildCodexReviewOverrideCapDescription,
   buildCodexReviewOverrideReasonDescription,
   buildCodexReviewToolDescription,
@@ -17,10 +17,10 @@ import {
   getRepoGroundControlContext,
   runCloseIssueAfterMerge,
   runCodexArchitecturePreflight,
-  runCodexReview,
+  runCodexReviewWithPublication,
+  runIssueDependency,
   runPostImplementationPlan,
   runUpdateIssueRequirements,
-  runTestQualityReview,
   startAsyncJob,
   writeKnowledgeInbox,
 } from "../lib.js";
@@ -29,9 +29,12 @@ import { ok, err } from "./respond.js";
 export const ASYNC_REVIEW_PARAM_DESC =
   "When true, start the review/preflight as a background job and return " +
   "{ok,status:'running',job_id} immediately instead of blocking the MCP call. " +
-  "Poll the job with gc_codex_job (action='poll') until status='done', then dispatch " +
-  "on result.next_action exactly as for the synchronous call. Use this in the /implement " +
-  "workflow so a multi-minute review never trips the MCP client's tool-call timeout (issue #937).";
+  "Await the job with gc_codex_job (action='await'), which holds one call until status='done' " +
+  "instead of costing a model turn per poll tick; a bounded expiry returns the running envelope, " +
+  "so await again (issue #1669). action='poll' remains available for an immediate non-blocking " +
+  "snapshot. Either way, dispatch on result.next_action exactly as for the synchronous call. Use " +
+  "this in the /implement workflow so a multi-minute review never trips the MCP client's " +
+  "tool-call timeout (issue #937).";
 
 export const CODEX_REVIEW_CAPS = { postPushCap: CODEX_REVIEW_HARD_CAP, prepushCap: CODEX_REVIEW_PREPUSH_HARD_CAP };
 
@@ -103,6 +106,47 @@ export function registerQuery(server, ctx) {
           issueNumber: issue_number,
           operation,
           requirementUids: requirement_uids,
+          repo,
+        }), null, 2));
+      } catch (e) { return err(e); }
+    },
+  );
+
+  server.tool(
+    "gc_issue_dependency",
+    "Read, add, or remove a GitHub issue dependency - the 'blocked by' relationship - for an issue in the authorized checkout. " +
+    "Always pass action, repo_path, and blocked_issue_number; action='add' and action='remove' also require blocking_issue_number, " +
+    "which action='read' refuses because a read has no second operand. Callers stay in issue-number vocabulary: " +
+    "GitHub's dependency endpoints key on the blocking issue's numeric REST id, and this tool resolves number -> id itself " +
+    "and never returns it. action='read' returns the issue's blocked_by and blocking lists, each normalized to repository, " +
+    "number, title, state, url, and in_authorized_repository; an issue with no dependencies returns two empty arrays, not an error. " +
+    "A relationship created elsewhere can name an issue in another repository the host credential happens to read, so such an entry " +
+    "keeps only its repository and number and has its title, state, and url redacted to null with in_authorized_repository false - " +
+    "the edge stays visible without this tool serving content from a repository the call is not authorized for. A mutation returns " +
+    "the resulting blocked_by plus an outcome of 'changed', 'already_satisfied' (the state already held, so nothing was written), " +
+    "or 'reconciled' (the write failed but the requested state now holds, established by a writer this process cannot identify). " +
+    "Replay is safe because idempotency is decided from the current relationship set, never from an HTTP status. " +
+    "The repository comes from the checkout, never GH_REPO; the optional repo is an 'owner/name' assertion validated against it " +
+    "and refused on mismatch, which is also how a cross-repository reference is refused - there is no alternate destination. " +
+    "Expected failures return a named reason: issue_dependency_self_dependency, _blocked_issue_not_found, _blocking_issue_not_found, " +
+    "_not_an_issue, _repo_mismatch, _repo_not_authorized, _forbidden, _rejected, _malformed_response, or _transport_unavailable. " +
+    "It posts no comment, writes no marker, edits no issue body, and gates no workflow phase.",
+    {
+      repo_path: z.string().describe("Absolute path to the target Git repository; must be the MCP launch workspace"),
+      action: z.enum(ISSUE_DEPENDENCY_ACTIONS),
+      blocked_issue_number: z.number().int().positive().describe("The issue whose blockers are read or changed"),
+      blocking_issue_number: z.number().int().positive().optional()
+        .describe("The issue that blocks it; required for add and remove, refused for read"),
+      repo: z.string().regex(GITHUB_REPO_RE).optional()
+        .describe("Optional owner/repo assertion; validated against the authorized checkout and rejected on mismatch, never used as an alternate destination"),
+    },
+    async ({ repo_path, action, blocked_issue_number, blocking_issue_number, repo }) => {
+      try {
+        return ok(JSON.stringify(await runIssueDependency({
+          repoPath: repo_path,
+          action,
+          blockedIssueNumber: blocked_issue_number,
+          blockingIssueNumber: blocking_issue_number ?? null,
           repo,
         }), null, 2));
       } catch (e) { return err(e); }
@@ -197,7 +241,7 @@ export function registerQuery(server, ctx) {
 
   server.tool(
     "gc_close_issue_after_merge",
-    "Canonical post-merge close path for the /implement workflow's Phase E (Step 20) and /quickfix Step Q20. Verifies the issue's linked PR is merged (merged_at non-null AND state=MERGED) before running `gh issue close`; refuses otherwise. For a requirement-backed run the PR body uses a non-closing `Refs #<n>` reference so GitHub cannot auto-close ahead of validation, and closing an OPEN issue additionally requires a trusted `gc:final-report` marker for THAT PR — proof that merged requirement-state validation succeeded (issue #1541); it refuses with close_requirement_state_unverified otherwise. Requirement-free runs keep `Closes #<n>`, which GitHub honors only when the PR merges into the default branch: that merge reaches the idempotent already_closed no-op, while a PR merged into the integration branch leaves the issue open and the close requires the lane's gc:final-report marker for that PR (issue #1601). Idempotent — re-running on an already-closed issue returns ok with already_closed=true. pr_number is optional; when omitted the tool resolves the merged PR for the issue via the GitHub timeline. The escape hatch is NOT a caller field: a repo-write human authorizes a close without the validated marker by commenting `gc-authorize-merge-state-override pr=<n> <reason>` on the issue, which the tool verifies server-side (author permission) and which is itself the durable record of the bypass. This tool performs ONLY linked-PR resolution, merge-state verification, the requirement-state marker gate, and idempotent issue closure — it does not list open issues, rank next-work candidates, or return any recommendation field (ADR-089 §5).",
+    "Canonical close substep used by the shared post-merge finalizer for /implement Phase E and /quickfix Q7. Verifies the issue's linked PR is merged (merged_at non-null AND state=MERGED) before running `gh issue close`; refuses otherwise. For a requirement-backed run the PR body uses a non-closing `Refs #<n>` reference so GitHub cannot auto-close ahead of validation, and closing an OPEN issue additionally requires a trusted `gc:final-report` marker for THAT PR — proof that merged requirement-state validation succeeded (issue #1541); it refuses with close_requirement_state_unverified otherwise. Requirement-free runs keep `Closes #<n>`, which GitHub honors only when the PR merges into the default branch: that merge reaches the idempotent already_closed no-op, while a PR merged into the integration branch leaves the issue open and the close requires the lane's gc:final-report marker for that PR (issue #1601). Idempotent — re-running on an already-closed issue returns ok with already_closed=true. Once the issue is closed, on either path, it drops the `in-progress` pickup label as a best-effort step that never changes the close outcome or the envelope; a refused or failed close removes nothing, because an issue left open is still in progress (issue #1686). pr_number is optional; when omitted the tool resolves the merged PR for the issue via the GitHub timeline. The escape hatch is NOT a caller field: a repo-write human authorizes a close without the validated marker by commenting `gc-authorize-merge-state-override pr=<n> <reason>` on the issue, which the tool verifies server-side (author permission) and which is itself the durable record of the bypass. This tool performs ONLY linked-PR resolution, merge-state verification, the requirement-state marker gate, and idempotent issue closure — it does not list open issues, rank next-work candidates, or return any recommendation field (ADR-089 §5).",
     {
       repo_path: z.string(),
       issue_number: z.number().int().positive(),
@@ -228,8 +272,9 @@ export function registerQuery(server, ctx) {
       override_phase_gate: z.boolean().optional(),
       override_phase_reason: z.string().optional(),
       async: z.boolean().optional().describe(ASYNC_REVIEW_PARAM_DESC),
+      publication_mode: z.enum(["automatic", "deferred"]).optional(),
     },
-    async ({ repo_path, base_branch, uncommitted, pr_number, issue_number, override_cap, override_reason, override_phase_gate, override_phase_reason, async: asyncMode }) => {
+    async ({ repo_path, base_branch, uncommitted, pr_number, issue_number, override_cap, override_reason, override_phase_gate, override_phase_reason, async: asyncMode, publication_mode }) => {
       try {
         const params = {
           repoPath: repo_path, baseBranch: base_branch ?? null,
@@ -240,75 +285,17 @@ export function registerQuery(server, ctx) {
           overrideReason: override_reason ?? null,
           overridePhaseGate: Boolean(override_phase_gate),
           overridePhaseReason: override_phase_reason ?? null,
+          publicationMode: publication_mode ?? "automatic",
         };
         if (asyncMode) {
           return ok(JSON.stringify(startAsyncJob(
             "codex_review",
-            (signal) => runCodexReview({ ...params, signal }),
+            (signal) => runCodexReviewWithPublication({ ...params, signal }),
           ), null, 2));
         }
-        return ok(JSON.stringify(await runCodexReview(params), null, 2));
+        return ok(JSON.stringify(await runCodexReviewWithPublication(params), null, 2));
       } catch (e) { return err(e); }
     },
   );
 
-  server.tool(
-    "gc_test_quality_review",
-    `Run the canonical /implement Step 6.6 pre-push test-quality review against the staged + unstaged + ` +
-      `untracked diff vs the base branch. (Issue #906 moved this from the former post-PR Step 13 to ` +
-      `pre-push Step 6.6 so the PR opens with both AI-assisted reviewers clean.) Shells out to the ` +
-      `\`claude\` CLI (Sonnet 5 by default) with the review-tests rubric and the ` +
-      `changed test-file paths, parses the structured JSON output (validated by --json-schema), posts ` +
-      `the durable findings record + cycle marker to the issue thread, and returns a structured ` +
-      `envelope: \`{ ok, finding_count, findings, cycle, cap, next_action, findings_comment_url, ... }\`. ` +
-      `The \`next_action\` field is "fix_findings_and_reinvoke" / "post_clean_decision_record_and_advance_to_phase_c" / ` +
-      `"fix_findings_then_summarize_and_escalate" / "post_summary_and_escalate_to_user" — the parent ` +
-      `/implement workflow reads it as a directive. "fix_findings_then_summarize_and_escalate" is the ` +
-      `last-in-cap action: fix the findings, post the decision record, then summarize and escalate to the ` +
-      `user; it is NOT a normal re-invoke path. Replaces the prior Skill("review-tests") boundary, ` +
-      `which produced prose findings that the autoregressive parent agent kept echoing back to the user ` +
-      `instead of fixing in-turn (issue #884 v1 regression). Default cycle cap: ${TEST_QUALITY_REVIEW_HARD_CAP} per ` +
-      `issue (issue #906; configurable per repo via \`workflow.test_quality_review.pre_push_cap\` in ` +
-      `.ground-control.yaml; bounds [1, 10]); cycle cap+1 requires override_cap=true + override_reason. ` +
-      `Authentication: the review engine's auth is declared in the launch directory's .env — one of ` +
-      `CLAUDE_CODE_USE_VERTEX, CLAUDE_CODE_USE_BEDROCK, CLAUDE_CONFIG_DIR, ANTHROPIC_API_KEY, or ` +
-      `ANTHROPIC_AUTH_TOKEN — and is never inherited from the launcher or read from a user-level file ` +
-      `(issue #1562). With none declared this returns test_quality_review_auth_missing before spawning ` +
-      `claude, which is an operator provisioning fault rather than a station failure. ANTHROPIC_API_KEY ` +
-      `is stripped from the subprocess env only when another auth path is declared, so it can still be ` +
-      `the sole auth. See docs/DEVELOPMENT_WORKFLOW.md "Test-quality review engine".`,
-    {
-      repo_path: z.string(),
-      base_branch: z.string().optional(),
-      issue_number: z.number().int().positive().optional(),
-      pr_number: z.number().int().positive().optional(),
-      override_cap: z.boolean().optional(),
-      override_reason: z.string().optional(),
-      model: z.string().optional(),
-      async: z.boolean().optional().describe(ASYNC_REVIEW_PARAM_DESC),
-    },
-    async ({ repo_path, base_branch, issue_number, pr_number, override_cap, override_reason, model, async: asyncMode }) => {
-      try {
-        const params = {
-          repoPath: repo_path,
-          // Pass null when not supplied so the runner resolves from
-          // .ground-control.yaml; the runner falls back to "dev" only if
-          // YAML doesn't declare workflow.base_branch.
-          baseBranch: base_branch ?? null,
-          issueNumber: issue_number != null ? issue_number : null,
-          prNumber: pr_number != null ? pr_number : null,
-          overrideCap: Boolean(override_cap),
-          overrideReason: override_reason ?? null,
-          ...(model ? { model } : {}),
-        };
-        if (asyncMode) {
-          return ok(JSON.stringify(startAsyncJob(
-            "test_quality_review",
-            (signal) => runTestQualityReview({ ...params, signal }),
-          ), null, 2));
-        }
-        return ok(JSON.stringify(await runTestQualityReview(params), null, 2));
-      } catch (e) { return err(e); }
-    },
-  );
 }

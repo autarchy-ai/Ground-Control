@@ -30,6 +30,27 @@ const RECORD = "4".repeat(32);
 
 const TREE = "5".repeat(40);
 
+// Issue #1679: the gate re-checks that the recorded review publication is still
+// the one the issue carries, ran on this branch, and — for a zero-finding review
+// — still names the tree being delivered.
+const REVIEW_EVIDENCE = {
+  ok: true,
+  published: true,
+  cycle: 1,
+  comment_id: 12,
+  publication_id: "a".repeat(64),
+  revision_digest: "c".repeat(64),
+  candidate_tree_oid: TREE,
+  findings_count: 0,
+  branch: BRANCH,
+};
+const DELIVERY_BINDING = {
+  settledTreeSha: TREE,
+  reviewPublicationId: REVIEW_EVIDENCE.publication_id,
+  reviewRevisionDigest: REVIEW_EVIDENCE.revision_digest,
+  lane: "implement",
+};
+
 function renderedPrBody() {
   return [
     "## Summary", "", "summary", "",
@@ -40,7 +61,7 @@ function renderedPrBody() {
     "## Test Plan", "", "- tests", "",
     "## Ground Control Checks", "",
     "- [x] Repository policy checks required in CI before merge",
-    "- [x] Pre-push code review and test-quality review completed; all findings fixed or dispositioned",
+    "- [x] Pre-push Codex review completed; all findings fixed or dispositioned",
     "", "## Traceability", "", "- IMPLEMENTS: GC-O007", "- TESTS: test", "",
     "## Checklist", "", "- [x] done",
   ].join("\n");
@@ -202,6 +223,8 @@ describe("synchronized PR gate", () => {
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
+      reviewEvidenceReader: async () => REVIEW_EVIDENCE,
+      laneReader: async () => ({ ok: true, lane: "implement" }),
       syncRecordReader: async () => ({
         ok: true,
         record: {
@@ -216,6 +239,7 @@ describe("synchronized PR gate", () => {
           outcome: "merged_clean",
           resultingFeatureSha: RESULT,
           verifiedTreeSha: TREE,
+          ...DELIVERY_BINDING,
         },
       }),
     });
@@ -223,6 +247,26 @@ describe("synchronized PR gate", () => {
     assert.equal(result.error, "implement_pr_sync_stale");
     assert.equal(result.next_action, "return_to_the_synchronization_boundary");
     assert.equal(prCreateCalled, false);
+  });
+
+  it("does not consult review publication evidence before PR creation", async () => {
+    const calls = [];
+    const result = await runCreateSynchronizedImplementPr({
+      repoPath: REPO_ROOT,
+      issueNumber: ISSUE,
+      branchName: BRANCH,
+      recordId: RECORD,
+      title: "feat: require synchronized implement PRs",
+      body: renderedPrBody(),
+    }, {
+      workspaceAuthorizationResolver: workspaceAuthorization,
+      commandRunner: async (command, args) => { calls.push([command, args]); return { stdout: "" }; },
+      contextResolver: async () => context(),
+      issueThreadReader: requirementsThreadReader(),
+      laneReader: async () => ({ ok: true, lane: "implement" }),
+      reviewEvidenceReader: async () => ({ ok: true, published: false }),
+    });
+    assert.notEqual(result.error, "implement_pr_review_publication_missing");
   });
 
   it("pins PR lookup and creation to the authorized repository", async () => {
@@ -261,6 +305,8 @@ describe("synchronized PR gate", () => {
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
+      reviewEvidenceReader: async () => REVIEW_EVIDENCE,
+      laneReader: async () => ({ ok: true, lane: "implement" }),
       syncRecordReader: async () => ({
         ok: true,
         record: {
@@ -274,6 +320,7 @@ describe("synchronized PR gate", () => {
           outcome: "merged_clean",
           resultingFeatureSha: RESULT,
           verifiedTreeSha: TREE,
+          ...DELIVERY_BINDING,
         },
       }),
     });
@@ -286,7 +333,7 @@ describe("synchronized PR gate", () => {
     assert.equal(result.pr_number, 200);
   });
 
-  it("finds an existing same-repository PR with the branch syntax gh actually accepts", async () => {
+  it("updates a same-repository PR body through the synchronized writer", async () => {
     const calls = [];
     let createCalled = false;
     const runner = async (command, args) => {
@@ -297,9 +344,10 @@ describe("synchronized PR gate", () => {
           createCalled = true;
           throw new Error("duplicate PR creation attempted");
         }
+        if (method === "PATCH") return { stdout: JSON.stringify(restPr({ number: 201 })) };
         const head = new URL(`https://api.github.com${path}`).searchParams.get("head");
         if (head !== `autarchy-ai:${BRANCH}`) return { stdout: "[]\n" };
-        return { stdout: JSON.stringify([restPr({ number: 201 })]) };
+        return { stdout: JSON.stringify([restPr({ number: 201, body: "outdated canonical body" })]) };
       }
       const op = gitOperation(args);
       if (op[0] === "symbolic-ref") return { stdout: `${BRANCH}\n` };
@@ -326,6 +374,8 @@ describe("synchronized PR gate", () => {
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
+      reviewEvidenceReader: async () => REVIEW_EVIDENCE,
+      laneReader: async () => ({ ok: true, lane: "implement" }),
       syncRecordReader: async () => ({
         ok: true,
         record: {
@@ -339,13 +389,16 @@ describe("synchronized PR gate", () => {
           outcome: "already_current",
           resultingFeatureSha: RESULT,
           verifiedTreeSha: TREE,
+          ...DELIVERY_BINDING,
         },
       }),
     });
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.already_exists, true);
+    assert.equal(result.updated_existing, true);
     assert.equal(result.pr_number, 201);
     assert.equal(createCalled, false);
+    assert.ok(calls.some(([command, args]) => command === "gh" && ghRestCall(args).method === "PATCH"));
     const listCall = calls.find(([command, args]) => command === "gh" && ghRestCall(args).method === "GET");
     // The REST head filter is owner-qualified; a bare branch name would match nothing.
     assert.equal(new URL(`https://api.github.com${ghRestCall(listCall[1]).path}`).searchParams.get("head"), `autarchy-ai:${BRANCH}`);
@@ -383,6 +436,8 @@ describe("synchronized PR gate", () => {
       commandRunner: runner,
       contextResolver: async () => context(),
       issueThreadReader: requirementsThreadReader(),
+      reviewEvidenceReader: async () => REVIEW_EVIDENCE,
+      laneReader: async () => ({ ok: true, lane: "implement" }),
       syncRecordReader: async () => ({
         ok: true,
         record: {
@@ -396,6 +451,7 @@ describe("synchronized PR gate", () => {
           outcome: "merged_clean",
           resultingFeatureSha: RESULT,
           verifiedTreeSha: TREE,
+          ...DELIVERY_BINDING,
         },
       }),
     });

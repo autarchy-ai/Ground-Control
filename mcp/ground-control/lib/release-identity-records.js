@@ -9,18 +9,20 @@
 import { detectSensitiveBodyContent } from "./grc-legacy-compat-2.js";
 import { invalidateIssueThreadCacheEntry } from "./issue-thread.js";
 import { GITHUB_ISSUE_COMMENT_BODY_MAX } from "./repo-vocabulary.js";
-
-const IMPLEMENT_PICKUP_RE = /^🛠️ Picked up by \/implement - driver [A-Za-z0-9._-]{1,40}, branch `([a-z0-9-]{1,50})`, \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\.$/;
+import { implementPickupRecordedBy } from "./run-lane-evidence.js";
 
 /** Whether this server's GitHub identity recorded `/implement` ownership of the issue branch. */
 export async function isTrustedImplementRunBranch(api, issueNumber, branch) {
   const login = await api.authenticatedLogin();
   if (login == null) return false;
   const comments = await api.listIssueComments(issueNumber);
-  return comments.some((comment) => {
-    const match = typeof comment?.body === "string" ? IMPLEMENT_PICKUP_RE.exec(comment.body) : null;
-    return comment?.user?.login?.toLowerCase() === login.toLowerCase() && match?.[1] === branch;
-  });
+  // This API shape spells the author as `user.login`; the lane reader's shape
+  // spells it `authorLogin`. One parser, two callers (issue #1679).
+  return implementPickupRecordedBy(
+    comments.map((comment) => ({ body: comment?.body, authorLogin: comment?.user?.login ?? null })),
+    login,
+    branch,
+  );
 }
 
 export function releaseIdentityRecordMarker({ family, slot, sequence, event, commit }) {

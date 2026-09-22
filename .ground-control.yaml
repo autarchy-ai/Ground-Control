@@ -17,19 +17,17 @@ workflow:
   completion_command: make mcp-test
   codex_review:
     pre_push_cap: 1
-  test_quality_review:
-    pre_push_cap: 1
   # The advisory PR-title workflow and the privileged MCP PR-creation boundary
   # consume this same contract; make policy rejects drift between them.
   pr_title:
     types: [feat, fix, docs, chore, refactor, test, build, ci, perf, style, revert]
     require_scope: false
     subject_pattern: '^[a-z].*$'
-  # Exactly one codex cycle and one test-quality cycle per issue. The
+  # Exactly one codex cycle per issue. The
   # auto-disposition gate is off, so nothing can grant an over-cap cycle on its
   # own; only an explicit human override_cap does.
   #
-  # Both blocks also accept non_verdict_retry_limit (#1476), a different axis
+  # The codex_review block also accepts non_verdict_retry_limit (#1476), a different axis
   # from pre_push_cap: it bounds automatic re-attempts when a station renders NO
   # verdict (timeout, dead engine, unparseable output, incomplete slice
   # coverage). Bounds [0, 2], default 1; left unset here because 1 is the default.
@@ -112,9 +110,6 @@ routing:
     ci_monitor:
       tier: low
       model: claude-haiku-4-5
-    test_quality_review:
-      tier: medium
-      model: claude-sonnet-5
     transition_reconcile:
       tier: medium
       model: claude-sonnet-5

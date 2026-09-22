@@ -9,14 +9,19 @@ import { assertImplementSyncCheckout, fetchImplementBase, isImplementAncestor, r
 import { assertImplementMergeAttemptUnchanged } from "./implement-publish-recovery.js";
 import { runImplementCommit } from "./implement-commit.js";
 import { authorizeRequestedRequirementUid } from "./codex-workflow-3.js";
-import { IMPLEMENT_BASE_SYNC_ACTIONS, newImplementSyncRecordId, validateImplementBranchName } from "./codex-workflow.js";
+import { validateImplementBranchName } from "./codex-workflow.js";
+import { IMPLEMENT_BASE_SYNC_ACTIONS, newImplementSyncRecordId } from "./implement-sync-record.js";
 import { assertSafeImplementCheckoutConfiguration, authorizeImplementRepoRoot, ensureGitRepo, resolveMcpLaunchWorkspaceAuthorization } from "./grc-legacy-compat-4.js";
 import { runGetIssueThread } from "./issue-thread.js";
-import { postImplementBaseSyncRecord, readTrustedImplementSyncRecord, verifyPublishedImplementHead } from "./knowledge-capture.js";
+import {
+  postImplementBaseSyncRecord, readLatestTrustedImplementSyncRecord, readTrustedImplementSyncRecord, verifyPublishedImplementHead,
+} from "./knowledge-capture.js";
 import { isSafeGitRefName } from "./repo-context.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { execFile } from "./runtime-primitives.js";
 import { prepareCommittedRetryCompletion, validateBaseSyncCompletionInput } from "../implement/sync-inputs.js";
+import { resolveDeliveryBinding } from "./delivery-binding.js";
+import { readTrustedRunLane } from "./run-lane-evidence.js";
 
 // Validate the shared boundary input, then the branch name. Returns the
 // input-invalid envelope, or the branch-name validation result (terminal to the
@@ -43,6 +48,8 @@ export async function runSynchronizeImplementBranch(input, {
   contextResolver = getRepoGroundControlContext,
   syncRecordReader = readTrustedImplementSyncRecord,
   issueThreadReader = (args) => runGetIssueThread(args, { workspaceAuthorizationResolver }),
+  laneReader = readTrustedRunLane,
+  latestSyncRecordReader = readLatestTrustedImplementSyncRecord,
 } = {}) {
   const inputValidation = validateBaseSyncInput(input);
   if (!inputValidation.ok) return inputValidation;
@@ -111,6 +118,7 @@ export async function runSynchronizeImplementBranch(input, {
     const common = {
       repoRoot, input, context, baseBranch, commandRunner,
       repoAuthorization, authorizedRequirement,
+      laneReader, latestSyncRecordReader,
     };
     if (input.action === "start") return await runBaseSyncStart(common);
     return await runBaseSyncComplete({ ...common, syncRecordReader });
@@ -168,11 +176,14 @@ async function runBaseSyncAlreadyCurrent(args) {
       next_action: "push_the_feature_branch_without_force_and_retry",
     };
   }
+  const binding = await resolveSyncDeliveryBinding(args, preSyncSha);
+  if (!binding.ok) return binding;
   const record = {
     recordId, issueNumber: input.issueNumber, branchName: input.branchName,
     baseBranch, remoteRef, preSyncSha, fetchedBaseSha,
     outcome: "already_current", resultingFeatureSha: preSyncSha,
     verifiedTreeSha: await readImplementTreeOid(repoRoot, "HEAD", commandRunner),
+    ...binding.binding,
   };
   const posted = await postImplementBaseSyncRecord(
     repoRoot, repoAuthorization.owner, repoAuthorization.name, record, commandRunner,
@@ -257,6 +268,63 @@ async function prepareMergeHeadCompletion(args) {
   return { resultingFeatureSha, verifiedTreeSha };
 }
 
+// The delivery binding this record carries (issue #1679). The settled tree is the
+// tree of the pre-synchronization feature head: the work this delivery produced,
+// before a base merge changes it. Computed here, once, because this boundary is
+// the last place that holds both the review evidence and the local commits.
+async function resolveSyncDeliveryBinding(args, preSyncSha) {
+  const { repoRoot, input, repoAuthorization } = args;
+  const readLane = args.laneReader ?? readTrustedRunLane;
+  const readLatestRecord = args.latestSyncRecordReader ?? readLatestTrustedImplementSyncRecord;
+  const identity = {
+    repoRoot,
+    owner: repoAuthorization.owner,
+    name: repoAuthorization.name,
+    issueNumber: input.issueNumber,
+  };
+  const [lane, prior] = await Promise.all([
+    readLane({ ...identity, branchName: input.branchName }),
+    // The record this completion follows, not one it may already have posted:
+    // a retry must carry forward exactly what the first attempt did.
+    readLatestRecord(repoRoot, repoAuthorization.owner, repoAuthorization.name, input.issueNumber,
+      input.branchName, { before: input.recordId }),
+  ]);
+  if (prior?.ok === false) return { ...prior, next_action: "return_to_the_synchronization_boundary" };
+  return resolveDeliveryBinding({
+    lane,
+    settledTreeSha: await resolveSettledTree(args, preSyncSha, prior?.record ?? null, { lane }),
+  });
+}
+
+// Whether the previous record's binding still describes the live one: same lane,
+// and for /implement the same review publication and revision. An unchanged
+// feature head is not an unchanged binding - a replacement review, or a lane
+// switch, has to be able to establish its own (issue #1679).
+function priorBindingStillCurrent(priorRecord, { lane }) {
+  return lane?.ok === true && priorRecord.lane === lane.lane;
+}
+
+/**
+ * The tree this delivery's own work produced.
+ *
+ * Normally the tree of the pre-synchronization head. But a base merge moves that
+ * head, so a second synchronization - which happens whenever the base advances
+ * again before the pull request is created - would otherwise offer the merged
+ * tree as the settlement and be refused against the reviewed one, demanding
+ * another review cycle for a routine base update. The previous settlement is
+ * carried forward only when the feature head is exactly where that
+ * synchronization left it *and* its binding is still the live one; a new review
+ * of the merged head, or a lane switch, is derived fresh so it can take effect.
+ */
+async function resolveSettledTree({ repoRoot, commandRunner }, preSyncSha, priorRecord, live) {
+  if (priorRecord != null
+    && priorRecord.resultingFeatureSha === preSyncSha
+    && priorBindingStillCurrent(priorRecord, live)) {
+    return priorRecord.settledTreeSha;
+  }
+  return readImplementTreeOid(repoRoot, preSyncSha, commandRunner);
+}
+
 // Read or post the durable synchronization record, then build the terminal
 // completion envelope. An existing record must match field for field.
 async function finalizeBaseSyncRecord(args) {
@@ -275,7 +343,7 @@ async function finalizeBaseSyncRecord(args) {
     const fields = [
       "recordId", "issueNumber", "branchName", "baseBranch", "remoteRef",
       "preSyncSha", "fetchedBaseSha", "outcome", "resultingFeatureSha",
-      "verifiedTreeSha",
+      "verifiedTreeSha", "settledTreeSha", "lane",
     ];
     if (fields.some((field) => existing.record[field] !== record[field])) {
       return {
@@ -370,10 +438,12 @@ async function runBaseSyncComplete(args) {
       next_action: "repair_the_ordinary_push_and_retry_completion",
     };
   }
+  const binding = await resolveSyncDeliveryBinding(args, input.preSyncSha);
+  if (!binding.ok) return binding;
   const record = {
     recordId: input.recordId, issueNumber: input.issueNumber, branchName: input.branchName,
     baseBranch, remoteRef, preSyncSha: input.preSyncSha, fetchedBaseSha: input.fetchedBaseSha,
-    outcome: input.outcome, resultingFeatureSha, verifiedTreeSha,
+    outcome: input.outcome, resultingFeatureSha, verifiedTreeSha, ...binding.binding,
   };
   return finalizeBaseSyncRecord({
     ...args,

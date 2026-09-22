@@ -14,8 +14,10 @@ from pathlib import Path
 from .core import Violation
 
 QUICKFIX_SKILL_PATH = "skills/quickfix/SKILL.md"
-QUICKFIX_CLOSE_STEP_HEADING = "### Step Q20:"
-CLOSE_TOOL = "gc_close_issue_after_merge"
+QUICKFIX_CLOSE_STEP_HEADING = "### Q7. Finalize after merge"
+FINALIZE_TOOL = "gc_implement_mechanical"
+FINALIZE_ACTION = 'action: "finalize"'
+QUICKFIX_LANE = 'lane: "quickfix"'
 DEFAULT_BRANCH_CONDITION = "default branch"
 
 _SECTION_END_RE = re.compile(r"^(?:#{1,3} .*|---[ \t]*)$", re.MULTILINE)
@@ -43,8 +45,15 @@ def _quickfix_close_step_details(root: Path) -> list[str]:
     section = _quickfix_close_step_section(_read(root, QUICKFIX_SKILL_PATH))
     if section is None:
         return [f"missing {QUICKFIX_CLOSE_STEP_HEADING.rstrip(':')} section in {QUICKFIX_SKILL_PATH}"]
-    if CLOSE_TOOL not in section:
-        return [f"Step Q20 in {QUICKFIX_SKILL_PATH} does not call {CLOSE_TOOL}"]
+    missing = [
+        token for token in (FINALIZE_TOOL, FINALIZE_ACTION, QUICKFIX_LANE)
+        if token not in section
+    ]
+    if missing:
+        return [
+            f"Quickfix finalizer in {QUICKFIX_SKILL_PATH} is missing {token}"
+            for token in missing
+        ]
     return []
 
 
@@ -78,8 +87,8 @@ def check_issue_close_contract(root: Path) -> list[Violation]:
             Violation(
                 code="quickfix-post-merge-close-step",
                 message=(
-                    "/quickfix must close its issue after merge through gc_close_issue_after_merge; "
-                    "a `Closes #n` keyword does not close an issue on a non-default base."
+                    "/quickfix must use the shared post-merge finalize action; a `Closes #n` "
+                    "keyword does not close an issue on a non-default base."
                 ),
                 details=close_step,
             )

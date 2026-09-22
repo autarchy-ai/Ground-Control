@@ -4,6 +4,7 @@
 // (docs/CODING_STANDARDS.md, Sonar S104). It contained no mutual recursion, so it was
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
+import { isRepositoryAutomationAuthor } from "./automation-provenance.js";
 import { buildExecutionObligationMarker, isExactWontfixAuthorizationCommand, parseExecutionObligationAuthorization } from "./codex-workflow.js";
 import { EXECUTION_OBLIGATION_WRITE_PERMISSIONS, detectSensitiveBodyContent, extractGhErrorMessage, formatFindingClassificationNote, parseOwnerRepoFromRemoteUrl } from "./grc-legacy-compat-2.js";
 import { buildPhaseMarker, collectDevStartBlockerFailures, devStartFieldValue, devStartGateFailure, devStartGateSuccess, isConcreteDevStartValue, missingDevStartRequiredFields, readDevStartRiskTotal } from "./grc-legacy-compat.js";
@@ -176,8 +177,12 @@ async function postSingleReviewComment({
   const { stdout } = await execFile("gh", args, { cwd: repoRoot });
   try {
     return JSON.parse(stdout);
-  } catch {
-    return null;
+  } catch (error) {
+    const detail = `${error?.message ?? ""}\n${error?.stderr ?? ""}`;
+    // A collaborator lookup can definitively report that an author has no
+    // repository relationship. Transport and authorization failures remain
+    // unresolved so security decisions can fail closed.
+    return /\b404\b/.test(detail) ? null : undefined;
   }
 }
 /**
@@ -301,6 +306,12 @@ export async function readIssueCommentsWithAuthors(repoRoot, owner, name, issueN
       authorLogin: c.user && typeof c.user.login === "string" ? c.user.login : null,
       authorAssociation:
         typeof c.author_association === "string" ? c.author_association.toUpperCase() : null,
+      // `Bot` distinguishes a GitHub App identity from a user with the same-looking login,
+      // which is what the repository-automation trust class keys on (issue #1671).
+      authorType: c.user && typeof c.user.type === "string" ? c.user.type : null,
+      // When the comment was posted, so an authorization can be bound to the review
+      // run it answers rather than to any run it happens to name (issue #1679).
+      createdAt: typeof c.created_at === "string" ? c.created_at : null,
     }));
 }
 export async function getAuthenticatedGitHubLogin(repoRoot) {
@@ -351,6 +362,16 @@ export async function resolveExecutionObligationTrust(repoRoot, owner, name, com
       const login = comment.authorLogin?.toLowerCase() ?? null;
       return login != null && permissions.get(login) != null;
     },
+    isResolved: (comment) => {
+      const login = comment.authorLogin?.toLowerCase() ?? null;
+      return login != null && permissions.get(login) !== undefined;
+    },
+    // A SECOND, distinct class (issue #1671). The repository's own Actions identity is a
+    // GitHub App, so the collaborator endpoint reports no permission for it and `isTrusted`
+    // is correctly false. Only the final-report marker gate consults this class, and only
+    // together with verified run provenance; `wontfix` authorization and the merged-state
+    // override still require a repo-write human.
+    isRepositoryAutomation: (comment) => isRepositoryAutomationAuthor(comment),
   };
 }
 export function hasVerifiedStructuredWontfixAuthorization(

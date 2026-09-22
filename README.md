@@ -1,5 +1,8 @@
 # Ground Control
 
+For the local disposable Incus coding-VM operator workflow, see
+[Local Incus coding sandbox](docs/operations/incus-sandbox.md).
+
 [![CI](https://github.com/autarchy-ai/Ground-Control/actions/workflows/ci.yml/badge.svg)](https://github.com/autarchy-ai/Ground-Control/actions/workflows/ci.yml)
 
 Ground Control is an **MCP server for the `/implement` workflow**, a gated,
@@ -27,15 +30,16 @@ backend:
 
 - **Orchestration**, `gc_implement_mechanical` drives the mechanical bands
   (bootstrap, verify, publish, monitor, readiness, finalize); `gc_codex_job`
-  carries the long async actions; `gc_get_repo_ground_control_context` reads
+  carries the long async actions and can hold one request until a job is
+  terminal; `gc_get_repo_ground_control_context` reads
   `.ground-control.yaml`.
 - **Git / GitHub mechanics**, branch prep, issue pickup, issue-thread reads,
   base sync, synchronized PR creation, PR-body rendering, issue close, and
   issue creation from a requirement file.
 - **CI / quality signals**, `gc_watch_ci_run` (GitHub) and
   `gc_watch_sonar_analysis` (direct), read live.
-- **Reviewer separation**, the codex review, architecture-preflight, and
-  verify tools, the test-quality review tools, and the review-cap disposition,
+- **Reviewer separation**, the Codex review, architecture-preflight, and
+  verify tools plus the review-cap disposition;
   the coding agent never reviews its own work.
 - **Durable records**, plan, decision records, execution obligations, and the
   final report all post to the GitHub issue thread (ADR-029).
@@ -86,6 +90,24 @@ grndctl doctor              # check the machine and the repository
 Restart your agent session and run `/implement <issue-number>`. The
 [documentation](docs/public/index.md) covers installation, repository setup,
 configuration, and upgrading.
+
+### Isolated coding VMs
+
+To run agents in disposable Incus VMs instead of on the host, the same package
+sets up the sandbox and fetches its published guest template from the GitHub
+Container Registry:
+
+```bash
+grndctl sandbox setup install   # privileged, one-time host setup
+grndctl sandbox image           # pull ghcr.io/autarchy-ai/gc-sandbox-template:latest
+```
+
+The pull prints the `local:<fingerprint>` line to pin in
+`/etc/gc-incus-sandbox/config.json`. After that, `gc-incus-sandbox create`,
+`prepare`, `migrate`, `task-start`, and `attach` give an agent a private checkout
+and an explicitly started task in its own VM. Repository-scoped task variables
+are opt-in; setup creates no shared or per-repository values. See
+[docs/operations/incus-sandbox.md](docs/operations/incus-sandbox.md).
 
 ## Developing Ground Control
 

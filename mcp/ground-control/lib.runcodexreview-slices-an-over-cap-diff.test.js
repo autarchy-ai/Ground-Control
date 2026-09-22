@@ -56,8 +56,8 @@ describe("runCodexReview slices an over-cap diff (#1414, hermetic codex+gh shims
     writeFileSync(join(repoDir, "README"), "x\n");
     execFileSync("git", ["-C", repoDir, "add", "README"]);
     execFileSync("git", ["-C", repoDir, "commit", "-q", "-m", "init"]);
-    // Real origin so owner/repo resolves from the git remote, as production does. git ignores
-    // GH_REPO; the `gh repo view` fallback honours it.
+    // An integration base to diff against (#1694), and a real origin so owner/repo resolves (git ignores GH_REPO).
+    execFileSync("git", ["-C", repoDir, "update-ref", "refs/heads/dev", "HEAD"]);
     execFileSync("git", ["-C", repoDir, "remote", "add", "origin", "https://github.com/fake/repo.git"]);
 
     for (const name of ["alpha.txt", "beta.txt", "gamma.txt"]) {
@@ -317,7 +317,16 @@ process.stdin.on("end", () => {
     // The compact envelope is the orchestrator's contract — surfacing the
     // signal only on the direct result would leave /implement blind, which is
     // the observability half of #1414.
-    const shim = makeOverCapRepo({ codexTails: [cleanTail("Reviewed this slice.")] });
+    //
+    // Finding-bearing on purpose. This fixture keeps an unreviewed untracked file
+    // in the repository, and issue #1679 refuses to publish a *clean* cycle in
+    // that state: a zero-finding publication authorizes its candidate tree for
+    // delivery, and that tree would carry a file the reviewed diff never
+    // contained. A finding-bearing cycle authorizes no tree, so it publishes and
+    // still reports the same coverage, which is what this test is about.
+    const shim = makeOverCapRepo({
+      codexTails: [findingTail("Reviewed this slice.", "alpha.txt", 1, "Alpha problem")],
+    });
     try {
       await withShimPath(shim.binDir, async () => {
         const result = await runCodexReviewCycle({
@@ -326,7 +335,7 @@ process.stdin.on("end", () => {
           uncommitted: true,
         }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.ok, true);
-        assert.equal(result.status, "clean");
+        assert.equal(result.status, "findings");
         assert.equal(result.diff_mode, "manifest");
         assert.equal(result.review_coverage.chunks_total, 3);
         assert.equal(result.review_coverage.chunks_completed, 3);
@@ -342,7 +351,7 @@ process.stdin.on("end", () => {
     }
   });
 
-  it("reports a coverage failure through the cycle envelope as post_failed", async () => {
+  it("retains an exhausted sliced review without a cycle or GitHub write", async () => {
     const shim = makeOverCapRepo({
       codexTails: [cleanTail("Slice one read."), "no structured tail\n"],
     });
@@ -352,10 +361,12 @@ process.stdin.on("end", () => {
           repoPath: shim.repoDir,
           issueNumber: 1414,
           uncommitted: true,
+          publicationMode: "deferred",
         }, { workspaceAuthorizationResolver: workspaceAuthorizationFor(shim.repoDir) });
         assert.equal(result.ok, false);
-        assert.equal(result.status, "post_failed");
-        assert.equal(result.error, "review_coverage_incomplete");
+        assert.equal(result.error, "review_station_unobserved");
+        assert.equal(result.publication_status, "unpublished_failure");
+        assert.deepEqual(result.failure_causes, ["missing_tail"]);
         assert.equal(result.diff_mode, "manifest");
         // No decision record either — the cycle wrapper must not paper over a
         // review that never covered the diff.

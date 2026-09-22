@@ -30,6 +30,14 @@ quality-gate result, and `GitGuardian Security Checks`, posted by the GitGuardia
 app. `.github/branch-protection-baseline.json` records the required set for
 `main` and `dev` with strict status checks and admin bypass retained.
 
+GitGuardian findings are user-owned. Agents must not investigate, remediate,
+dismiss, suppress, bypass, or work around them; access the GitGuardian
+dashboard; handle suspected secret values; rotate credentials; rewrite history;
+or change code, configuration, and allowlists in response. Agents may report
+only the GitHub check name, status, and check URL, then wait for the user to
+resolve the finding. After the user reports resolution, an agent may re-read the
+GitHub check status and continue when it passes.
+
 That baseline is enforced, not just documented. `run_ci_required_context_contract`
 in `tools/policy/ci_strictness.py` (GC-P030, ADR-091) checks it two ways on every
 `make policy` and CI `policy` run: every context in

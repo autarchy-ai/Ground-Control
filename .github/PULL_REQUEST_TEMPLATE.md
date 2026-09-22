@@ -29,7 +29,7 @@
 ## Ground Control Checks
 
 - [ ] Repository policy checks required in CI before merge
-- [ ] Pre-push code review and test-quality review completed; all findings fixed or dispositioned
+- [ ] Pre-push Codex review completed; all findings fixed or dispositioned
 
 ## Traceability
 

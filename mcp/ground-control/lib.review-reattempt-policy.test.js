@@ -23,8 +23,6 @@ const EVALUABLE_CLEAN = { ok: true, next_action: "proceed_clean", finding_count:
 describe("classifyStationAttempt", () => {
   it("treats each declared transient non-verdict as unobserved and retryable", () => {
     const transient = [
-      ["test_quality_review_engine_failed", "engine_invocation_failed"],
-      ["test_quality_review_parse_failed", "unparseable_validated_output"],
       ["review_coverage_incomplete", "incomplete_reviewer_coverage"],
     ];
     for (const [error, failureClass] of transient) {
@@ -50,7 +48,7 @@ describe("classifyStationAttempt", () => {
     // An aborted job surfaces as an engine failure, which is otherwise retryable. Re-running a
     // station the caller just cancelled would resurrect abandoned work.
     const c = classifyStationAttempt(
-      { ok: false, error: "test_quality_review_engine_failed" },
+      { ok: false, error: "review_coverage_incomplete" },
       { cancelled: true },
     );
     assert.equal(c.retryable, false);
@@ -65,9 +63,9 @@ describe("classifyStationAttempt", () => {
       "review_comment_post_failed",
       "codex_review_prepush_cap_reached",
       "codex_review_cycle_input_invalid",
-      "test_quality_review_cycle_input_invalid",
+      "codex_review_cycle_input_invalid",
       "auto_grant_unauthorized",
-      "test_quality_review_reserved_marker",
+      "review_comment_post_failed",
       "execution_obligation_repo_not_authorized",
       "review_partial_failure",
     ];
@@ -174,12 +172,12 @@ describe("runStationWithNonVerdictRetry", () => {
 
   it("re-attempts a transient non-verdict and returns the later verdict", async () => {
     const envelopes = [
-      { ok: false, error: "test_quality_review_engine_failed" },
+      { ok: false, error: "review_coverage_incomplete" },
       { ok: true, next_action: "proceed_clean", finding_count: 0 },
     ];
     let calls = 0;
     const result = await runStationWithNonVerdictRetry({
-      stationId: "test_quality_review",
+      stationId: "codex_review",
       maxReattempts: 1,
       invoke: async () => envelopes[calls++],
     });
@@ -191,7 +189,7 @@ describe("runStationWithNonVerdictRetry", () => {
       result.attempts.map((a) => a.station_result),
       ["not_evaluable", "pass"],
     );
-    assert.equal(result.attempts[0].failure_class, "engine_invocation_failed");
+    assert.equal(result.attempts[0].failure_class, "incomplete_reviewer_coverage");
   });
 
   it("re-observation may render fail; that is still an observation", async () => {
@@ -212,11 +210,11 @@ describe("runStationWithNonVerdictRetry", () => {
   it("stops at the configured limit and reports the station as unobserved", async () => {
     let calls = 0;
     const result = await runStationWithNonVerdictRetry({
-      stationId: "test_quality_review",
+      stationId: "codex_review",
       maxReattempts: 2,
       invoke: async () => {
         calls += 1;
-        return { ok: false, error: "test_quality_review_engine_failed" };
+        return { ok: false, error: "review_coverage_incomplete" };
       },
     });
     assert.equal(calls, 3, "one initial attempt plus two re-attempts");
@@ -243,13 +241,13 @@ describe("runStationWithNonVerdictRetry", () => {
     const controller = new AbortController();
     let calls = 0;
     const result = await runStationWithNonVerdictRetry({
-      stationId: "test_quality_review",
+      stationId: "codex_review",
       maxReattempts: 2,
       signal: controller.signal,
       invoke: async () => {
         calls += 1;
         controller.abort();
-        return { ok: false, error: "test_quality_review_engine_failed" };
+        return { ok: false, error: "review_coverage_incomplete" };
       },
     });
     assert.equal(calls, 1);
@@ -276,14 +274,14 @@ describe("runStationWithNonVerdictRetry", () => {
 });
 
 describe("station registry", () => {
-  it("registers exactly the two reviewer stations the workflow owns today", () => {
-    assert.deepEqual([...REVIEW_STATION_IDS].sort(), ["codex_review", "test_quality_review"]);
+  it("registers the Codex reviewer station", () => {
+    assert.deepEqual([...REVIEW_STATION_IDS], ["codex_review"]);
   });
 });
 
 describe("_decorateUnobservedStation", () => {
   const run = {
-    stationId: "test_quality_review",
+    stationId: "codex_review",
     obligationId: "STATION-OBS-TEST-QUALITY-REVIEW-C1",
     logicalCycle: 1,
     observationOpened: true,
@@ -297,12 +295,12 @@ describe("_decorateUnobservedStation", () => {
     // `fix_engine_issue_and_retry` names a repair that does not exist for a timeout, so the
     // orchestrator escalated a defect decision instead of a hard external dependency.
     const decorated = _decorateUnobservedStation(
-      { ok: false, error: "test_quality_review_engine_failed", next_action: "fix_engine_issue_and_retry" },
+      { ok: false, error: "review_coverage_incomplete", next_action: "fix_engine_issue_and_retry" },
       run,
     );
     assert.equal(decorated.next_action, "escalate_unobserved_station_under_hard_external_dependency");
     assert.equal(decorated.escalation_pause_class, "hard_external_dependency");
-    assert.equal(decorated.unobserved_station, "test_quality_review");
+    assert.equal(decorated.unobserved_station, "codex_review");
     assert.equal(decorated.obligation_kind, "station_observation");
     assert.equal(decorated.obligation_id, "STATION-OBS-TEST-QUALITY-REVIEW-C1");
     assert.equal(decorated.obligation_recorded, true);
@@ -310,7 +308,7 @@ describe("_decorateUnobservedStation", () => {
   });
 
   it("never asks for a wontfix decision", () => {
-    const decorated = _decorateUnobservedStation({ ok: false, error: "test_quality_review_engine_failed" }, run);
+    const decorated = _decorateUnobservedStation({ ok: false, error: "review_coverage_incomplete" }, run);
     assert.ok(!JSON.stringify(decorated).includes("wontfix"));
   });
 
@@ -337,7 +335,7 @@ describe("attempt boundary: what actually counts as a station attempt", () => {
     for (const error of [
       "codex_review_prepush_cap_reached",
       "codex_review_cycle_input_invalid",
-      "test_quality_review_cycle_input_invalid",
+      "codex_review_cycle_input_invalid",
       "auto_grant_unauthorized",
       "execution_obligation_repo_not_authorized",
     ]) {
@@ -357,11 +355,11 @@ describe("attempt boundary: what actually counts as a station attempt", () => {
     for (const error of [
       "prepush_cycle_record_failed",
       "review_comment_post_failed",
-      "test_quality_review_reserved_marker",
+      "review_comment_post_failed",
       "review_partial_failure",
     ]) {
       const result = await runStationWithNonVerdictRetry({
-        stationId: "test_quality_review",
+        stationId: "codex_review",
         maxReattempts: 2,
         invoke: async () => ({ ok: false, error }),
       });
@@ -374,12 +372,12 @@ describe("attempt boundary: what actually counts as a station attempt", () => {
     // this, and it must not open an observation obligation.
     const controller = new AbortController();
     const result = await runStationWithNonVerdictRetry({
-      stationId: "test_quality_review",
+      stationId: "codex_review",
       maxReattempts: 2,
       signal: controller.signal,
       invoke: async () => {
         controller.abort();
-        return { ok: false, error: "test_quality_review_engine_failed" };
+        return { ok: false, error: "review_coverage_incomplete" };
       },
     });
     assert.equal(result.attempts.length, 1);
@@ -388,8 +386,8 @@ describe("attempt boundary: what actually counts as a station attempt", () => {
 
   it("still records the declared transient non-verdicts as unobserved attempts", async () => {
     for (const error of [
-      "test_quality_review_engine_failed",
-      "test_quality_review_parse_failed",
+      "review_coverage_incomplete",
+      "review_coverage_incomplete",
       "review_coverage_incomplete",
     ]) {
       const result = await runStationWithNonVerdictRetry({

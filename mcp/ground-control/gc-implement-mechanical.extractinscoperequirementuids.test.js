@@ -58,6 +58,7 @@ function baseDeps(overrides = {}) {
       readiness_report: phase === "pre_merge" ? "ready" : undefined,
     }),
     closeIssue: async () => ({ ok: true, closed: true }),
+    readRunLane: async () => ({ ok: true, lane: "implement", pickup_found: false }),
     execFile: async () => ({ stdout: "", stderr: "" }),
   };
   Object.assign(deps, overrides);
@@ -114,6 +115,58 @@ describe("extractInScopeRequirementUids", () => {
 });
 
 describe("runImplementMechanical bootstrap", () => {
+  it("rejects a requirement-backed quickfix before branch mutation or pickup", async () => {
+    let prepareCalls = 0;
+    let pickupCalls = 0;
+    const result = await runImplementMechanical({
+      action: "bootstrap",
+      lane: "quickfix",
+      repoPath: "/repo",
+      invocationRoot: "/repo",
+      issueNumber: 1426,
+      branchName: "1426-script-phases",
+      driver: "codex",
+    }, baseDeps({
+      prepareBranch: async () => {
+        prepareCalls += 1;
+        return { ok: true, repo_path: "/repo", branch: "1426-script-phases" };
+      },
+      markPickedUp: async () => {
+        pickupCalls += 1;
+        return { ok: true };
+      },
+    }));
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "quickfix_requirements_in_scope");
+    assert.deepEqual(result.requirement_uids, ["GC-O007"]);
+    assert.equal(prepareCalls, 0);
+    assert.equal(pickupCalls, 0);
+  });
+
+  it("uses the shared bootstrap with a quickfix-specific pickup on an empty scope", async () => {
+    let pickupInput;
+    const result = await runImplementMechanical({
+      action: "bootstrap",
+      lane: "quickfix",
+      repoPath: "/repo",
+      invocationRoot: "/repo",
+      issueNumber: 1426,
+      branchName: "1426-script-phases",
+      driver: "codex",
+    }, baseDeps({
+      getIssueThread: async () => ({ ok: true, title: "Small fix", body: "", comments: [] }),
+      markPickedUp: async (input) => {
+        pickupInput = input;
+        return { ok: true };
+      },
+    }));
+
+    assert.equal(result.ok, true);
+    assert.equal(pickupInput.lane, "quickfix");
+    assert.equal(result.next_action, "implement_the_bounded_fix_and_run_targeted_tests");
+  });
+
   it("prepares the branch, records pickup, and returns issue context in one call", async () => {
     let pickupCalls = 0;
     const result = await runImplementMechanical({
@@ -138,22 +191,51 @@ describe("runImplementMechanical bootstrap", () => {
     assert.equal(pickupCalls, 1);
   });
 
+  // The pickup record is what the trusted lane reader derives a run's lane from,
+  // so reuse must key on an exact trusted record (issue #1679, core-F5).
+  const pickupRecord = (lane, branch, author = "gc-bot") => ({
+    author,
+    body: `🛠️ Picked up by /${lane} - driver codex, branch \`${branch}\`, 2026-09-21T00:00:00.000Z.`,
+  });
+
+  async function bootstrapWithComments(comments, { lane, onPickup, readRunLane }) {
+    return runImplementMechanical({
+      action: "bootstrap",
+      repoPath: "/repo",
+      invocationRoot: "/repo",
+      issueNumber: 1426,
+      branchName: "1426-script-phases",
+      driver: "codex",
+      ...(lane ? { lane } : {}),
+    }, baseDeps({
+      getIssueThread: async () => ({ ok: true, title: "Script phases", body: "", comments }),
+      ...(readRunLane ? { readRunLane } : {}),
+      authenticatedLogin: async () => "gc-bot",
+      markPickedUp: async () => { onPickup(); return { ok: true }; },
+    }));
+  }
+
   it("does not duplicate an existing pickup record for the same branch", async () => {
     let pickupCalls = 0;
-    const deps = baseDeps({
-      getIssueThread: async () => ({
-        ok: true,
-        title: "Script phases",
-        body: "",
-        comments: [{
-          body: "Picked up by /implement on branch `1426-script-phases`",
-        }],
-      }),
-      markPickedUp: async () => {
-        pickupCalls += 1;
-        return { ok: true };
+    const result = await bootstrapWithComments(
+      [pickupRecord("implement", "1426-script-phases")],
+      {
+        onPickup: () => { pickupCalls += 1; },
+        readRunLane: async () => ({ ok: true, lane: "implement", pickup_found: true }),
       },
-    });
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.pickup.reused, true);
+    assert.equal(pickupCalls, 0);
+  });
+
+  // Issue #1679: the run's lane is the newest trusted pickup record for the
+  // branch. When the maintainer says to move on without a review, the agent
+  // bootstraps the same branch as /quickfix, and that must write a record - it is
+  // the only place the switch is recorded before any gate reads it.
+  it("records a switch from /implement to /quickfix on the same branch", async () => {
+    let pickupLane = null;
     const result = await runImplementMechanical({
       action: "bootstrap",
       repoPath: "/repo",
@@ -161,12 +243,88 @@ describe("runImplementMechanical bootstrap", () => {
       issueNumber: 1426,
       branchName: "1426-script-phases",
       driver: "codex",
-    }, deps);
+      lane: "quickfix",
+    }, baseDeps({
+      getIssueThread: async () => ({
+        ok: true, title: "Script phases", body: "",
+        comments: [{ id: 1, ...pickupRecord("implement", "1426-script-phases") }],
+      }),
+      readRunLane: async () => ({ ok: true, lane: "implement", pickup_found: true }),
+      markPickedUp: async (input) => { pickupLane = input.lane; return { ok: true }; },
+    }));
+
+    assert.equal(result.ok, true);
+    assert.equal(pickupLane, "quickfix", "the switch must be written, not folded into the old record");
+  });
+
+  it("reuses the pickup when the branch's newest record is already this lane", async () => {
+    let pickupCalls = 0;
+    const result = await runImplementMechanical({
+      action: "bootstrap",
+      repoPath: "/repo",
+      invocationRoot: "/repo",
+      issueNumber: 1426,
+      branchName: "1426-script-phases",
+      driver: "codex",
+      lane: "quickfix",
+    }, baseDeps({
+      getIssueThread: async () => ({
+        ok: true, title: "Script phases", body: "",
+        comments: [
+          { id: 1, ...pickupRecord("implement", "1426-script-phases") },
+          { id: 2, ...pickupRecord("quickfix", "1426-script-phases") },
+        ],
+      }),
+      readRunLane: async () => ({ ok: true, lane: "quickfix", pickup_found: true }),
+      markPickedUp: async () => { pickupCalls += 1; return { ok: true }; },
+    }));
+
+    assert.equal(result.ok, true);
+    assert.equal(pickupCalls, 0);
+  });
+
+  it("reuses a trusted pickup through the shared lane reader without a server login", async () => {
+    let pickupCalls = 0;
+    const result = await runImplementMechanical({
+      action: "bootstrap",
+      repoPath: "/repo",
+      invocationRoot: "/repo",
+      issueNumber: 1426,
+      branchName: "1426-script-phases",
+      driver: "codex",
+      lane: "quickfix",
+    }, baseDeps({
+      getIssueThread: async () => ({ ok: true, title: "Script phases", body: "", comments: [] }),
+      authenticatedLogin: async () => { throw new Error("/user is unavailable"); },
+      readRunLane: async () => ({ ok: true, lane: "quickfix", pickup_found: true }),
+      markPickedUp: async () => { pickupCalls += 1; return { ok: true }; },
+    }));
 
     assert.equal(result.ok, true);
     assert.equal(result.pickup.reused, true);
     assert.equal(pickupCalls, 0);
   });
+
+  for (const [label, comments] of [
+    ["prose that merely quotes the pickup text", [{
+      author: "someone-else",
+      body: "Picked up by /implement on branch `1426-script-phases` — is this still going?",
+    }]],
+    ["an exact record posted by somebody other than this server", [
+      pickupRecord("implement", "1426-script-phases", "someone-else"),
+    ]],
+    ["this server's record for a different branch", [
+      pickupRecord("implement", "1426-other-branch"),
+    ]],
+  ]) {
+    it(`still writes an attributable record when the thread carries ${label}`, async () => {
+      let pickupCalls = 0;
+      const result = await bootstrapWithComments(comments, { onPickup: () => { pickupCalls += 1; } });
+
+      assert.equal(result.ok, true);
+      assert.equal(pickupCalls, 1, "without its own record the lane can never be derived");
+    });
+  }
 
   for (const [label, uid, expected] of [
     ["an invalid", "DSL-437; rm -rf /", "implement_requested_requirement_uid_invalid"],

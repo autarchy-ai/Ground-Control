@@ -6,6 +6,7 @@
 
 import { readFileSync } from "node:fs";
 import { isAbsolute, relative } from "node:path";
+import { buildReviewPublicationMarkerAttributes } from "./review-publication-markers.js";
 
 export function isPathStrictlyInside(canonicalRoot, canonicalPath) {
   const rel = relative(canonicalRoot, canonicalPath);
@@ -91,7 +92,7 @@ export function evaluateCodexReviewPrePushCycleCap({
       cap: hardCap,
       override: true,
       override_reason: overrideReason.trim(),
-      next_action: "fix_findings_then_summarize_and_escalate",
+      next_action: "fix_findings_then_ask_over_cap_or_proceed",
     };
   }
 
@@ -101,16 +102,16 @@ export function evaluateCodexReviewPrePushCycleCap({
       error: "codex_review_prepush_cap_reached",
       message:
         `gc_codex_review pre-push hard cap reached (${hardCap} cycles) for issue #${issueNumber} ` +
-        `on branch '${branchName}'. Per GC-O007 / ADR-029, after cycle ${hardCap} you must (a) post a ` +
-        `summary of findings + fixes to the issue thread, then (b) escalate to the user and ask whether ` +
-        `to run cycle ${hardCap + 1} or push as-is. Do not address findings by silently re-invoking ` +
-        `codex. If the user authorizes another cycle, retry with override_cap=true and ` +
-        `override_reason="<their authorization>".`,
+        `on branch '${branchName}'. Per GC-O007 / ADR-099, summarize the completed-cycle findings, ` +
+        `fixes, and verification, then ask whether to run cycle ${hardCap + 1} or proceed to Phase C. ` +
+        `A clean verdict is not required to proceed. Do not silently re-invoke codex. If the user ` +
+        `authorizes another cycle, retry with override_cap=true and ` +
+        `override_reason="<their authorization>"; otherwise continue the workflow.`,
       issue_number: issueNumber,
       branch: branchName,
       prior_cycles: priorCount,
       cap: hardCap,
-      next_action: "post_summary_and_escalate_to_user",
+      next_action: "ask_over_cap_or_proceed",
     };
   }
 
@@ -121,7 +122,7 @@ export function evaluateCodexReviewPrePushCycleCap({
     cap: hardCap,
     next_action:
       nextCycle === hardCap
-        ? "fix_all_findings_then_summarize_and_escalate"
+        ? "fix_findings_then_ask_over_cap_or_proceed"
         : "fix_all_findings_and_restage",
   };
 }
@@ -136,6 +137,7 @@ export function buildCodexReviewPrePushCycleMarker({
   // pass the cfg-resolved cap so the marker headline reflects what the run
   // actually enforced.
   hardCap = CODEX_REVIEW_PREPUSH_HARD_CAP,
+  publication = null,
 }) {
   const branchAttr = JSON.stringify(String(branchName)).slice(1, -1); // raw inner JSON-encoded form
   const overrideAttr = override === true ? ' override="true"' : "";
@@ -143,6 +145,9 @@ export function buildCodexReviewPrePushCycleMarker({
     override === true && typeof overrideReason === "string" && overrideReason.trim() !== ""
       ? ` reason=${JSON.stringify(overrideReason.trim())}`
       : "";
+  const publicationAttr = publication == null
+    ? ""
+    : ` ${buildReviewPublicationMarkerAttributes(publication)}`;
   const headline = override
     ? `_gc_codex_review pre-push cycle ${cycleNumber} (USER-AUTHORIZED OVERRIDE past cap ${hardCap}) complete for issue #${issueNumber} on branch '${branchName}'._`
     : `_gc_codex_review pre-push cycle ${cycleNumber} of ${hardCap} complete for issue #${issueNumber} on branch '${branchName}'._`;
@@ -151,7 +156,7 @@ export function buildCodexReviewPrePushCycleMarker({
       ? `\nOverride reason: ${overrideReason.trim()}`
       : "";
   return [
-    `${CODEX_REVIEW_PREPUSH_MARKER_PREFIX} issue="${issueNumber}" branch="${branchAttr}" cycle="${cycleNumber}"${overrideAttr}${reasonAttr} -->`,
+    `${CODEX_REVIEW_PREPUSH_MARKER_PREFIX} issue="${issueNumber}" branch="${branchAttr}" cycle="${cycleNumber}"${overrideAttr}${reasonAttr}${publicationAttr} -->`,
     "",
     headline +
       ` Posted by the MCP server to enforce the pre-push hard-cap-${hardCap} contract (issues #796, #804, #906). ` +

@@ -16,12 +16,47 @@ export function validateCommitMessage(message) {
 // the regex-complexity limit (S5843). Matching is unchanged.
 export const SENSITIVE_STAGED_PATH_RE =
   /(?:^|\/)(?:\.secrets?(?:\/|$)|credentials?(?:[./]|$)|[^/]+\.(?:pem|key|p12|pfx)$)/i;
+// A recognized source file is ordinary application code by its extension, so a
+// `credential`/`credentials` feature or package directory must not mark it
+// sensitive on the directory name alone (issue #1692, follow-up to #1649). A
+// non-source credential artifact keeps no source extension, so `credentials.json`,
+// `credentials.yaml`, a bare `credentials` entry, and a `credentials.sh`/`.bash`
+// credential loader (issue #1679) all stay sensitive through
+// SENSITIVE_STAGED_PATH_RE; secrets *inside* a source file remain the secret
+// scanner's job.
+const SOURCE_MODULE_EXTENSIONS = new Set([
+  "js", "jsx", "mjs", "cjs", "ts", "tsx", "py", "pyi", "rb", "go",
+  "rs", "java", "kt", "kts", "cs", "php", "swift", "scala", "c", "cc",
+  "cpp", "h", "hpp",
+]);
+function isRecognizedSourceFile(basename) {
+  const parts = basename.toLowerCase().split(".");
+  return parts.length >= 2 && SOURCE_MODULE_EXTENSIONS.has(parts.at(-1));
+}
+// The directory chain a path sits in, with `credential`/`credentials` segments
+// dropped. Only those namespace directories are removed, so a dedicated secret
+// directory survives and still matches SENSITIVE_STAGED_PATH_RE by location.
+function nonCredentialLocation(path) {
+  return path
+    .split("/")
+    .slice(0, -1)
+    .filter((segment) => !/^credentials?$/i.test(segment))
+    .map((segment) => `${segment}/`)
+    .join("");
+}
 export function isSensitivePublishPath(path) {
   const basename = path.split("/").at(-1);
   const sensitiveEnv =
     /^\.env(?:\.|$)/i.test(basename)
     && !/^\.env\.(?:example|sample|template)$/i.test(basename);
-  return sensitiveEnv || SENSITIVE_STAGED_PATH_RE.test(path);
+  if (sensitiveEnv) return true;
+  // A recognized source file's own name and its `credential(s)` directories are
+  // ordinary code, so only its remaining location can make it sensitive: a
+  // secret directory still does, a credential namespace no longer does.
+  if (isRecognizedSourceFile(basename)) {
+    return SENSITIVE_STAGED_PATH_RE.test(nonCredentialLocation(path));
+  }
+  return SENSITIVE_STAGED_PATH_RE.test(path);
 }
 export function splitNullPaths(stdout) {
   return stdout.split("\0").filter(Boolean);

@@ -14,7 +14,6 @@ import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { GITHUB_ISSUE_COMMENT_BODY_MAX, rejectReservedMarkerSequence } from "./repo-vocabulary.js";
 import { REVIEW_DISPOSITIONS, REVIEW_DISPOSITION_NEXT_ACTION, _emptyReviewDispositionConfigForRunner, _isHighRiskSnapshot, buildReviewAutoDispositionRecord, evaluateAutoDispositionGrant, parseChangedPathsFromManifest, scoreDisposition } from "./review-cap-disposition.js";
 import { execFile } from "./runtime-primitives.js";
-import { parseTestQualityReviewCycleMarkers } from "./test-quality-runner.js";
 
 export async function runReviewCapDisposition({
   repoPath,
@@ -34,8 +33,8 @@ export async function runReviewCapDisposition({
   if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
     return { ok: false, error: "review_cap_disposition_input_invalid", message: "issue_number must be a positive integer" };
   }
-  if (reviewer !== "codex" && reviewer !== "test-quality") {
-    return { ok: false, error: "review_cap_disposition_input_invalid", message: "reviewer must be 'codex' or 'test-quality'" };
+  if (reviewer !== "codex") {
+    return { ok: false, error: "review_cap_disposition_input_invalid", message: "reviewer must be 'codex'" };
   }
   if (!Number.isInteger(cycle) || cycle <= 0) {
     return { ok: false, error: "review_cap_disposition_input_invalid", message: "cycle must be a positive integer" };
@@ -74,10 +73,7 @@ export async function runReviewCapDisposition({
   // Prior over-cap count is derived from DURABLE cycle markers (how many review
   // cycles actually ran beyond the cap), not from the grant-marker count or the
   // caller's `cycle` — so a caller cannot under-report prior overrides.
-  const cyclesRun =
-    reviewer === "codex"
-      ? parseCodexReviewPrePushCycleMarkers(commentBodies, issueNumber)
-      : parseTestQualityReviewCycleMarkers(commentBodies, issueNumber);
+  const cyclesRun = parseCodexReviewPrePushCycleMarkers(commentBodies, issueNumber);
   // Reject out-of-sequence calls: the disposition is only meaningful once the
   // last in-cap review cycle has actually run. A call before the boundary cannot
   // be allowed to mint an auto-grant.
@@ -281,8 +277,8 @@ export async function verifyAutoDispositionGrant(
   if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
     return { ok: false, error: "verify_auto_disposition_input_invalid", message: "issue_number must be a positive integer" };
   }
-  if (reviewer !== "codex" && reviewer !== "test-quality") {
-    return { ok: false, error: "verify_auto_disposition_input_invalid", message: "reviewer must be 'codex' or 'test-quality'" };
+  if (reviewer !== "codex") {
+    return { ok: false, error: "verify_auto_disposition_input_invalid", message: "reviewer must be 'codex'" };
   }
 
   const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
@@ -317,10 +313,7 @@ export async function verifyAutoDispositionGrant(
   // cycle marker can only make the grant look MORE consumed, which fails safe
   // toward denial.
   const allBodies = authored.map((c) => c.body);
-  const cyclesRun =
-    reviewer === "codex"
-      ? parseCodexReviewPrePushCycleMarkers(allBodies, issueNumber)
-      : parseTestQualityReviewCycleMarkers(allBodies, issueNumber);
+  const cyclesRun = parseCodexReviewPrePushCycleMarkers(allBodies, issueNumber);
 
   const decision = evaluateAutoDispositionGrant({ config, trustedLogin, authored, issueNumber, reviewer, cyclesRun, effectiveCap });
   return { ok: true, ...decision };

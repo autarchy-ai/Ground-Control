@@ -279,6 +279,8 @@ docs/notes
 
 # Workflow skills and the .env template bundled into the grndctl package at pack time (issue #1587).
 mcp/ground-control/skills/
+# Incus sandbox programs bundled into the grndctl package at pack time (issue #1680).
+mcp/ground-control/sandbox/
 mcp/ground-control/templates/
 
 # Public docs build output and its local toolchain (make docs).

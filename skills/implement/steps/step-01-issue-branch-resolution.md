@@ -22,7 +22,11 @@ if they are absent, if their digest no longer matches, or if
 
 1. Use `execution_contract.invocation_root` as `repo_path`. Confirm it is the
    canonical absolute repository top-level. Do not substitute another checkout
-   or worktree.
+   or worktree. This invocation root is the starting worktree and immutable
+   mutation boundary for the run and every delegated step. Agents and delegated
+   agents MUST NOT make repository changes outside the starting worktree without
+   explicit user authorization naming the other repository or worktree.
+   Read-only inspection outside the starting worktree is allowed.
 
 2. Call `gc_get_repo_ground_control_context` with `repo_path`. Stop with the
    returned suggested configuration when the status is not `ok`; never guess a

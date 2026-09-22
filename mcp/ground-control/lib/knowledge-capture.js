@@ -8,11 +8,15 @@ import { isAbsolute } from "node:path";
 import { spawn as spawnChild } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { readImplementGitOid, readRemoteImplementBranchSha } from "./codex-workflow-2.js";
-import { buildImplementBaseSyncMarker, parseImplementBaseSyncMarkers } from "./codex-workflow.js";
+
 import { detectSensitiveBodyContent } from "./grc-legacy-compat-2.js";
 import { readIssueCommentsWithAuthors, resolveExecutionObligationTrust } from "./grc-legacy-compat-3.js";
 import { GITHUB_ISSUE_COMMENT_BODY_MAX } from "./repo-vocabulary.js";
+import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { execFile } from "./runtime-primitives.js";
+import {
+  buildImplementBaseSyncMarker, parseImplementBaseSyncMarkers, selectLatestSyncRecord,
+} from "./implement-sync-record.js";
 
 export async function postImplementBaseSyncRecord(
   repoRoot,
@@ -65,13 +69,10 @@ export async function verifyPublishedImplementHead(
   const remoteSha = await readRemoteImplementBranchSha(repoRoot, branchName, commandRunner);
   return localSha === expectedSha && remoteSha === expectedSha;
 }
-export async function readTrustedImplementSyncRecord(
-  repoRoot,
-  owner,
-  name,
-  issueNumber,
-  recordId,
-) {
+// Every trusted, well-formed synchronization record on the issue thread, oldest
+// first. Shared so record selection, settlement carry-forward, and the completion
+// phases all read one definition of "trusted record".
+async function readTrustedImplementSyncRecords(repoRoot, owner, name, issueNumber) {
   const comments = await readIssueCommentsWithAuthors(repoRoot, owner, name, issueNumber);
   const trust = await resolveExecutionObligationTrust(repoRoot, owner, name, comments);
   const markerComments = comments
@@ -94,9 +95,33 @@ export async function readTrustedImplementSyncRecord(
       message: "A malformed synchronization marker exists on the issue thread",
     };
   }
-  const matches = markerComments
-    .flatMap(({ comment, records }) => records.map((record) => ({ comment, record })))
-    .filter(({ record }) => record.recordId === recordId);
+  return {
+    ok: true,
+    entries: markerComments.flatMap(({ comment, records }) => records.map((record) => ({ comment, record }))),
+  };
+}
+
+function syncRecordEnvelope(match, owner, name, issueNumber) {
+  return {
+    ok: true,
+    record: match.record,
+    commentId: match.comment.id,
+    commentUrl: match.comment.id == null
+      ? null
+      : `https://github.com/${owner}/${name}/issues/${issueNumber}#issuecomment-${match.comment.id}`,
+  };
+}
+
+export async function readTrustedImplementSyncRecord(
+  repoRoot,
+  owner,
+  name,
+  issueNumber,
+  recordId,
+) {
+  const all = await readTrustedImplementSyncRecords(repoRoot, owner, name, issueNumber);
+  if (!all.ok) return all;
+  const matches = all.entries.filter(({ record }) => record.recordId === recordId);
   if (matches.length !== 1) {
     return {
       ok: false,
@@ -107,14 +132,54 @@ export async function readTrustedImplementSyncRecord(
     };
   }
   const match = matches[0];
-  return {
-    ok: true,
-    record: match.record,
-    commentId: match.comment.id,
-    commentUrl: match.comment.id == null
-      ? null
-      : `https://github.com/${owner}/${name}/issues/${issueNumber}#issuecomment-${match.comment.id}`,
-  };
+  // A historical record names no delivery binding, so it cannot authorize one.
+  // It stays readable; the run re-synchronizes to produce a current record
+  // (issue #1679, core-F4).
+  if (match.record.schemaVersion !== 2) {
+    return {
+      ok: false,
+      error: "implement_pr_sync_record_superseded_schema",
+      message:
+        "The requested synchronization record predates delivery binding and cannot authorize a pull request. "
+        + "Re-synchronize to record current evidence; the historical record is preserved.",
+      next_action: "return_to_the_synchronization_boundary",
+    };
+  }
+  return syncRecordEnvelope(match, owner, name, issueNumber);
+}
+
+/**
+ * The same read for callers that hold a `repo_path`; the repository identity
+ * comes from the MCP launch workspace, not the caller's path (ADR-027).
+ */
+export async function resolveLatestTrustedImplementSyncRecord(
+  { repoPath, issueNumber, branchName },
+  { workspaceAuthorizationResolver } = {},
+) {
+  const repository = await resolveAuthorizedIssueRepository(repoPath, workspaceAuthorizationResolver);
+  if (!repository?.ok) return issueRepositoryNotAuthorized("synchronization_record", repository ?? {}, {});
+  return readLatestTrustedImplementSyncRecord(
+    repository.repoRoot, repository.owner, repository.name, issueNumber, branchName,
+  );
+}
+
+/**
+ * The newest trusted binding-bearing record for one issue branch, or null.
+ *
+ * Used to carry a settlement across repeated base synchronization (core-F3) and
+ * to bind the completion phases to the head that was synchronized (core-F2).
+ * `before` selects the record that preceded a given one (see
+ * `selectLatestSyncRecord`).
+ */
+export async function readLatestTrustedImplementSyncRecord(
+  repoRoot, owner, name, issueNumber, branchName, { before = null } = {},
+) {
+  const all = await readTrustedImplementSyncRecords(repoRoot, owner, name, issueNumber);
+  if (!all.ok) return all;
+  const match = selectLatestSyncRecord(all.entries, branchName, { before });
+  return match == null
+    ? { ok: true, record: null }
+    : syncRecordEnvelope(match, owner, name, issueNumber);
 }
 export async function listWorkingTreeChanges(repoPath) {
   const [tracked, untracked] = await Promise.all([
@@ -240,7 +305,7 @@ export function summarizeReviewFindings(findings, topCategoriesLimit = 5) {
   };
 }
 export function _statusForReviewerAction(nextAction, hasFindings) {
-  if (nextAction === "post_summary_and_escalate_to_user") return "capped";
+  if (nextAction === "ask_over_cap_or_proceed") return "capped";
   if (
     nextAction === "post_clean_decision_record_and_advance_to_phase_c" ||
     nextAction === "proceed_clean"
@@ -249,7 +314,7 @@ export function _statusForReviewerAction(nextAction, hasFindings) {
   }
   if (
     nextAction === "fix_findings_and_reinvoke" ||
-    nextAction === "fix_findings_then_summarize_and_escalate"
+    nextAction === "fix_findings_then_ask_over_cap_or_proceed"
   ) {
     return "findings";
   }
@@ -264,7 +329,7 @@ export function normalizeReviewCycleNextAction(reviewerAction, status) {
     return "post_clean_decision_record_and_advance_to_phase_c";
   }
   if (status === "capped") {
-    return "post_summary_and_escalate_to_user";
+    return "ask_over_cap_or_proceed";
   }
   // For "findings" and "post_failed" the underlying vocabulary already
   // matches the wrapper's. Pass through.

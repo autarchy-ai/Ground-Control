@@ -20,7 +20,6 @@ import { execFile } from "./runtime-primitives.js";
 /** Human-readable station names for the record prose. Closed set, never caller-supplied. */
 const STATION_LABELS = Object.freeze({
   codex_review: "codex review",
-  test_quality_review: "test-quality review",
 });
 
 async function postComment({ repoRoot, owner, name, issueNumber, body }) {

@@ -6,11 +6,13 @@
 
 import { TO_CAMEL } from "./field-mapping.js";
 import { extractGhErrorMessage } from "./grc-legacy-compat-2.js";
-import { fetchPullRequest, listIssueCrossReferencedPullNumbers } from "./github-rest.js";
+import { fetchPullRequest, ghRestJson, listIssueCrossReferencedPullNumbers } from "./github-rest.js";
 import { readIssueCommentBodies, readIssueCommentsWithAuthors, resolveExecutionObligationTrust, validateSourceDevStartGate } from "./grc-legacy-compat-3.js";
+import { findTrustedFinalReportMarker } from "./final-report-marker.js";
 import { issueRepositoryNotAuthorized, resolveAuthorizedIssueRepository } from "./authorized-issue-repository.js";
 import { devStartGateConfigFailure, devStartGateFailure, readDevStartPlanFields, readSourceBearingDecision, validateNonSourceDevStartGate } from "./grc-legacy-compat.js";
 import { buildCodexReviewCycleMarker, normalizeDevStartGateConfig, parseCodexReviewCycleMarkers } from "./repo-context-2.js";
+import { IMPLEMENT_IN_PROGRESS_LABEL } from "./constants.js";
 import { execFile } from "./runtime-primitives.js";
 
 const TO_SNAKE = Object.fromEntries(Object.entries(TO_CAMEL).map(([k, v]) => [v, k]));
@@ -230,23 +232,14 @@ export async function resolvePrForClose({ repoRoot, owner, name, issueNumber, pr
   return { pr: matched };
 }
 // A trusted `gc:final-report` marker is the proof that post-merge requirement-state
-// validation succeeded (runAssertCompletion posts the report only after validation;
-// buildFinalReportMarker in doc-coverage.js owns the marker's exact shape). The close
-// path requires it before closing an OPEN issue so the canonical close can never run
-// ahead of validation (issue #1541). The marker is bound to THIS PR, not just the
-// issue: a stale final-report from an earlier linked PR on the same issue must not
-// authorize a later close (issue #1541 review). Trust is repo write-permission on the
-// marker's author, so a forged marker from an unprivileged commenter does not satisfy
-// the gate.
+// validation succeeded (runAssertCompletion posts the report only after validation). The
+// close path requires it before closing an OPEN issue so the canonical close can never run
+// ahead of validation (issue #1541). Marker parsing and the trust decision live in
+// lib/final-report-marker.js, shared with publication so the two can never disagree about
+// what counts as a recorded validation (issue #1671).
 async function hasTrustedFinalReportMarker(repoRoot, owner, name, issueNumber, prNumber) {
-  const comments = await readIssueCommentsWithAuthors(repoRoot, owner, name, issueNumber);
-  const markerText = `gc:final-report issue="${issueNumber}" pr="${prNumber}"`;
-  const markerComments = comments.filter(
-    (c) => typeof c.body === "string" && c.body.includes(markerText),
-  );
-  if (markerComments.length === 0) return false;
-  const trust = await resolveExecutionObligationTrust(repoRoot, owner, name, comments);
-  return markerComments.some((c) => trust.isTrusted(c));
+  const marker = await findTrustedFinalReportMarker({ repoRoot, owner, name, issueNumber, prNumber });
+  return marker.found;
 }
 
 // The merged-requirement-state escape hatch. Authority is a TRUSTED issue-thread
@@ -256,6 +249,35 @@ async function hasTrustedFinalReportMarker(repoRoot, owner, name, issueNumber, p
 // a later PR on the same issue, and the comment itself is the durable record of the
 // bypass (ADR-029). A human authorizes by commenting `gc-authorize-merge-state-override
 // pr=<n> <reason>` on the issue. Returns { authorized, reason }.
+// Drop the pickup flag once the issue is closed.
+//
+// This lives at the shared close boundary rather than in skill prose because that is the
+// one point every caller reaches — the merged-pull-request workflow, gc_finalize_merged_pr,
+// an agent re-invoked after a merge, and /quickfix Q7. It used to be an optional agent step
+// after Step 17, and ADR-102 let the agent terminate before the merge, so the step kept its
+// place in the contract and lost its executor: every delivery closed still flagged in
+// progress (issue #1686).
+//
+// Best-effort, and deliberately narrow. Only the removal is inside the catch; a cleanup
+// that fails must not turn a completed delivery into a reported failure, and a stale label
+// is the cheaper outcome. It removes the single issue-label association — not a label
+// replace, which would clobber a concurrent edit, and not the repository label, which every
+// other issue shares. GitHub answers 404 when the issue does not carry it, which is the
+// same success for our purposes and the reason a replay is safe.
+const LABEL_CALL_TIMEOUT_MS = 30_000;
+async function dropInProgressLabel(repoRoot, owner, name, issueNumber) {
+  try {
+    await ghRestJson(
+      repoRoot,
+      `/repos/${owner}/${name}/issues/${issueNumber}/labels/${IMPLEMENT_IN_PROGRESS_LABEL}`,
+      { method: "DELETE", hostname: "github.com", timeout: LABEL_CALL_TIMEOUT_MS },
+    );
+  } catch {
+    // Nothing is recorded from the failure: the label carries no authority, the caller's
+    // envelope is about the close, and extractGhErrorMessage does not redact.
+  }
+}
+
 const MERGE_STATE_OVERRIDE_RE = /(?:^|\s)gc-authorize-merge-state-override\s+pr=(\d+)\b/i;
 export async function readTrustedMergeStateOverride(repoRoot, owner, name, issueNumber, prNumber) {
   const comments = await readIssueCommentsWithAuthors(repoRoot, owner, name, issueNumber);
@@ -329,6 +351,9 @@ async function closeIssueIdempotently({ repoRoot, owner, name, issueNumber, pr }
   }
 
   if (issueState === "closed") {
+    // Also on this path, so a replayed finalization converges on a clean state rather than
+    // inheriting whatever the first attempt left behind.
+    await dropInProgressLabel(repoRoot, owner, name, issueNumber);
     return {
       ok: true,
       already_closed: true,
@@ -397,6 +422,10 @@ async function closeIssueIdempotently({ repoRoot, owner, name, issueNumber, pr }
       pr_number: pr.number,
     };
   }
+
+  // Strictly after the close succeeded. A refusal or a failed patch returned above and
+  // attempts nothing: an issue left open really is still in progress.
+  await dropInProgressLabel(repoRoot, owner, name, issueNumber);
 
   return {
     ok: true,

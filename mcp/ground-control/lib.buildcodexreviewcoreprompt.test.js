@@ -261,9 +261,11 @@ describe("buildCodexReviewCorePrompt", () => {
     // #1414: the preamble states exactly what the diff carries. Untracked
     // bodies are never transmitted (staging is the consent boundary), so
     // claiming to review them would be a false coverage claim.
-    assert.ok(prompt.includes("staged and unstaged changes"));
+    // #1694: the candidate is committed + staged + unstaged work against the
+    // merge base with the requested base, not the index against HEAD.
+    assert.ok(prompt.includes("committed, staged, and unstaged changes"));
+    assert.ok(prompt.includes("against its merge base with `dev`"));
     assert.ok(!prompt.includes("untracked"));
-    assert.ok(!prompt.includes("against `dev`"));
   });
 
   it("emits an explicit empty-diff marker when the diff is empty", () => {

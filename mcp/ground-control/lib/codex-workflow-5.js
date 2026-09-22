@@ -5,7 +5,6 @@
 // split along its own dependency layering. lib.js remains the barrel every caller imports.
 
 import { realpathSync } from "node:fs";
-import { TEST_QUALITY_REVIEW_DEFAULT_MODEL, TEST_QUALITY_REVIEW_TIMEOUT_MS } from "./ci-watcher.js";
 import { assertImplementSyncCheckout, fetchImplementBase, isImplementAncestor, readImplementGitOid, readImplementTreeOid, readRemoteImplementBranchSha } from "./codex-workflow-2.js";
 import { extractInScopeRequirementUids } from "./issue-requirements-scope.js";
 import { validateExistingSynchronizedImplementPr, validateImplementBranchName, validateImplementPrTitle } from "./codex-workflow.js";
@@ -16,9 +15,22 @@ import { ghRestJson, listPullRequestsForHead } from "./github-rest.js";
 import { readTrustedImplementSyncRecord } from "./knowledge-capture.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
 import { rejectReservedMarkerSequence } from "./repo-vocabulary.js";
-import { checkPrBodyShape, execFile, execFileWithInput, reviewEngineEnv } from "./runtime-primitives.js";
-import { TEST_QUALITY_REVIEW_FINDINGS_SCHEMA } from "./test-quality-prompt.js";
-import { ReviewerCapConfigError } from "./test-quality-runner.js";
+import { checkPrBodyShape, execFile } from "./runtime-primitives.js";
+import { laneClaimRefusal, readTrustedRunLane } from "./run-lane-evidence.js";
+import { assertDeliveryBindingCurrent } from "./delivery-binding.js";
+
+export class ReviewerCapConfigError extends Error {
+  constructor(blockName, configErrors) {
+    super(
+      `resolveReviewerPrePushCap: .ground-control.yaml failed validation while reading ` +
+        `workflow.${blockName}.pre_push_cap — refusing to silently fall back to the module ` +
+        `default. Validation errors: ${(configErrors || []).join("; ")}`,
+    );
+    this.name = "ReviewerCapConfigError";
+    this.blockName = blockName;
+    this.configErrors = configErrors;
+  }
+}
 
 function validateSynchronizedImplementPrInput(input) {
   if (
@@ -27,11 +39,12 @@ function validateSynchronizedImplementPrInput(input) {
     || input.issueNumber <= 0
     || typeof input.recordId !== "string"
     || !/^[0-9a-f]{32}$/.test(input.recordId)
+    || (input.lane != null && input.lane !== "implement" && input.lane !== "quickfix")
   ) {
     return {
       ok: false,
       error: "implement_pr_input_invalid",
-      message: "issueNumber and a synchronization record ID are required",
+      message: "issueNumber and a synchronization record ID are required, and lane must be 'implement' or 'quickfix' when set",
     };
   }
   const branchValidation = validateImplementBranchName(input.branchName, input.issueNumber);
@@ -86,8 +99,21 @@ async function findExistingSynchronizedImplementPr({
       title: input.title,
       body: input.body,
     });
-    if (!validation.ok) return validation;
-    return { ok: true, candidate: existing[0], repoSlug };
+    if (validation.ok) return { ok: true, candidate: existing[0], repoSlug, needsUpdate: false };
+    // An existing PR whose repository, branch, base, and head still match may
+    // be brought to the freshly rendered canonical body through this same
+    // synchronized writer. Never permit a body update to repair identity drift.
+    const identity = validateExistingSynchronizedImplementPr(existing[0], {
+      owner: repoAuthorization.owner,
+      name: repoAuthorization.name,
+      baseBranch,
+      branchName: input.branchName,
+      featureSha: localSha,
+      title: existing[0].title,
+      body: existing[0].body,
+    });
+    if (!identity.ok) return validation;
+    return { ok: true, candidate: existing[0], repoSlug, needsUpdate: true };
   } catch (error) {
     return {
       ok: false,
@@ -205,6 +231,36 @@ async function createSynchronizedImplementPr({
   };
 }
 
+async function updateSynchronizedImplementPr({
+  repoRoot, repoAuthorization, input, record, fetchedBaseSha, localSha, candidate, commandRunner,
+}) {
+  try {
+    const updated = await ghRestJson(
+      repoRoot,
+      `/repos/${repoAuthorization.owner}/${repoAuthorization.name}/pulls/${candidate.number}`,
+      { method: "PATCH", fields: { title: input.title, body: input.body }, execFile: commandRunner },
+    );
+    const prUrl = typeof updated?.html_url === "string" ? updated.html_url : candidate.url;
+    return {
+      ok: true,
+      already_exists: true,
+      updated_existing: true,
+      pr_number: candidate.number,
+      pr_url: prUrl,
+      synchronization_record_id: record.recordId,
+      fetched_base_sha: fetchedBaseSha,
+      feature_sha: localSha,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: "implement_pr_existing_update_failed",
+      message: extractGhErrorMessage(error),
+      next_action: "repair_the_canonical_pr_update_and_retry",
+    };
+  }
+}
+
 // GitHub auto-close keywords, per its "closing issues via keywords" docs. Case-
 // insensitive, immediately preceding the issue reference. A requirement-backed issue
 // must not carry any of these for its own number in the PR body (issue #1541).
@@ -242,50 +298,99 @@ async function assertPrBodyClosingKeywordBoundToIssueScope(input, issueThreadRea
       next_action: "render_the_pr_body_with_a_non_closing_reference_and_retry",
     };
   }
-  return { ok: true };
+  return { ok: true, scope };
 }
-export async function runCreateSynchronizedImplementPr(input, {
-  workspaceAuthorizationResolver = resolveMcpLaunchWorkspaceAuthorization,
-  commandRunner = execFile,
-  contextResolver = getRepoGroundControlContext,
-  syncRecordReader = readTrustedImplementSyncRecord,
-  issueThreadReader = (args) => runGetIssueThread(args, { workspaceAuthorizationResolver }),
-} = {}) {
-  const inputValidation = validateSynchronizedImplementPrInput(input);
-  if (!inputValidation.ok) return inputValidation;
+
+// /quickfix runs AI review only under `--review`, so requiring a published review here
+// made the lane's default path unable to open a pull request at all while
+// `gc_render_pr_body` was already rendering its "reviews not run" attestation. The same
+// carve-out bounds the final report and both completion assertions (ADR-029, issue #906).
+// It is granted against the issue's AUTHORITATIVE Requirements section rather than the
+// caller's word: a requirement-backed issue is not a legal quickfix, so it keeps the
+// mandatory review.
+//
+// `lane` here is the lane DERIVED from the newest trusted pickup record, never the
+// caller's argument. An empty requirement section is not proof of a quickfix run -
+// a requirement-free bug fix is an ordinary /implement target - so the two
+// conditions together were waivable by anyone who passed lane="quickfix"
+// (issue #1679). The requirement-scope condition stays: it is an independent
+// constraint, not the evidence.
+// The caller may still state its lane; it must agree with the derived one. A
+// disagreement is surfaced rather than silently ignored, because it means the
+// run and the call have different ideas about which gates apply.
+async function resolveDeliveryLane(input, repoRoot, repoAuthorization, laneReader) {
+  const derived = await laneReader({
+    repoRoot,
+    owner: repoAuthorization.owner,
+    name: repoAuthorization.name,
+    issueNumber: input.issueNumber,
+    branchName: input.branchName,
+  });
+  if (!derived.ok) return derived;
+  const refusal = laneClaimRefusal(derived, input.lane);
+  if (refusal) {
+    return {
+      ok: false,
+      error: "implement_pr_lane_mismatch",
+      message: refusal.message,
+      next_action: "call_with_the_lane_this_run_was_picked_up_under",
+    };
+  }
+  return derived;
+}
+
+async function prepareSynchronizedPrContext(input, { workspaceAuthorizationResolver, contextResolver }) {
   let repoRoot;
   let context;
   try {
     repoRoot = realpathSync(await ensureGitRepo(input.repoPath));
     context = await contextResolver(repoRoot);
   } catch (error) {
-    return { ok: false, error: "implement_pr_context_failed", message: error.message };
+    return { earlyReturn: { ok: false, error: "implement_pr_context_failed", message: error.message } };
   }
   if (context?.status !== "ok") {
-    return {
+    return { earlyReturn: {
       ok: false,
       error: "implement_pr_context_invalid",
       message: "The repository Ground Control context is invalid",
       next_action: "repair_ground_control_configuration_and_retry",
-    };
+    } };
   }
   const repoAuthorization = await authorizeImplementRepoRoot(
     repoRoot,
     workspaceAuthorizationResolver,
   );
-  if (!repoAuthorization.ok) return repoAuthorization;
+  if (!repoAuthorization.ok) return { earlyReturn: repoAuthorization };
   const baseBranch = context?.workflow?.base_branch ?? "dev";
   const titleValidation = validateImplementPrTitle(input.title, context?.workflow?.pr_title);
   if (!titleValidation.ok) {
-    return {
+    return { earlyReturn: {
       ok: false,
       error: "implement_pr_title_invalid",
       message: titleValidation.message,
       next_action: "reshape_the_title_and_retry",
-    };
+    } };
   }
+  return { repoRoot, repoAuthorization, baseBranch };
+}
+
+export async function runCreateSynchronizedImplementPr(input, {
+  workspaceAuthorizationResolver = resolveMcpLaunchWorkspaceAuthorization,
+  commandRunner = execFile,
+  contextResolver = getRepoGroundControlContext,
+  syncRecordReader = readTrustedImplementSyncRecord,
+  issueThreadReader = (args) => runGetIssueThread(args, { workspaceAuthorizationResolver }),
+  laneReader = readTrustedRunLane,
+} = {}) {
+  const inputValidation = validateSynchronizedImplementPrInput(input);
+  if (!inputValidation.ok) return inputValidation;
+  const prepared = await prepareSynchronizedPrContext(input, { workspaceAuthorizationResolver, contextResolver });
+  if (prepared.earlyReturn) return prepared.earlyReturn;
+  const { repoRoot, repoAuthorization, baseBranch } = prepared;
   const closingBinding = await assertPrBodyClosingKeywordBoundToIssueScope(input, issueThreadReader);
   if (!closingBinding.ok) return closingBinding;
+  const lane = await resolveDeliveryLane(input, repoRoot, repoAuthorization, laneReader);
+  if (!lane.ok) return lane;
   try {
     const synchronization = await validateImplementSynchronization({
       repoRoot,
@@ -297,6 +402,10 @@ export async function runCreateSynchronizedImplementPr(input, {
     });
     if (!synchronization.ok) return synchronization;
     const { record, fetchedBaseSha, localSha } = synchronization;
+    const bindingCurrent = assertDeliveryBindingCurrent({
+      record, lane: lane.lane,
+    });
+    if (!bindingCurrent.ok) return bindingCurrent;
     const existingLookup = await findExistingSynchronizedImplementPr({
       repoRoot,
       repoAuthorization,
@@ -306,7 +415,7 @@ export async function runCreateSynchronizedImplementPr(input, {
       commandRunner,
     });
     if (!existingLookup.ok) return existingLookup;
-    if (existingLookup.candidate) {
+    if (existingLookup.candidate && !existingLookup.needsUpdate) {
       return {
         ok: true,
         already_exists: true,
@@ -314,6 +423,12 @@ export async function runCreateSynchronizedImplementPr(input, {
         pr_url: existingLookup.candidate.url,
         synchronization_record_id: record.recordId,
       };
+    }
+    if (existingLookup.candidate) {
+      return await updateSynchronizedImplementPr({
+        repoRoot, repoAuthorization, input, record, fetchedBaseSha, localSha,
+        candidate: existingLookup.candidate, commandRunner,
+      });
     }
     const { repoSlug } = existingLookup;
     return await createSynchronizedImplementPr({
@@ -362,38 +477,4 @@ export async function resolveReviewerPrePushCap(repoPath, blockName, moduleDefau
     return block.pre_push_cap;
   }
   return moduleDefault;
-}
-export async function runSingleClaudeTestQualityReview({
-  repoRoot,
-  prompt,
-  model = TEST_QUALITY_REVIEW_DEFAULT_MODEL,
-  schema = TEST_QUALITY_REVIEW_FINDINGS_SCHEMA,
-  timeoutMs = TEST_QUALITY_REVIEW_TIMEOUT_MS,
-  signal = undefined,
-}) {
-  const args = [
-    "--print",
-    "--model",
-    model,
-    "--output-format",
-    "json",
-    "--json-schema",
-    JSON.stringify(schema),
-    "--add-dir",
-    repoRoot,
-    "--permission-mode",
-    "bypassPermissions",
-    "--allowedTools",
-    "Read Glob Grep",
-  ];
-  const childEnv = reviewEngineEnv();
-  const { stdout } = await execFileWithInput("claude", args, {
-    input: prompt,
-    cwd: repoRoot,
-    env: childEnv,
-    maxBuffer: 10 * 1024 * 1024,
-    timeoutMs,
-    signal,
-  });
-  return stdout;
 }

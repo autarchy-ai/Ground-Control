@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { authorizedWorkspaceRoot } from "./workspace-binding.js";
+// Re-exported so this module stays the lane's single import surface (issue #1679).
+export { defaultRunCiWatcher, defaultRunSonarWatcher } from "./readiness-watchers.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
   acquireIntegrationLock,
@@ -13,8 +15,6 @@ import {
   isSafeLabelName,
   normalizeIntegrationManagerConfig,
   parseGroundControlYaml,
-  runWatchCiRun,
-  runWatchSonarAnalysis,
 } from "../lib.js";
 
 const execFileAsync = promisify(execFileCb);export // ---------------------------------------------------------------------------
@@ -89,94 +89,6 @@ function defaultWriteHaltLedger(runDir, ledger) {
   mkdirSync(runDir, { recursive: true });
   // eslint-disable-next-line security/detect-non-literal-fs-filename
   writeFileSync(join(runDir, "halt.json"), JSON.stringify(ledger, null, 2), "utf-8");
-}export // ---------------------------------------------------------------------------
-// Watcher adapters
-//
-// The hook contract for the prepare loop is:
-//   (pr, ctx, deps) => Promise<{conclusion: "success"|"failure"|"skipped"|"queued_too_long"|"timed_out", details_url?}>
-//
-// The real lib.js watchers have their own return envelopes.  These two
-// adapter functions translate between the watcher envelope and the hook
-// contract so the prepare loop stays simple.
-// ---------------------------------------------------------------------------
-
-/**
- * Production CI watcher adapter.  Calls runWatchCiRun from lib.js and maps
- * its envelope to the hook contract.
- *
- * runWatchCiRun returns:
- *   {ok, conclusion: "success"|"failure"|"queued_too_long"|"timed_out"|..., url?, ...}
- *
- * Mapping:
- *   conclusion "success"          → {conclusion: "success"}
- *   conclusion "failure"          → {conclusion: "failure", details_url: url}
- *   conclusion "queued_too_long"  → {conclusion: "queued_too_long"}
- *   conclusion "timed_out"        → {conclusion: "timed_out"}
- *   any other / error             → {conclusion: "skipped"} (non-fatal)
- */
-async function defaultRunCiWatcher(pr, ctx) {
-  const result = await runWatchCiRun({
-    repoPath: ctx.repoRoot,
-    branch: pr.head_ref,
-  });
-
-  if (!result.ok) {
-    // watcher couldn't run (no CI config, etc.) — treat as skipped
-    return { conclusion: "skipped" };
-  }
-
-  const c = result.conclusion;
-  if (c === "success") return { conclusion: "success" };
-  if (c === "failure") return { conclusion: "failure", details_url: result.url };
-  if (c === "queued_too_long") return { conclusion: "queued_too_long" };
-  if (c === "timed_out") return { conclusion: "timed_out" };
-  // Any other conclusion (e.g. "skipped", "cancelled" mapped from CI): treat as skipped.
-  return { conclusion: "skipped" };
-}export /**
- * Production Sonar watcher adapter.  Calls runWatchSonarAnalysis from lib.js
- * and maps its envelope to the hook contract.
- *
- * runWatchSonarAnalysis returns:
- *   {ok, skipped?, quality_gate: "OK"|"ERROR"|"WARN"|"NONE", ...}
- *
- * Mapping:
- *   skipped:true                  → {conclusion: "skipped"}
- *   quality_gate "OK"             → {conclusion: "success"}
- *   quality_gate "ERROR"/"WARN"   → {conclusion: "failure"}
- *   any error / other             → {conclusion: "skipped"} (non-fatal)
- *
- * A non-ok envelope still halts the queue when sonarcloud is configured, but it
- * used to arrive with its reason and evidence discarded, so the lane reported a
- * configuration problem for a scan that was never produced and dropped the
- * repository/PR/head/check facts the diagnosis needs (issue #1559). Both travel
- * with the conclusion now; neither grants a new bypass.
- */
-async function defaultRunSonarWatcher(pr, ctx, _deps, watchSonar = runWatchSonarAnalysis) {
-  // `watchSonar` is injected only by this adapter's own tests. Without a seam the
-  // mapping below could only be reached through a full integration run, so every
-  // test faked the adapter's *output* instead and the mapping itself — the actual
-  // /integrate half of issue #1559 — was never exercised.
-  const result = await watchSonar({
-    repoPath: ctx.repoRoot,
-    prNumber: pr.pr_number,
-  });
-
-  if (!result.ok) {
-    return {
-      conclusion: "skipped",
-      reason: result.error,
-      ...(result.scope_evidence ? { scope_evidence: result.scope_evidence } : {}),
-    };
-  }
-  if (result.skipped) {
-    return { conclusion: "skipped" };
-  }
-
-  const qg = result.quality_gate;
-  if (qg === "OK") return { conclusion: "success" };
-  if (qg === "ERROR" || qg === "WARN") return { conclusion: "failure" };
-  // NONE or other — treat as skipped
-  return { conclusion: "skipped" };
 }export // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

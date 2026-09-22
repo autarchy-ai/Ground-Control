@@ -3,16 +3,14 @@
 
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { runCodexReview, runCodexReviewCycle, runTestQualityReviewCycle } from "./lib.js";
+import { runCodexReview, runCodexReviewCycle } from "./lib.js";
 
 // =============================================================================
 // Shared review-cycle seam + cycle wrappers (issue #934)
 // =============================================================================
 //
-// gc_codex_review_cycle and gc_test_quality_review_cycle share one
-// parameterized helper (per the issue #934 preflight binding rule: do NOT
-// duplicate near-identical functions per reviewer). The helper:
-//   1. Calls the underlying review fn (runCodexReview / runTestQualityReview).
+// gc_codex_review_cycle uses a shared review-cycle helper. The helper:
+//   1. Calls the underlying review fn.
 //   2. Builds a decision-record entry per finding (decision='fix' as the only
 //      decision the cycle tool can post without user authorization).
 //   3. Posts the decision record via runPostDecisionRecord.
@@ -207,11 +205,11 @@ describe("normalizeReviewCycleNextAction (issue #934 fix-list)", () => {
     );
   });
 
-  it("normalizes capped status to post_summary_and_escalate_to_user", async () => {
+  it("normalizes capped status to ask_over_cap_or_proceed", async () => {
     const { normalizeReviewCycleNextAction } = await import("./lib.js");
     assert.equal(
       normalizeReviewCycleNextAction("anything", "capped"),
-      "post_summary_and_escalate_to_user",
+      "ask_over_cap_or_proceed",
     );
   });
 
@@ -223,10 +221,10 @@ describe("normalizeReviewCycleNextAction (issue #934 fix-list)", () => {
     );
     assert.equal(
       normalizeReviewCycleNextAction(
-        "fix_findings_then_summarize_and_escalate",
+        "fix_findings_then_ask_over_cap_or_proceed",
         "findings",
       ),
-      "fix_findings_then_summarize_and_escalate",
+      "fix_findings_then_ask_over_cap_or_proceed",
     );
   });
 
@@ -284,36 +282,12 @@ describe("runCodexReviewCycle input validation (issue #934)", () => {
   });
 });
 
-describe("runTestQualityReviewCycle input validation (issue #934)", () => {
-  it("refuses when repo_path is missing", async () => {
-    const { runTestQualityReviewCycle } = await import("./lib.js");
-    const r = await runTestQualityReviewCycle({
-      repoPath: "",
-      issueNumber: 1,
-    });
-    assert.equal(r.ok, false);
-    assert.equal(r.error, "test_quality_review_cycle_input_invalid");
-  });
-
-  it("refuses when issue_number is not a positive integer", async () => {
-    const { runTestQualityReviewCycle } = await import("./lib.js");
-    for (const bad of [0, -1, 1.5, "1", null, undefined]) {
-      const r = await runTestQualityReviewCycle({
-        repoPath: "/tmp",
-        issueNumber: bad,
-      });
-      assert.equal(r.ok, false, `bad=${bad}`);
-      assert.equal(r.error, "test_quality_review_cycle_input_invalid");
-    }
-  });
-});
-
 // ---------------------------------------------------------------------------
-// reviewCycleFindings — codex/test-quality field reconciliation (issue #966)
+// reviewCycleFindings — reviewer result field reconciliation (issue #966)
 // ---------------------------------------------------------------------------
 
 describe("reviewCycleFindings — cycle-seam field reconciliation (issue #966)", () => {
-  it("reads test-quality findings from .findings", async () => {
+  it("reads reviewer findings from .findings", async () => {
     const { reviewCycleFindings } = await import("./lib.js");
     const r = reviewCycleFindings({ ok: true, findings: [{ title: "a" }, { title: "b" }] });
     assert.equal(r.length, 2);
