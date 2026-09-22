@@ -9,9 +9,9 @@ name: Release Please
 # Each release also publishes the MCP server and its workflow skills to npm as `grndctl`
 # (issue #1587), so hosts install a released version instead of running a checkout. Release
 # Please owns the package version through extra-files. Publishing uses npm trusted publishing
-# (GitHub OIDC). The NPM_TOKEN secret exists only to bootstrap the first publish, because
-# npm cannot configure a trusted publisher for a package that does not exist yet; once the
-# package is configured, delete the secret and every release publishes without a token. The release PR is opened by GITHUB_TOKEN, so `dev`'s required
+# (GitHub OIDC) to stage the package in npm. A maintainer reviews and approves the staged
+# package in npm's UI before it becomes publicly installable. The release PR is opened by
+# GITHUB_TOKEN, so `dev`'s required
 # checks do not auto-run on it — a maintainer reviews and merges it. The main -> dev back-merge is
 # handled by sync-main-to-dev.yml.
 on:
@@ -49,8 +49,6 @@ jobs:
     permissions:
       contents: read
       id-token: write # npm trusted publishing and provenance
-    env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     defaults:
       run:
         working-directory: mcp/ground-control
@@ -65,11 +63,5 @@ jobs:
         run: npm install -g npm@11.19.1
       - run: npm ci
       - run: npm test
-      - name: Publish with the bootstrap token
-        if: env.NPM_TOKEN != ''
-        run: |
-          npm config set //registry.npmjs.org/:_authToken "${NPM_TOKEN}"
-          npm publish --provenance --access public
-      - name: Publish with trusted publishing
-        if: env.NPM_TOKEN == ''
-        run: npm publish --provenance --access public
+      - name: Stage package with trusted publishing
+        run: npm stage publish . --provenance --access public

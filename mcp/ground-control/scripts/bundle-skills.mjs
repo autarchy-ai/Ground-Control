@@ -4,6 +4,7 @@
 // copies again after packing; no bundled path is ever committed.
 
 import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
@@ -11,6 +12,11 @@ const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const skillsSource = `${repoRoot}skills/`;
 const envSource = `${repoRoot}.env.example`;
 const sandboxSource = `${repoRoot}tools/incus_sandbox/`;
+
+function isRuntimeAsset(source) {
+  const name = basename(source);
+  return name !== "tests" && name !== "__pycache__" && !name.includes(".test.");
+}
 
 rmSync(`${packageRoot}skills`, { recursive: true, force: true });
 rmSync(`${packageRoot}templates`, { recursive: true, force: true });
@@ -22,11 +28,14 @@ if (!process.argv.includes("--clean")) {
       process.exit(1);
     }
   }
-  cpSync(skillsSource, `${packageRoot}skills`, { recursive: true });
+  cpSync(skillsSource, `${packageRoot}skills`, {
+    recursive: true,
+    filter: isRuntimeAsset,
+  });
   mkdirSync(`${packageRoot}templates`, { recursive: true });
   cpSync(envSource, `${packageRoot}templates/env.example`);
   cpSync(sandboxSource, `${packageRoot}sandbox`, {
     recursive: true,
-    filter: (source) => !source.includes("__pycache__") && !source.includes(".test."),
+    filter: isRuntimeAsset,
   });
 }
