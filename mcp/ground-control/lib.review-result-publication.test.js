@@ -182,6 +182,22 @@ describe("review-result publication (#1632)", () => {
     assert.deepEqual(calls, []);
   });
 
+  it("reports base-only and candidate-tree drift distinctly before any GitHub write (#1694)", async () => {
+    for (const [change, cause] of [[{ base_oid: "f".repeat(40) }, "base_moved"],
+      [{ candidate_tree_oid: "e".repeat(40) }, "candidate_changed"]]) {
+      const record = retained();
+      const calls = [];
+      const deps = dependencies(record, calls);
+      deps.captureRevision = async () => ({ revision: { ...record.revision, ...change } });
+      const result = await runPublishReviewResult({ repoPath: "/repo",
+        reviewHandle: record.review_handle, sanitized: sanitized() }, deps);
+      assert.equal(result.error, "review_revision_stale");
+      assert.equal(result.stale_cause, cause);
+      assert.equal(result.next_action, "rerun_review_on_current_revision");
+      assert.deepEqual(calls, []);
+    }
+  });
+
   it("fails closed when the revision moves during publication capture", async () => {
     const record = retained();
     const calls = [];

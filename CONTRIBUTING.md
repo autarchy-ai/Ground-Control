@@ -51,8 +51,10 @@ To try your changes in an agent session, `npm link` from `mcp/ground-control` so
 | `make graphify` | (Optional) rebuild the disposable Graphify index |
 | `make help` | List all targets |
 
-Run `make mcp-test` for the inner loop. Run `make policy` as well when you touch
-workflow, ADR, MCP, policy, or requirement-spec surfaces.
+For the inner loop, run the targeted suites for the surface you touched
+(`node --test <files>` under `mcp/ground-control`). CI runs `make mcp-test` and
+`make policy` on every PR, so neither is a required local step; run one locally
+only to diagnose a specific failure.
 
 ## Branch strategy
 

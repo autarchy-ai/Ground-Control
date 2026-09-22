@@ -13,7 +13,7 @@ there is no backend, database, or frontend. The server is Node.js ES modules und
 - Policy: `make policy` (repo-native ADR/workflow/spec guardrails shared by Claude and Codex, runs the Python policy tests, `bin/policy`, and Vale)
 - Prose lint: `make vale-lint`
 
-Run `make mcp-test` before pushing. If you touched workflow, ADR, MCP, or requirement-spec surfaces, run `make policy` as well.
+Do not run `make mcp-test` or `make policy` locally as a pre-push step: CI owns both repository-wide suites. While working, run only the targeted suites for the surface you touched (`node --test <files>` under `mcp/ground-control`). Inside `/implement` and `/quickfix` this is the workflow contract (Step 5, development principle 8); outside them, run a full suite only to diagnose a specific failure.
 
 ## Development Philosophy (Pre-Alpha)
 

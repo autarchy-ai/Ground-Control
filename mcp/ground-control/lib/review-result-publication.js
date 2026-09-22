@@ -14,6 +14,7 @@ import { verifyReviewWontfixAuthorizations } from "./review-wontfix-authorizatio
 import { publishReviewStationFailure } from "./review-failure-publication.js";
 import {
   captureReviewRevision,
+  describeReviewRevisionDrift,
   readReviewResult,
   validateSanitizedReviewPublication,
   writeReviewResult,
@@ -268,8 +269,10 @@ async function prepareVerdictPublication(current, input, repository, overrides) 
   const recaptured = await recaptureRevision(current, repository, overrides);
   if (recaptured.result) return recaptured;
   const { observed } = recaptured;
-  if (observed.revision.digest !== current.revision.digest) {
-    return { result: fail("review_revision_stale", "The current review input no longer matches the retained reviewed revision.", "rerun_review_on_current_revision") };
+  const drift = describeReviewRevisionDrift(current.revision, observed.revision);
+  if (drift) {
+    return { result: { ...fail("review_revision_stale", drift.message, "rerun_review_on_current_revision"),
+      stale_cause: drift.cause } };
   }
   const proof = provenance(current, checked.sanitized_digest);
   const body = buildSanitizedReviewFindingsRecord(current, checked.value, proof);
