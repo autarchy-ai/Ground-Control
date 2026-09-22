@@ -128,6 +128,12 @@ publishing (GitHub OIDC). A one-time `NPM_TOKEN` secret bootstraps the first
 publish only, because npm cannot configure a trusted publisher before the
 package exists; it is deleted once trusted publishing is configured.
 
+The Ground Control source repository does not track a `ground-control` entry in
+its own `.mcp.json`. Running the product while developing the product is
+optional maintainer tooling, configured in the maintainer's local or user-level
+agent settings. Contributors can build, test, and submit changes without an
+installed `grndctl` or a running Ground Control MCP server.
+
 ## 2026-09-11 Amendment: MCP-only Release Surface (issue #1303)
 
 The #1500 re-platform removed the backend, frontend, container publication, and

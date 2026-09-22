@@ -23,7 +23,11 @@ from .ci_strictness import (
     run_pr_title_contract,
     run_sonar_strictness_contract,
 )
-from .workflow_contracts import run_doc_coverage_anchor_contract, run_scan_floor_contract
+from .workflow_contracts import (
+    run_doc_coverage_anchor_contract,
+    run_optional_mcp_boundary_contract,
+    run_scan_floor_contract,
+)
 from .adr_guard import (
     read_changed_files,
     run_adr_guard,
@@ -84,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     violations.extend(run_workflow_routing_contract())
     violations.extend(run_implement_execution_contract())
     violations.extend(run_scan_floor_contract())
+    violations.extend(run_optional_mcp_boundary_contract())
     violations.extend(run_doc_coverage_anchor_contract())
     violations.extend(run_sonar_strictness_contract())
     violations.extend(run_ci_required_context_contract())
