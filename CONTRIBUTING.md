@@ -14,6 +14,10 @@ start PostgreSQL or run Gradle, it is stale (see the
 - `git`
 - Python 3 (for the repo policy tooling)
 
+Ground Control, a globally installed `grndctl`, and an MCP-aware editor are not
+prerequisites. They are optional maintainer tooling; the commands below build
+and test the repository directly.
+
 ### Local setup
 
 ```bash
@@ -33,8 +37,10 @@ make mcp-test                     # node --test suite (primary gate)
 make policy                       # repo-native guardrails + MCP lint + Vale
 ```
 
-To try your changes in an agent session, `npm link` from `mcp/ground-control` so the
-`grndctl` command runs your clone. Agents otherwise run the published package.
+To try your changes through Ground Control, opt in explicitly: `npm link` from
+`mcp/ground-control`, then register `grndctl mcp` in your own agent's local or
+user configuration. Do not commit that personal MCP registration to the
+repository.
 
 ### Makefile targets
 
@@ -98,9 +104,10 @@ enforced by policy.
 - Write one test per significant behavior, and drive new behavior test-first. Test names
   describe behavior, not implementation.
 
-## The `/implement` workflow
+## Optional `/implement` workflow
 
-This repository is developed through its own gated `/implement` loop (plan, TDD, review,
-CI, requirement transition, traceability reconciliation), specified in
-[`docs/DEVELOPMENT_WORKFLOW.md`](docs/DEVELOPMENT_WORKFLOW.md). Requirements and ADRs are
-repo-local files reviewed in the PR like any other change.
+Maintainers may opt into the gated `/implement` loop (plan, TDD, review, CI,
+requirement transition, traceability reconciliation), specified in
+[`docs/DEVELOPMENT_WORKFLOW.md`](docs/DEVELOPMENT_WORKFLOW.md). It is not a
+contribution requirement. Requirements and ADRs remain repo-local files
+reviewed in the PR like any other change regardless of how the change was made.

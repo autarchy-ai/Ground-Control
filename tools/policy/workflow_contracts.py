@@ -1,10 +1,41 @@
 
 import ast
+import json
 import re
 
 from pathlib import Path
 
 from .core import REPO_ROOT, Violation, require_scanned
+
+
+def run_optional_mcp_boundary_contract(root: Path = REPO_ROOT) -> list[Violation]:
+    """Keep personal Ground Control activation out of the tracked source repo."""
+    config = root / ".mcp.json"
+    document = {}
+    if config.is_file():
+        try:
+            document = json.loads(config.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            return [
+                Violation(
+                    code="tracked-mcp-config-invalid",
+                    message="The tracked .mcp.json cannot be checked for personal tooling entries.",
+                    details=[str(error)],
+                )
+            ]
+    servers = document.get("mcpServers", {})
+    if not isinstance(servers, dict) or "ground-control" not in servers:
+        return []
+    return [
+        Violation(
+            code="tracked-personal-ground-control-mcp",
+            message=(
+                "Ground Control is optional maintainer tooling and must not be activated "
+                "by the repository's tracked .mcp.json. Configure it in local or user settings."
+            ),
+            details=["remove mcpServers.ground-control from .mcp.json"],
+        )
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -1,12 +1,5 @@
 {
   "mcpServers": {
-    "ground-control": {
-      "type": "stdio",
-      "command": "grndctl",
-      "args": [
-        "mcp"
-      ]
-    },
     "citation": {
       "type": "stdio",
       "command": "mcp/citation/bin/citation-mcp.sh",
