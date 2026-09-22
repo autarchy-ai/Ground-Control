@@ -7,6 +7,10 @@ from tools.policy.checks import run_optional_mcp_boundary_contract
 
 
 class OptionalMcpBoundaryContractTest(unittest.TestCase):
+    def test_accepts_repo_without_mcp_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(run_optional_mcp_boundary_contract(Path(tmp)), [])
+
     def test_accepts_repo_without_ground_control_registration(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -38,6 +42,15 @@ class OptionalMcpBoundaryContractTest(unittest.TestCase):
             violations = run_optional_mcp_boundary_contract(root)
 
         self.assertEqual([item.code for item in violations], ["tracked-personal-ground-control-mcp"])
+
+    def test_rejects_malformed_tracked_mcp_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".mcp.json").write_text("{", encoding="utf-8")
+
+            violations = run_optional_mcp_boundary_contract(root)
+
+        self.assertEqual([item.code for item in violations], ["tracked-mcp-config-invalid"])
 
     def test_live_repo_keeps_ground_control_optional(self):
         self.assertEqual(run_optional_mcp_boundary_contract(), [])
