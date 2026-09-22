@@ -26,7 +26,7 @@ function globRegex(pattern) {
         index += 1;
       } else source += "[^/]*";
     } else if (char === "?") source += "[^/]";
-    else source += char.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+    else source += char.replace(/[|\\{}()[\]^$+?.]/g, String.raw`\$&`);
   }
   // Every regex-active character except the two supported glob operators was escaped above.
   // eslint-disable-next-line security/detect-non-literal-regexp
