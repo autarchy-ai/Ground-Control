@@ -35,6 +35,7 @@ _DEFAULT_REFERENCE = "ghcr.io/autarchy-ai/gc-sandbox-template:latest"
 _REFERENCE = re.compile(r"^(ghcr\.io)/([a-z0-9][a-z0-9._/-]{0,127}):([a-zA-Z0-9][a-zA-Z0-9._-]{0,127})$")
 _FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 _ALIAS = "gc-sandbox-template"
+_TEMPLATE_SCHEMA = "gc.incus-sandbox.template/v1"
 _LAYER_TYPE = "application/vnd.incus.image.layer.v1.tar+gzip"
 _CONFIG_TYPE = "application/vnd.incus.image.config.v1+json"
 _MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
@@ -244,7 +245,7 @@ def push(config: SandboxConfig, reference: str, fingerprint: str, credential: st
         body = json.dumps(manifest).encode("utf-8")
         _request(f"https://{registry}/v2/{repository}/manifests/{tag}", token=token, method="PUT",
                  data=body, headers={"Content-Type": _MANIFEST_TYPE, "Content-Length": str(len(body))})
-    return {"schema": "gc.incus-sandbox.template/v1", "reference": reference,
+    return {"schema": _TEMPLATE_SCHEMA, "reference": reference,
             "fingerprint": fingerprint, "layer": layer_digest}
 
 
@@ -258,14 +259,19 @@ def imported_fingerprint(output: str) -> str:
 
 def _refused(reference: str, error: urllib.error.URLError) -> RegistryError:
     """Name why the registry would not serve a reference, instead of a traceback."""
-    if isinstance(error, urllib.error.HTTPError):
-        if error.code in {401, 403}:
-            return RegistryError(f"the registry refused {reference} (HTTP {error.code}): the package is "
-                                 "private or does not exist, and a pull sends no credential")
-        if error.code == 404:
-            return RegistryError(f"the registry has no {reference}")
-        return RegistryError(f"the registry failed to serve {reference} (HTTP {error.code})")
-    return RegistryError(f"could not reach the registry for {reference}: {error.reason}")
+    if not isinstance(error, urllib.error.HTTPError):
+        return RegistryError(f"could not reach the registry for {reference}: {error.reason}")
+    denied = (f"the registry refused {reference} (HTTP {error.code}): the package is "
+              "private or does not exist, and a pull sends no credential")
+    reasons = {401: denied, 403: denied, 404: f"the registry has no {reference}"}
+    failed = f"the registry failed to serve {reference} (HTTP {error.code})"
+    return RegistryError(reasons.get(error.code, failed))
+
+
+def _template(reference: str, layer: str, fingerprint: str, status: str) -> dict[str, str]:
+    """Report the template this host now holds and the value to pin."""
+    return {"schema": _TEMPLATE_SCHEMA, "reference": reference, "layer": layer,
+            "fingerprint": fingerprint, "image": f"local:{fingerprint}", "status": status}
 
 
 def image_present(config: SandboxConfig, fingerprint: str) -> bool:
@@ -290,8 +296,7 @@ def pull(config: SandboxConfig, reference: str, credential: str | None = None) -
     # An image already here is the same bytes, so the download is skipped entirely.
     fingerprint = digest.removeprefix("sha256:")
     if image_present(config, fingerprint):
-        return {"schema": "gc.incus-sandbox.template/v1", "reference": reference, "layer": digest,
-                "fingerprint": fingerprint, "image": f"local:{fingerprint}", "status": "already-present"}
+        return _template(reference, digest, fingerprint, "already-present")
     with tempfile.TemporaryDirectory(prefix="gc-incus-registry-") as directory:
         tarball = Path(directory) / "image.tar.gz"
         try:
@@ -307,9 +312,7 @@ def pull(config: SandboxConfig, reference: str, credential: str | None = None) -
     if imported.returncode != 0:
         # Incus' own reason is the only actionable detail; keep it, bounded.
         raise RegistryError(f"Incus refused the image: {imported.stderr.strip()[:200]}")
-    fingerprint = imported_fingerprint(imported.stdout)
-    return {"schema": "gc.incus-sandbox.template/v1", "reference": reference, "layer": digest,
-            "fingerprint": fingerprint, "image": f"local:{fingerprint}", "status": "imported"}
+    return _template(reference, digest, imported_fingerprint(imported.stdout), "imported")
 
 
 def main(argv: list[str]) -> int:
