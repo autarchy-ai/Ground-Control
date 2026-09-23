@@ -120,7 +120,7 @@ We use [MADR](https://adr.github.io/madr/) (Markdown Any Decision Records). Each
 | [098](098-native-agent-dashboard-connection.md) | Native Agent Dashboard Connection | Accepted |
 | [099](099-bounded-codex-review-and-test-quality-retirement.md) | Bounded Codex Review and Test-Quality Retirement | Accepted |
 | [100](100-thin-quickfix-shared-mechanical-lane.md) | Thin Quickfix Lane over Shared Mechanical Modules | Accepted |
-| [101](101-isolated-incus-coding-vms.md) | Isolated Incus VMs for Local Coding Sessions | Accepted |
+| [101](101-isolated-incus-coding-vms.md) | Isolated Incus VMs for Local Coding Sessions | Accepted (amended 2026-09-21, #1645/#1691; 2026-09-23, single `grndctl sandbox` command) |
 | [102](102-automated-post-merge-delivery-finalization.md) | Automated Post-Merge Delivery Finalization | Accepted |
 | [103](103-repository-scoped-sandbox-task-environment.md) | Repository-Scoped Environment for Sandbox Task Processes | Accepted |
 
