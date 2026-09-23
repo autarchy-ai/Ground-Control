@@ -6,7 +6,7 @@
 //   grndctl init             set up Ground Control for the repository in the current directory
 //   grndctl doctor           check this host and repository, naming the fix for anything wrong
 //   grndctl finalize-merged-pr  finish Phase E for a merged delivery PR (the Actions job runs this)
-//   grndctl sandbox         set up the local Incus sandbox and fetch or build its guest template
+//   grndctl sandbox          set up the local sandbox, manage its guest template, and run every sandbox lifecycle verb
 //   grndctl --version        print the installed version
 //
 // The server always runs from this installed package, never from a checkout, so what an agent
@@ -24,7 +24,7 @@ commands:
                    (--dry-run; --non-interactive with every value as a flag, e.g. --project, --github-repo)
   doctor           check this host and repository
   finalize-merged-pr  finish Phase E for an already-merged Ground Control delivery PR (--pr <number>)
-  sandbox          local Incus sandbox: setup <install|upgrade|refresh|rollback>, image [REFERENCE], build-image, push-image, path
+  sandbox          local coding sandboxes: create, attach, prepare, migrate, delete, ... and host setup/image (grndctl sandbox --help)
   --version        print the installed version
 `;
 
@@ -53,7 +53,7 @@ if (command === "mcp") {
   process.exitCode = await runFinalizeMergedPrCli(args);
 } else if (command === "sandbox") {
   const { runSandboxCli } = await import("../lib/sandbox-cli.js");
-  process.exitCode = runSandboxCli(args);
+  process.exitCode = await runSandboxCli(args);
 } else if (command === "doctor") {
   const { runDoctor } = await import("../lib/grndctl-doctor.js");
   process.exitCode = await runDoctor({ version: packageVersion() });

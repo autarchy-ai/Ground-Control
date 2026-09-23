@@ -119,6 +119,13 @@ populate_nft_sets() {
   chmod 0640 "$STATE_ROOT/state/network-addresses.sha256"
 }
 
+remove_legacy_client() {
+  # Earlier versions installed the lifecycle client as its own command; it now runs from
+  # the grndctl package as `grndctl sandbox`, so one Ground Control command remains.
+  run rm -f /usr/local/bin/gc-incus-sandbox /usr/local/bin/source.mjs /usr/local/bin/task_client.mjs \
+    /usr/local/bin/migration_guard.mjs /usr/local/bin/repository_identity.mjs /usr/local/bin/source_binding.mjs
+}
+
 install_files() {
   local preserve_ownership="${1:-false}"
   run install -d -m 0750 "$CONFIG_ROOT"
@@ -142,14 +149,9 @@ install_files() {
   run install -m 0644 "$PAYLOAD_ROOT/guest_bootstrap.py" "$INSTALL_ROOT/guest-bootstrap.py"
   run install -m 0644 "$PAYLOAD_ROOT/migration.py" "$INSTALL_ROOT/migration.py"
   run install -m 0644 "$PAYLOAD_ROOT/migration_packet.py" "$INSTALL_ROOT/migration_packet.py"
-  run install -m 0644 "$PAYLOAD_ROOT/migration_guard.mjs" /usr/local/bin/migration_guard.mjs
-  run install -m 0644 "$PAYLOAD_ROOT/repository_identity.mjs" /usr/local/bin/repository_identity.mjs
-  run install -m 0644 "$PAYLOAD_ROOT/source_binding.mjs" /usr/local/bin/source_binding.mjs
-  run install -m 0644 "$PAYLOAD_ROOT/task_client.mjs" /usr/local/bin/task_client.mjs
   run install -m 0750 "$PAYLOAD_ROOT/helper.py" "$INSTALL_ROOT/helper.py"
   run install -m 0750 "$PAYLOAD_ROOT/transfer.py" "$INSTALL_ROOT/transfer.py"
-  run install -m 0755 "$PAYLOAD_ROOT/client.mjs" /usr/local/bin/gc-incus-sandbox
-  run install -m 0644 "$PAYLOAD_ROOT/source.mjs" /usr/local/bin/source.mjs
+  remove_legacy_client
   run install -m 0640 "$PAYLOAD_ROOT/gc-incus-sandbox.nft" "$RULES_PATH"
   if ! "$dry_run"; then
     [[ "${SUDO_UID:-}" =~ ^[1-9][0-9]*$ ]] || { echo "install through sudo from the intended operator" >&2; exit 64; }
@@ -237,6 +239,7 @@ rollback_partial() {
   remove_bridge_forwarding
   rm -f /etc/sudoers.d/gc-incus-sandbox "$RULES_PATH"
   rm -rf "$INSTALL_ROOT" "$CONFIG_ROOT" "$STATE_ROOT" /var/log/gc-incus-sandbox
+  remove_legacy_client
 }
 
 refresh() {
@@ -275,6 +278,7 @@ rollback() {
   remove_bridge_forwarding
   rm -f /etc/sudoers.d/gc-incus-sandbox "$RULES_PATH"
   rm -rf "$INSTALL_ROOT" "$CONFIG_ROOT" "$STATE_ROOT" /var/log/gc-incus-sandbox
+  remove_legacy_client
 }
 
 if [[ "${1:-}" == "--dry-run" ]]; then

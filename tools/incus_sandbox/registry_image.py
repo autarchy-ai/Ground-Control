@@ -256,16 +256,48 @@ def imported_fingerprint(output: str) -> str:
     return match.group(1)
 
 
+def _refused(reference: str, error: urllib.error.URLError) -> RegistryError:
+    """Name why the registry would not serve a reference, instead of a traceback."""
+    if isinstance(error, urllib.error.HTTPError):
+        if error.code in {401, 403}:
+            return RegistryError(f"the registry refused {reference} (HTTP {error.code}): the package is "
+                                 "private or does not exist, and a pull sends no credential")
+        if error.code == 404:
+            return RegistryError(f"the registry has no {reference}")
+        return RegistryError(f"the registry failed to serve {reference} (HTTP {error.code})")
+    return RegistryError(f"could not reach the registry for {reference}: {error.reason}")
+
+
+def image_present(config: SandboxConfig, fingerprint: str) -> bool:
+    """Report whether this project already holds the image with this exact fingerprint."""
+    shown = subprocess.run([_INCUS, "image", "info", fingerprint, "--project", config.project],
+                           check=False, capture_output=True, text=True, timeout=_TIMEOUT_SECONDS)
+    return shown.returncode == 0
+
+
 def pull(config: SandboxConfig, reference: str, credential: str | None = None) -> dict[str, str]:
     """Fetch the published template from the registry and import it for this project."""
     registry, repository, tag = parse_reference(reference)
-    token = registry_token(registry, repository, "pull", credential)
-    manifest_body, _ = _request(f"https://{registry}/v2/{repository}/manifests/{tag}", token=token,
-                                headers={"Accept": _MANIFEST_TYPE})
+    try:
+        token = registry_token(registry, repository, "pull", credential)
+        manifest_body, _ = _request(f"https://{registry}/v2/{repository}/manifests/{tag}", token=token,
+                                    headers={"Accept": _MANIFEST_TYPE})
+    except urllib.error.URLError as error:
+        raise _refused(reference, error) from error
     digest, size = layer_descriptor(json.loads(manifest_body))
+    # The artifact is one unified Incus tarball, and Incus names such an image by the
+    # sha256 of that tarball: the layer digest is the fingerprint the import would get.
+    # An image already here is the same bytes, so the download is skipped entirely.
+    fingerprint = digest.removeprefix("sha256:")
+    if image_present(config, fingerprint):
+        return {"schema": "gc.incus-sandbox.template/v1", "reference": reference, "layer": digest,
+                "fingerprint": fingerprint, "image": f"local:{fingerprint}", "status": "already-present"}
     with tempfile.TemporaryDirectory(prefix="gc-incus-registry-") as directory:
         tarball = Path(directory) / "image.tar.gz"
-        _download_blob(registry, repository, token, digest, tarball)
+        try:
+            _download_blob(registry, repository, token, digest, tarball)
+        except urllib.error.URLError as error:
+            raise _refused(reference, error) from error
         # The registry is a transport, not an authority: the artifact must hash to its digest.
         if _digest(tarball) != (digest, size):
             raise RegistryError("downloaded image does not match its digest")
@@ -277,7 +309,7 @@ def pull(config: SandboxConfig, reference: str, credential: str | None = None) -
         raise RegistryError(f"Incus refused the image: {imported.stderr.strip()[:200]}")
     fingerprint = imported_fingerprint(imported.stdout)
     return {"schema": "gc.incus-sandbox.template/v1", "reference": reference, "layer": digest,
-            "fingerprint": fingerprint, "image": f"local:{fingerprint}"}
+            "fingerprint": fingerprint, "image": f"local:{fingerprint}", "status": "imported"}
 
 
 def main(argv: list[str]) -> int:
@@ -292,6 +324,8 @@ def main(argv: list[str]) -> int:
             raise RegistryError("usage: registry-image.py pull [REFERENCE]")
         result = pull(config, argv[1] if len(argv) == 2 else _DEFAULT_REFERENCE)
         print(json.dumps(result, indent=2))
+        if result["status"] == "already-present":
+            print("\nThis template is already imported; nothing was downloaded.", file=sys.stderr)
         print(f"\nPin this template in {_CONFIG_PATH}:\n  \"image\": \"{result['image']}\"", file=sys.stderr)
         return 0
     if len(argv) != 3:
