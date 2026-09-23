@@ -27,9 +27,11 @@ A host without a checkout runs the same programs from the installed package:
 grndctl sandbox setup install
 ```
 
-`grndctl sandbox` is an unprivileged front end. It prints the privileged command
-before running it under `sudo`, and `grndctl sandbox path` shows the directory
-holding the programs so you can read them first.
+`grndctl sandbox` is an unprivileged front end. For setup and template commands
+it prints the privileged command before running it under `sudo`; lifecycle
+verbs reach only the fixed root helpers that setup's sudo rule names.
+`grndctl sandbox path` shows the directory holding the programs so you can read
+them first.
 
 Use `--dry-run` to inspect its fixed resource actions. The installer only
 creates `gc-sandbox` project/profile/pool/bridge resources, a dedicated nftables
@@ -79,6 +81,12 @@ pin. Pass a reference to fetch a different tag. The template contains Git,
 Node.js with npm, `python3`, `tmux`, the GitHub CLI and the `sandbox` user, and
 no credential.
 
+The artifact's digest is also the fingerprint Incus gives the imported image, so
+a pull first asks Incus for that fingerprint. When the template is already
+imported, it downloads nothing and prints the same value to pin. A pull sends no
+credential: a private or missing package fails with a message naming it rather
+than a stack trace.
+
 ### Build one instead
 
 Build locally when you need another base, another architecture, or a template
@@ -126,17 +134,20 @@ credential to pull.
 
 ## Ordinary use
 
+Ground Control has one command. Every sandbox verb is a `grndctl sandbox`
+subcommand; `grndctl sandbox --help` lists them. Upgrading an installation
+removes the standalone `gc-incus-sandbox` command earlier versions installed.
 The only supported lifecycle verbs are:
 
 ```sh
-gc-incus-sandbox create agent-1
-gc-incus-sandbox attach agent-1
-gc-incus-sandbox status agent-1
-gc-incus-sandbox diagnose agent-1
-gc-incus-sandbox stop agent-1
-gc-incus-sandbox start agent-1
-gc-incus-sandbox delete agent-1 --confirm agent-1
-gc-incus-sandbox list
+grndctl sandbox create agent-1
+grndctl sandbox attach agent-1
+grndctl sandbox status agent-1
+grndctl sandbox diagnose agent-1
+grndctl sandbox stop agent-1
+grndctl sandbox start agent-1
+grndctl sandbox delete agent-1 --confirm agent-1
+grndctl sandbox list
 ```
 
 `attach` joins the explicit `gc-task` session created by `task-start`; it never
@@ -144,6 +155,22 @@ creates a session or restores a previous task environment. Detaching the host
 terminal leaves that task session running. The CLI accepts no arbitrary command,
 profile, device, image, mount, or network arguments, and it never retries a
 requested guest operation on the host.
+
+The sandbox provider is Incus, which is also the default. A different provider
+is chosen by name, either per command with a leading switch or for the operator
+in `~/.config/grndctl/config.json` (under `$XDG_CONFIG_HOME` when set):
+
+```sh
+grndctl sandbox --provider incus list
+```
+
+```json
+{"sandbox": {"provider": "incus"}}
+```
+
+The switch wins over the file. The provider set is closed and ships with the
+package: a name outside it is refused before anything runs, and configuration
+never names a program or path. Incus is the only provider today.
 
 Each VM starts with 2 vCPU, 4 GiB RAM, and a 16 GiB root disk. Creation and
 start also reserve host-owned aggregate CPU, memory, disk, image/snapshot, and
@@ -164,10 +191,10 @@ objects only and materializes the same resolved commit in the guest, and it
 needs no guest credentials:
 
 ```sh
-gc-incus-sandbox create agent-1
-gc-incus-sandbox prepare agent-1 bundle "$PWD" HEAD
-gc-incus-sandbox task-start agent-1
-gc-incus-sandbox attach agent-1
+grndctl sandbox create agent-1
+grndctl sandbox prepare agent-1 bundle "$PWD" HEAD
+grndctl sandbox task-start agent-1
+grndctl sandbox attach agent-1
 ```
 
 A bundle carries no remote, so the guest checkout has no `origin`. Add the one
@@ -181,7 +208,7 @@ For a published commit, use the guest-clone form. The guest clones directly and
 checks out the resolved immutable commit:
 
 ```sh
-gc-incus-sandbox prepare agent-1 clone "$PWD" HEAD
+grndctl sandbox prepare agent-1 clone "$PWD" HEAD
 ```
 
 The guest, not the host, reads that repository. For a private repository,
@@ -257,9 +284,9 @@ Source preparation binds the normalized repository and the exact declaration
 digest to the sandbox. Then start and attach to the task explicitly:
 
 ```sh
-gc-incus-sandbox prepare agent-1 bundle "$PWD" HEAD
-gc-incus-sandbox task-start agent-1
-gc-incus-sandbox attach agent-1
+grndctl sandbox prepare agent-1 bundle "$PWD" HEAD
+grndctl sandbox task-start agent-1
+grndctl sandbox attach agent-1
 ```
 
 `task-start` rechecks the operator, active sandbox ownership, source binding,
@@ -276,8 +303,8 @@ Use `task-restart` to stop the complete task session and resolve every reference
 again, or `task-stop` to terminate it without starting another process:
 
 ```sh
-gc-incus-sandbox task-restart agent-1
-gc-incus-sandbox task-stop agent-1
+grndctl sandbox task-restart agent-1
+grndctl sandbox task-stop agent-1
 ```
 
 Replace a provider file atomically to rotate it for the next task process. To
@@ -298,7 +325,7 @@ Guest output stays in the guest. When preparation reports a guest failure, or
 the template is missing a prerequisite, read the reason in the guest:
 
 ```sh
-gc-incus-sandbox attach agent-1
+grndctl sandbox attach agent-1
 cat ~/.gc-transfer/bootstrap.log
 ```
 
@@ -394,8 +421,8 @@ Deleting one guest is a separate, deliberately confirming action. Stop it,
 inspect its private migration result and Git state, then repeat the exact name:
 
 ```sh
-gc-incus-sandbox stop agent-1
-gc-incus-sandbox delete agent-1 --confirm agent-1
+grndctl sandbox stop agent-1
+grndctl sandbox delete agent-1 --confirm agent-1
 ```
 
 Disconnects, timeouts, failed imports, and failed verification never delete a

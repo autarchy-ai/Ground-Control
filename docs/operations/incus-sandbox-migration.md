@@ -16,7 +16,7 @@ Install or upgrade the reviewed sandbox programs and create the destination:
 
 ```sh
 grndctl sandbox setup upgrade
-gc-incus-sandbox create issue-1645
+grndctl sandbox create issue-1645
 ```
 
 The upgrade preserves existing guests and changes the root-owned policy to
@@ -56,16 +56,16 @@ Save an export when retry or offline custody matters:
 
 ```sh
 umask 077
-gc-incus-sandbox export /absolute/source/checkout \
+grndctl sandbox export /absolute/source/checkout \
   < /private/path/migration-request.json \
   > /private/path/task.gcs
-gc-incus-sandbox import issue-1645 < /private/path/task.gcs
+grndctl sandbox import issue-1645 < /private/path/task.gcs
 ```
 
 For a one-shot transfer:
 
 ```sh
-gc-incus-sandbox migrate issue-1645 /absolute/source/checkout \
+grndctl sandbox migrate issue-1645 /absolute/source/checkout \
   < /private/path/migration-request.json
 ```
 
@@ -95,7 +95,7 @@ result or publish the host work merely to transfer it.
 Attach and inspect the guest-private result before switching ownership:
 
 ```sh
-gc-incus-sandbox attach issue-1645
+grndctl sandbox attach issue-1645
 cat ~/.gc-transfer/migration-result.json
 cat ~/.gc-transfer/handoff.md
 git -C ~/workspace status --short --branch
@@ -130,11 +130,11 @@ separate operator decisions.
 ## Daily use and recovery
 
 ```sh
-gc-incus-sandbox attach issue-1645       # direct guest terminal and installed CLIs
-gc-incus-sandbox stop issue-1645         # disk and workspace state persist
-gc-incus-sandbox start issue-1645
-gc-incus-sandbox attach issue-1645
-gc-incus-sandbox delete issue-1645 --confirm issue-1645
+grndctl sandbox attach issue-1645       # direct guest terminal and installed CLIs
+grndctl sandbox stop issue-1645         # disk and workspace state persist
+grndctl sandbox start issue-1645
+grndctl sandbox attach issue-1645
+grndctl sandbox delete issue-1645 --confirm issue-1645
 ```
 
 Never delete on disconnect, timeout, failed import, or failed verification.

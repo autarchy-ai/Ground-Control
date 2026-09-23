@@ -89,6 +89,7 @@ class RegistryTransferTest(unittest.TestCase):
         with patch("tools.incus_sandbox.registry_image.registry_token", return_value="scoped"), \
              patch("tools.incus_sandbox.registry_image._request",
                    return_value=(json.dumps(manifest(digest, len(payload))).encode("utf-8"), {})), \
+             patch("tools.incus_sandbox.registry_image.image_present", return_value=False), \
              patch("tools.incus_sandbox.registry_image._download_blob", side_effect=download), \
              patch("tools.incus_sandbox.registry_image.subprocess.run",
                    return_value=SimpleNamespace(returncode=0, stderr="",
@@ -104,11 +105,42 @@ class RegistryTransferTest(unittest.TestCase):
         with patch("tools.incus_sandbox.registry_image.registry_token", return_value="scoped"), \
              patch("tools.incus_sandbox.registry_image._request",
                    return_value=(json.dumps(manifest()).encode("utf-8"), {})), \
+             patch("tools.incus_sandbox.registry_image.image_present", return_value=False), \
              patch("tools.incus_sandbox.registry_image._download_blob", side_effect=download), \
              patch("tools.incus_sandbox.registry_image.subprocess.run") as run:
             with self.assertRaises(RegistryError):
                 registry_image.pull(config(), "ghcr.io/autarchy-ai/gc-sandbox-template:latest")
         run.assert_not_called()
+
+    def test_a_pull_of_an_image_already_here_downloads_nothing(self) -> None:
+        digest = "sha256:" + "e" * 64
+        with patch("tools.incus_sandbox.registry_image.registry_token", return_value="scoped"), \
+             patch("tools.incus_sandbox.registry_image._request",
+                   return_value=(json.dumps(manifest(digest, 905)).encode("utf-8"), {})), \
+             patch("tools.incus_sandbox.registry_image._download_blob") as download, \
+             patch("tools.incus_sandbox.registry_image.subprocess.run",
+                   return_value=SimpleNamespace(returncode=0, stdout="", stderr="")) as run:
+            result = registry_image.pull(config(), "ghcr.io/autarchy-ai/gc-sandbox-template:latest")
+        download.assert_not_called()
+        # The only Incus call asks about the layer's own fingerprint; nothing is imported.
+        self.assertEqual(run.call_args.args[0],
+                         ["/usr/bin/incus", "image", "info", "e" * 64, "--project", "gc-sandbox"])
+        self.assertEqual((result["image"], result["status"]), (f"local:{'e' * 64}", "already-present"))
+
+    def test_a_refused_or_unreachable_registry_is_named_rather_than_raised_raw(self) -> None:
+        reference = "ghcr.io/autarchy-ai/gc-sandbox-template:latest"
+        cases = (
+            (registry_image.urllib.error.HTTPError("u", 401, "Unauthorized", {}, None), "private or does not exist"),
+            (registry_image.urllib.error.HTTPError("u", 404, "Not Found", {}, None), "has no"),
+            (registry_image.urllib.error.HTTPError("u", 502, "Bad Gateway", {}, None), "HTTP 502"),
+            (registry_image.urllib.error.URLError("no route"), "could not reach"),
+        )
+        for error, message in cases:
+            with patch("tools.incus_sandbox.registry_image._request", side_effect=error), \
+                 patch("tools.incus_sandbox.registry_image.subprocess.run") as run:
+                with self.assertRaisesRegex(RegistryError, message):
+                    registry_image.pull(config(), reference)
+            run.assert_not_called()
 
     def test_a_push_uploads_the_exported_image_and_its_manifest(self) -> None:
         requests: list[tuple[str, str]] = []
@@ -213,6 +245,7 @@ class ArtifactNormalizationTest(unittest.TestCase):
         with patch("tools.incus_sandbox.registry_image.registry_token", return_value="scoped"), \
              patch("tools.incus_sandbox.registry_image._request",
                    return_value=(json.dumps(manifest(digest, len(payload))).encode("utf-8"), {})), \
+             patch("tools.incus_sandbox.registry_image.image_present", return_value=False), \
              patch("tools.incus_sandbox.registry_image._download_blob", side_effect=download), \
              patch("tools.incus_sandbox.registry_image.subprocess.run",
                    return_value=SimpleNamespace(returncode=1, stdout="",
@@ -234,13 +267,17 @@ class RegistryEntryPointTest(unittest.TestCase):
 
     def test_a_pull_reports_the_value_to_pin_and_a_push_reads_its_credential_from_stdin(self) -> None:
         pulled = {"schema": "gc.incus-sandbox.template/v1", "reference": "ghcr.io/owner/name:latest",
-                  "layer": "sha256:" + "a" * 64, "fingerprint": "c" * 64, "image": f"local:{'c' * 64}"}
-        with patch("tools.incus_sandbox.registry_image.os.geteuid", return_value=0), \
-             patch("tools.incus_sandbox.registry_image.load_config", return_value=config()), \
-             patch("tools.incus_sandbox.registry_image.pull", return_value=pulled), \
-             patch("sys.stdout", new_callable=io.StringIO) as reported:
-            self.assertEqual(registry_image.main(["pull"]), 0)
-        self.assertIn(f"local:{'c' * 64}", reported.getvalue())
+                  "layer": "sha256:" + "a" * 64, "fingerprint": "c" * 64, "image": f"local:{'c' * 64}",
+                  "status": "imported"}
+        for status, note in (("imported", ""), ("already-present", "nothing was downloaded")):
+            with patch("tools.incus_sandbox.registry_image.os.geteuid", return_value=0), \
+                 patch("tools.incus_sandbox.registry_image.load_config", return_value=config()), \
+                 patch("tools.incus_sandbox.registry_image.pull", return_value={**pulled, "status": status}), \
+                 patch("sys.stderr", new_callable=io.StringIO) as explained, \
+                 patch("sys.stdout", new_callable=io.StringIO) as reported:
+                self.assertEqual(registry_image.main(["pull"]), 0)
+            self.assertIn(f"local:{'c' * 64}", reported.getvalue())
+            self.assertIn(note, explained.getvalue())
         with patch("tools.incus_sandbox.registry_image.os.geteuid", return_value=0), \
              patch("tools.incus_sandbox.registry_image.load_config", return_value=config()), \
              patch("sys.stdin", io.StringIO("")):
