@@ -11,8 +11,9 @@ Maintainers who opt into Ground Control use the project id, workflow commands,
 SonarCloud settings, and plan rules in `.ground-control.yaml` at repo root
 (with larger rule files under `.gc/`). Ground Control agents read it via the
 `gc_get_repo_ground_control_context` MCP tool, which returns the full workflow
-config in a single call. The repository does not register that MCP server in
-its tracked `.mcp.json`; maintainers configure it in their own agent tooling.
+config in a single call. `.mcp.json` is per-developer and git-ignored; copy
+`.mcp.json.example` to register the Ground Control, citation, and SonarQube
+servers.
 
 ## Workflow Notes
 

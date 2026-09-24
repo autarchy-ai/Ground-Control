@@ -37,10 +37,10 @@ make mcp-test                     # node --test suite (primary gate)
 make policy                       # repo-native guardrails + MCP lint + Vale
 ```
 
-To try your changes through Ground Control, opt in explicitly: `npm link` from
-`mcp/ground-control`, then register `grndctl mcp` in your own agent's local or
-user configuration. Do not commit that personal MCP registration to the
-repository.
+To try your changes through Ground Control, `npm link` from `mcp/ground-control`
+and copy `.mcp.json.example` to `.mcp.json`. That file registers the Ground
+Control, citation, and SonarQube MCP servers; it is per-developer and
+git-ignored, so edit it freely.
 
 ### Makefile targets
 

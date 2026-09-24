@@ -737,8 +737,8 @@ Ground-Control repos also ship a project wrapper at `.cursor/skills/implement/SK
 **Prerequisites** (same orchestrator dependencies as Claude Code / Codex):
 
 - `make ground-control-mcp-install` once on the host
-- A local or user-level MCP registration that launches `grndctl mcp`; the source
-  repository deliberately does not track this personal registration
+- A `ground-control` entry in `.mcp.json` that launches `grndctl mcp` (copy
+  `.mcp.json.example`; `.mcp.json` is per-developer and git-ignored)
 - `gh` authenticated to the repo
 - Codex CLI on `PATH` (architecture preflight and pre-push review MCP tools)
 - Commit signing configured for non-interactive commits

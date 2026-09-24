@@ -7,9 +7,8 @@ a contract is stated once and read in one place.
 The workflow is optional maintainer automation, including in the Ground Control
 source repository. Contributors can use ordinary Git, GitHub, and the
 repo-native build and test commands without installing or running Ground
-Control. Maintainers who use the workflow register its MCP server in their own
-agent configuration; the source repository does not activate it in tracked
-`.mcp.json`.
+Control. MCP server registrations live in `.mcp.json`, which is per-developer
+and git-ignored; copy `.mcp.json.example` to register them.
 
 | Question | Reference |
 |----------|-----------|
