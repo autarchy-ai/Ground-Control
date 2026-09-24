@@ -395,21 +395,18 @@ def _resolve_pr_body(args: argparse.Namespace) -> str | None:
     """Resolve the PR body string from CLI args / environment, in priority order.
 
     1. ``--pr-body-file`` — local pre-push hook driver.
-    2. ``--event-path`` or ``GITHUB_EVENT_PATH`` — CI driver.
-    3. ``--pr-number`` — fetched via ``gh pr view <n> --json body``.
+    2. ``--pr-number`` — the live body, fetched via ``gh pr view <n> --json body``.
+    3. ``--event-path`` or ``GITHUB_EVENT_PATH`` — the body captured when the event fired.
+
+    The live body outranks the event payload because a workflow re-run replays
+    the original payload: a body corrected after the PR opened would otherwise
+    keep failing on the stale copy.
 
     Returns ``None`` when no source is configured (the check is skipped).
     """
-    body = None
     if args.pr_body_file:
-        body = safe_cli_path(args.pr_body_file).read_text(encoding="utf-8")
-    else:
-        event_path = args.event_path or os.getenv("GITHUB_EVENT_PATH")
-        if event_path:
-            event = json.loads(safe_cli_path(event_path).read_text(encoding="utf-8"))
-            pull_request = event.get("pull_request") or {}
-            body = pull_request.get("body") or ""
-    if body is None and args.pr_number is not None:
+        return safe_cli_path(args.pr_body_file).read_text(encoding="utf-8")
+    if args.pr_number is not None:
         # str(int(...)) forces the CLI value to an integer literal so it cannot
         # smuggle an option or metacharacter into the gh argv (S8705).
         result = subprocess.run(
@@ -418,8 +415,13 @@ def _resolve_pr_body(args: argparse.Namespace) -> str | None:
             capture_output=True,
             text=True,
         )
-        body = result.stdout
-    return body
+        return result.stdout
+    event_path = args.event_path or os.getenv("GITHUB_EVENT_PATH")
+    if event_path:
+        event = json.loads(safe_cli_path(event_path).read_text(encoding="utf-8"))
+        pull_request = event.get("pull_request") or {}
+        return pull_request.get("body") or ""
+    return None
 
 
 # Automation PRs that carry no single requirement/traceability of their own, so the

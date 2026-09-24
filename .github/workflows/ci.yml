@@ -75,6 +75,8 @@ jobs:
         run: make mcp-lint
       - name: Repo policy checks
         if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: >
           python3 bin/policy
           --base "origin/${{ github.base_ref }}"
