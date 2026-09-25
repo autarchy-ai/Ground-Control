@@ -1,5 +1,5 @@
 {
-  "schema": "gc.incus-sandbox/v3",
+  "schema": "gc.incus-sandbox/v4",
   "project": "gc-sandbox",
   "profile": "gc-sandbox-default",
   "pool": "gc-sandbox-pool",
@@ -28,5 +28,6 @@
   "task_environment": {
     "max_value_bytes": 16384,
     "repositories": {}
-  }
+  },
+  "deadline_seconds": {}
 }

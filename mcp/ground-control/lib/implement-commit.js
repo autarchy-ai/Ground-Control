@@ -11,7 +11,7 @@
 // caller can route it to a signing repair instead of a generic commit repair.
 
 import { runImplementGit } from "./codex-workflow-2.js";
-import { execFile } from "./runtime-primitives.js";
+import { execFileBounded } from "./bounded-exec.js";
 
 export const IMPLEMENT_COMMIT_SIGNING_FAILED = "implement_commit_signing_failed";
 
@@ -38,7 +38,7 @@ async function hostRequiresCommitSigning(repoRoot, commandRunner) {
 // Run `git commit <args>` through the implement boundary. Resolves `{ ok: true }`
 // on success, resolves a bounded envelope when a required signature could not be
 // produced (no commit was created), and rethrows every other failure unchanged.
-export async function runImplementCommit(repoRoot, args, commandRunner = execFile) {
+export async function runImplementCommit(repoRoot, args, commandRunner = execFileBounded) {
   try {
     await runImplementGit(repoRoot, ["commit", ...args], commandRunner, { LC_ALL: "C" });
     return { ok: true };

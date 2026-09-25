@@ -140,9 +140,11 @@ install_files() {
     return 64
   fi
   run install -d -m 0750 "$INSTALL_ROOT" "$STATE_ROOT" /var/log/gc-incus-sandbox
+  run install -m 0640 "$PAYLOAD_ROOT/allocations.py" "$INSTALL_ROOT/allocations.py"
   run install -m 0640 "$PAYLOAD_ROOT/config.py" "$INSTALL_ROOT/config.py"
   run install -m 0640 "$PAYLOAD_ROOT/events.py" "$INSTALL_ROOT/events.py"
   run install -m 0640 "$PAYLOAD_ROOT/observations.py" "$INSTALL_ROOT/observations.py"
+  run install -m 0640 "$PAYLOAD_ROOT/owned_process.py" "$INSTALL_ROOT/owned_process.py"
   run install -m 0640 "$PAYLOAD_ROOT/repository_environment.py" "$INSTALL_ROOT/repository_environment.py"
   run install -m 0750 "$PAYLOAD_ROOT/task_environment.py" "$INSTALL_ROOT/task_environment.py"
   run install -m 0644 "$PAYLOAD_ROOT/task_launcher.py" "$INSTALL_ROOT/task-launcher.py"
@@ -258,7 +260,7 @@ refresh() {
 upgrade() {
   # Replace only reviewed sandbox programs and migrate the closed root policy;
   # existing guests, allocations, storage, and network resources remain intact.
-  "$dry_run" && { echo "upgrade sandbox programs and gc.incus-sandbox config to v3"; return 0; }
+  "$dry_run" && { echo "upgrade sandbox programs and gc.incus-sandbox config to v4"; return 0; }
   require_program_ownership_record
   install_files true
   /usr/bin/python3 "$INSTALL_ROOT/config.py" upgrade "$CONFIG_ROOT/config.json"

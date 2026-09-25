@@ -20,9 +20,11 @@ from pathlib import Path
 
 if __package__:
     from .config import SandboxConfig, load_config
+    from .owned_process import run_owned
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from config import SandboxConfig, load_config
+    from owned_process import run_owned
 
 
 class RegistryError(RuntimeError):
@@ -222,8 +224,8 @@ def push(config: SandboxConfig, reference: str, fingerprint: str, credential: st
     token = registry_token(registry, repository, "pull,push", credential)
     with tempfile.TemporaryDirectory(prefix="gc-incus-registry-") as directory:
         export = Path(directory) / "image"
-        subprocess.run([_INCUS, "image", "export", fingerprint, str(export), "--project", config.project],
-                       check=True, timeout=_TIMEOUT_SECONDS)
+        run_owned([_INCUS, "image", "export", fingerprint, str(export), "--project", config.project],
+                  deadline_seconds=config.deadlines.launch)
         exported = Path(f"{export}.tar.gz")
         if not exported.exists():
             raise RegistryError("Incus did not export a unified image tarball")
@@ -276,8 +278,8 @@ def _template(reference: str, layer: str, fingerprint: str, status: str) -> dict
 
 def image_present(config: SandboxConfig, fingerprint: str) -> bool:
     """Report whether this project already holds the image with this exact fingerprint."""
-    shown = subprocess.run([_INCUS, "image", "info", fingerprint, "--project", config.project],
-                           check=False, capture_output=True, text=True, timeout=_TIMEOUT_SECONDS)
+    shown = run_owned([_INCUS, "image", "info", fingerprint, "--project", config.project],
+                      deadline_seconds=config.deadlines.query, streams="capture", check=False)
     return shown.returncode == 0
 
 
@@ -306,9 +308,9 @@ def pull(config: SandboxConfig, reference: str, credential: str | None = None) -
         # The registry is a transport, not an authority: the artifact must hash to its digest.
         if _digest(tarball) != (digest, size):
             raise RegistryError("downloaded image does not match its digest")
-        imported = subprocess.run([_INCUS, "image", "import", str(tarball), "--project", config.project,
-                                   "--alias", _ALIAS], check=False, capture_output=True, text=True,
-                                  timeout=_TIMEOUT_SECONDS)
+        imported = run_owned([_INCUS, "image", "import", str(tarball), "--project", config.project,
+                              "--alias", _ALIAS], deadline_seconds=config.deadlines.launch, streams="capture",
+                             check=False)
     if imported.returncode != 0:
         # Incus' own reason is the only actionable detail; keep it, bounded.
         raise RegistryError(f"Incus refused the image: {imported.stderr.strip()[:200]}")

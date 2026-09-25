@@ -248,7 +248,7 @@ async function stageCommitAndPushFeature(args, deps, { repoRoot, branchName, con
       return failure(action, "implement_mechanical_nothing_to_commit", "No staged content changes are available to publish", "inspect_the_change_before_publishing");
     }
     try {
-      await deps.preCommit(repoRoot, deps.execFile, context, authorized.requirementUid);
+      await deps.preCommit(repoRoot, context, authorized.requirementUid);
     } catch (error) {
       return commandFailure(action, "precommit", error);
     }

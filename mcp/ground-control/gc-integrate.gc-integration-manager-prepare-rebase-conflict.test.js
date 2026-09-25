@@ -171,6 +171,7 @@ describe("gc_integration_manager — prepare completion gate failure", () => {
     const lockFake = makeLockFake();
     const deps = {
       execFile: execFileFake,
+      runGate: execFileFake,
       execFileCalls: calls,
       resolveWorkspaceRoot: () => "/some/repo",
     ensureGitRepo: async (p) => p,

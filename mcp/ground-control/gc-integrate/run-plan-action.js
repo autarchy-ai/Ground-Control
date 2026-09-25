@@ -97,21 +97,22 @@ function preparePreflight(pr, repoRoot, worktreePath) {
 // The repository's configured completion gate, run inside the worktree.
 // Returns a blocked record on a non-zero exit, or null when it passes or when
 // the repository configures no gate.
-async function runCompletionGate(pr, cfg, worktreePath, execFile) {
+async function runCompletionGate(pr, cfg, worktreePath, runGate) {
   const completionCommand = cfg?.workflow?.completion_command;
   if (!completionCommand) return null;
   try {
     // The command string is repo-authored config, not user input.
-    // execFile("bash", ["-c", ...]) is the deliberately-excepted form
+    // runGate("bash", ["-c", ...]) is the deliberately-excepted form
     // documented in the dispatch spec: argv is exactly [bash, -c, <cmd>].
-    await execFile("bash", ["-c", completionCommand], { cwd: worktreePath });
+    await runGate("bash", ["-c", completionCommand], { cwd: worktreePath });
     return null;
   } catch (e) {
+    const cause = e.code === "ETIMEDOUT" ? "Completion gate timed out" : "Completion gate exited non-zero";
     return {
       pr_number: pr.pr_number,
       outcome: "blocked",
       failure_class: "completion_gate_failed",
-      summary: safeSummary(`Completion gate exited non-zero: ${e.message ?? String(e)}`),
+      summary: safeSummary(`${cause}: ${e.message ?? String(e)}`),
       next_action: "fix_completion_gate",
     };
   }
@@ -407,7 +408,7 @@ async function preparePullRequestBranch(pr, ctx, deps) {
     const rebaseFailure = await rebaseOntoBase(pr, tmpRef, worktreePath, execFile);
     if (rebaseFailure) return rebaseFailure;
 
-    const gateFailure = await runCompletionGate(pr, cfg, worktreePath, execFile);
+    const gateFailure = await runCompletionGate(pr, cfg, worktreePath, deps.runGate);
     if (gateFailure) return gateFailure;
 
     // Push BEFORE the CI/Sonar watchers so they observe the rebased commit.

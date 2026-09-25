@@ -7,6 +7,15 @@ import re
 import subprocess
 import sys
 
+from pathlib import Path
+
+if __package__:
+    from .config import load_config
+    from .owned_process import run_owned
+else:
+    from config import load_config
+    from owned_process import run_owned
+
 
 _NAME = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
 METADATA_CANARY = str(ipaddress.IPv4Address(0xA9FEA9FE))
@@ -15,6 +24,7 @@ PRIVATE_CANARY = str(ipaddress.IPv4Address(0x0A4A0002))
 # firewall rather than the guest's own loopback stack.
 IPV6_CANARY = str(ipaddress.IPv6Address(0x26064700470000000000000000001111))
 _PROJECT = "gc-sandbox"
+_CONFIG_PATH = Path("/etc/gc-incus-sandbox/config.json")
 
 
 def _name(value: str) -> str:
@@ -61,11 +71,16 @@ def main(argv: list[str]) -> int:
     sandbox, host_address, sibling = argv
     # The sibling's own address is the meaningful guest-to-guest canary, and reading it
     # also proves the sibling exists.
-    listed = subprocess.run(sibling_address_command(sibling), check=True, capture_output=True, text=True)
+    # The probe runs as root; its deadline is the root-owned query policy, never an argument.
+    deadline = load_config(_CONFIG_PATH).deadlines.query
+    listed = run_owned(sibling_address_command(sibling), deadline_seconds=deadline, streams="capture")
     commands = boundary_probe_commands(sandbox, host_address, sibling_address(listed.stdout))
-    result = subprocess.run(commands[0], check=False)
     # The guest exits non-zero when any prohibited target answered, and a probe that
-    # could not run at all is a failed boundary check rather than a pass.
+    # could not run at all, or did not finish, is a failed boundary check rather than a pass.
+    try:
+        result = run_owned(commands[0], deadline_seconds=deadline, check=False)
+    except subprocess.TimeoutExpired:
+        return 1
     return 0 if result.returncode == 0 else 1
 
 

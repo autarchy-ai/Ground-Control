@@ -252,6 +252,37 @@ address, IPv4, and IPv6 canaries; resource-bound and host-responsiveness probes;
 stop/start persistence; failed boot and denied-admission event assertions; and
 synthetic secret/argv canaries proving the event stream carries none of either.
 
+### Bounded privileged execution (issue #1720)
+
+Every fixed-argv Incus call the root helpers make runs through one owned-process
+primitive, `tools/incus_sandbox/owned_process.py`. Each call leads its own POSIX
+session and has a finite wall deadline. On timeout, on a relayed termination
+signal, or when the leader exits, the whole group is terminated with `SIGTERM`
+and then `SIGKILL`, and it is confirmed empty before the allocation lock or
+per-sandbox lock is released. If a process survives even `SIGKILL`, the call
+fails with a cleanup error instead of reporting success or an ordinary timeout.
+The MCP server's bounded runners follow the same rule. A direct-child `subprocess.run(timeout=...)` does
+not meet this contract. There is no tested equivalent outside POSIX, so the
+primitive fails closed there.
+
+The deadlines are root-owned policy. Schema `gc.incus-sandbox/v4` adds
+`deadline_seconds`, which overrides the finite built-in defaults for a closed
+set of operation classes (`query`, `lifecycle`, `launch`, `transfer`, `task`).
+Each override is bounded to 14400 seconds, no value means unlimited, and no
+caller, packet, task frame, or repository input can select a deadline. The
+interactive `attach` session is the only exemption, because it holds no lock and
+needs the operator's controlling terminal.
+
+A timeout is a failure recorded with the `command_timeout` error code, and the
+existing domain state carries the recovery. A timed-out fresh launch keeps its
+reservation unless the instance is deleted or proven absent. A delete counts an
+instance proven absent as deleted, so a reservation whose instance never
+materialized can be cleared. A task start writes its redacted task record before
+dispatch. After a failed start, the record is removed only when a stop is
+confirmed, so source replacement and lifecycle stops keep treating a task the
+guest may still be running as active. A transfer keeps its already-cleared binding. The design adds
+no PID registry, no background reaper, and no new lease schema.
+
 ## Consequences
 
 ### Positive

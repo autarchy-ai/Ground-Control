@@ -1,8 +1,6 @@
 // Split from gc-integrate.js under issue #1467 for the 500-LOC limit
 // (docs/CODING_STANDARDS.md). Declaration bodies are unchanged.
 
-import { execFile as execFileCb } from "node:child_process";
-import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { authorizedWorkspaceRoot } from "./workspace-binding.js";
@@ -16,8 +14,8 @@ import {
   normalizeIntegrationManagerConfig,
   parseGroundControlYaml,
 } from "../lib.js";
-
-const execFileAsync = promisify(execFileCb);export // ---------------------------------------------------------------------------
+import { execFileBounded, runBoundedGateCommand } from "../lib/bounded-exec.js";
+export // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -63,11 +61,19 @@ export const GC_INTEGRATION_MANAGER_DESCRIPTION =
 // ---------------------------------------------------------------------------
 
 /**
- * Production execFile wrapper: promisified child_process.execFile.
- * Tests replace this with a fake that records argv calls.
+ * Production execFile wrapper for fixed Git/GitHub argv. The run holds the
+ * integration lock, so every call has the server-owned command deadline and
+ * reaps its process tree (issue #1720). Tests replace this with a fake that
+ * records argv calls.
  */
 async function defaultExecFile(file, argv, options) {
-  return execFileAsync(file, argv, options);
+  return execFileBounded(file, argv, options);
+}export /**
+ * Production runner for the repository's completion gate: the gate deadline,
+ * process-tree reaping, and a bounded output tail (issue #1720).
+ */
+async function defaultRunGate(file, argv, options) {
+  return runBoundedGateCommand(file, argv, options);
 }export /**
  * Read the .ground-control.yaml text from the repo root.  Throws with
  * `code: "ENOENT"` when the file is absent (mirrors fs.readFileSync).

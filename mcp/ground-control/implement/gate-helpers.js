@@ -6,7 +6,8 @@
 import { currentPickupLane, detectSensitiveBodyContent, extractInScopeRequirementUids, getAuthenticatedGitHubLogin, requestedRequirementUidAuthorization } from "../lib.js";
 import { z } from "zod";
 
-export { execFile as execFileAsync } from "../lib/runtime-primitives.js";
+// Every mechanical command runs under the server-owned command deadline (issue #1720).
+export { execFileBounded as execFileAsync } from "../lib/bounded-exec.js";
 export const requirementShape = z.object({
   uid: z.string().min(1),
   status_intent: z.string().min(1).optional(),

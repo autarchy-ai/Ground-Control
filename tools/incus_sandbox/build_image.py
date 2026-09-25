@@ -15,9 +15,11 @@ from pathlib import Path
 
 if __package__:
     from .config import SandboxConfig, load_config
+    from .owned_process import run_owned
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from config import SandboxConfig, load_config
+    from owned_process import run_owned
 
 
 class BuildError(RuntimeError):
@@ -31,8 +33,7 @@ _FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 _CONFIG_PATH = Path("/etc/gc-incus-sandbox/config.json")
 _DEFAULT_ALIAS = "gc-sandbox-template"
 _AGENT_TIMEOUT_SECONDS = 180
-_BUILD_TIMEOUT_SECONDS = 1800
-_QUERY_TIMEOUT_SECONDS = 300
+_AGENT_RETRY_SECONDS = 3
 # The template's tooling is pinned rather than tracked, so a rebuild produces the
 # same guest surface until this file changes.
 _GH_VERSION = "2.101.0"
@@ -142,46 +143,50 @@ def launch_reference(base: str, fingerprint: str, cached: bool = False) -> str:
     return f"{remote}{fingerprint}"
 
 
+def _query(config: SandboxConfig, argv: list[str],
+           runner: Callable[..., subprocess.CompletedProcess[str]] | None = None) -> str:
+    """Run one fixed Incus query under the query deadline and return its output."""
+    return (runner or run_owned)(argv, deadline_seconds=config.deadlines.query, streams="capture").stdout
+
+
 def cached_locally(config: SandboxConfig, fingerprint: str,
                    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None) -> bool:
     """Report whether the resolved base already sits in this project's image store."""
-    result = (runner or subprocess.run)(
-                   [_INCUS, "image", "list", fingerprint, "--project", config.project, "--format", "json"],
-                    check=True, capture_output=True, text=True, timeout=_QUERY_TIMEOUT_SECONDS)
-    return bool(json.loads(result.stdout))
+    return bool(json.loads(_query(
+        config, [_INCUS, "image", "list", fingerprint, "--project", config.project, "--format", "json"], runner)))
 
 
 def resolve_base(config: SandboxConfig, base: str,
                  runner: Callable[..., subprocess.CompletedProcess[str]] | None = None) -> str:
     """Resolve the base reference to the immutable fingerprint the build starts from."""
-    result = (runner or subprocess.run)(
-                   [_INCUS, "image", "list", base, "--project", config.project, "--format", "json"],
-                    check=True, capture_output=True, text=True, timeout=_QUERY_TIMEOUT_SECONDS)
-    return virtual_machine_image(json.loads(result.stdout), platform.machine())
-
-
-def _run(argv: list[str], timeout: int = _BUILD_TIMEOUT_SECONDS) -> None:
-    """Run one fixed build command with its output in front of the operator."""
-    subprocess.run(argv, check=True, timeout=timeout)
+    listed = _query(config, [_INCUS, "image", "list", base, "--project", config.project, "--format", "json"],
+                    runner)
+    return virtual_machine_image(json.loads(listed), platform.machine())
 
 
 def _await_agent(config: SandboxConfig, name: str) -> None:
-    """Wait for the guest agent before provisioning, rather than failing on a race."""
+    """Wait for the guest agent before provisioning, rather than failing on a race.
+
+    Each probe is bounded by whatever remains of the wait, so the outer deadline also
+    ends a probe that hangs rather than waiting on it forever.
+    """
     deadline = time.monotonic() + _AGENT_TIMEOUT_SECONDS
     probe = [_INCUS, "exec", name, "--project", config.project, "--", "true"]
-    while time.monotonic() < deadline:
-        if subprocess.run(probe, check=False, stdout=subprocess.DEVNULL,
-                          stderr=subprocess.DEVNULL).returncode == 0:
-            return
-        time.sleep(3)
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            if run_owned(probe, deadline_seconds=min(config.deadlines.query, remaining), streams="discard",
+                         check=False).returncode == 0:
+                return
+        except subprocess.TimeoutExpired:
+            pass
+        time.sleep(min(_AGENT_RETRY_SECONDS, max(0.0, deadline - time.monotonic())))
     raise BuildError("build guest agent did not become available")
 
 
 def _require_free_alias(config: SandboxConfig, alias: str) -> None:
     """Refuse to replace an existing template rather than deleting one in use."""
-    existing = subprocess.run([_INCUS, "image", "alias", "list", "--project", config.project,
-                               "--format", "csv"], check=True, capture_output=True, text=True)
-    if any(line.split(",")[0] == alias for line in existing.stdout.splitlines()):
+    listed = _query(config, [_INCUS, "image", "alias", "list", "--project", config.project, "--format", "csv"])
+    if any(line.split(",")[0] == alias for line in listed.splitlines()):
         raise BuildError(f"image alias {alias} exists; remove it before rebuilding the template")
 
 
@@ -191,16 +196,17 @@ def build(config: SandboxConfig, base: str, alias: str) -> dict[str, str]:
     resolved = resolve_base(config, base)
     name = f"gc-template-build-{int(time.time())}"
     launched = launch_reference(base, resolved, cached_locally(config, resolved))
-    _run(launch_command(config, launched, name))
+    # Build commands keep their output in front of the operator.
+    run_owned(launch_command(config, launched, name), deadline_seconds=config.deadlines.launch)
     try:
         _await_agent(config, name)
-        _run(provision_command(config, name))
-        _run([_INCUS, "stop", name, "--project", config.project])
-        published = subprocess.run(publish_command(config, name, alias), check=True,
-                                   capture_output=True, text=True, timeout=_BUILD_TIMEOUT_SECONDS)
+        run_owned(provision_command(config, name), deadline_seconds=config.deadlines.launch)
+        run_owned([_INCUS, "stop", name, "--project", config.project], deadline_seconds=config.deadlines.lifecycle)
+        published = run_owned(publish_command(config, name, alias), deadline_seconds=config.deadlines.launch,
+                              streams="capture")
     finally:
-        subprocess.run([_INCUS, "delete", name, "--force", "--project", config.project],
-                       check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        run_owned([_INCUS, "delete", name, "--force", "--project", config.project],
+                  deadline_seconds=config.deadlines.lifecycle, streams="discard", check=False)
     fingerprint = fingerprint_from(published.stdout)
     return {"schema": "gc.incus-sandbox.template/v1", "base": resolved,
             "fingerprint": fingerprint, "alias": alias, "image": f"local:{fingerprint}"}

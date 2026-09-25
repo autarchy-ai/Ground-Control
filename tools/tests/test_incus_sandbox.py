@@ -14,7 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from tools.incus_sandbox.config import ConfigError, load_config
+from tools.incus_sandbox.config import DEFAULT_DEADLINES, ConfigError, load_config
 from tools.incus_sandbox.events import EventWriter
 from tools.incus_sandbox.helper import AdmissionError, LifecycleHelper, UsageError
 from tools.incus_sandbox.observations import observation
@@ -64,7 +64,7 @@ class SandboxTestCase(unittest.TestCase):
                                   expected_uid=os.getuid())
         self.helper = LifecycleHelper(
             self.config,
-            runner=lambda argv: self.commands.append(argv) or {"returncode": 0},
+            runner=lambda argv, operation: self.commands.append(argv) or {"returncode": 0},
             event_writer=self.writer,
             observer=lambda: {"memory_mib": 16384, "disk_gib": 256, "fresh": True},
             network_checker=lambda config: True,
@@ -171,7 +171,7 @@ class LifecycleBoundaryTest(SandboxTestCase):
 
     def test_stale_or_insufficient_observations_deny_admission_before_incus_runs(self) -> None:
         stale = LifecycleHelper(
-            self.config, runner=lambda argv: self.commands.append(argv), event_writer=self.writer,
+            self.config, runner=lambda argv, operation: self.commands.append(argv), event_writer=self.writer,
             observer=lambda: {"memory_mib": 99999, "disk_gib": 99999, "fresh": False},
             network_checker=lambda config: True,
         )
@@ -191,7 +191,7 @@ class LifecycleBoundaryTest(SandboxTestCase):
         self.assertEqual(self.commands, [])
 
     def test_failure_is_recorded_without_child_output_or_secret_canary(self) -> None:
-        def failing(argv: list[str]) -> dict[str, int]:
+        def failing(argv: list[str], operation: str) -> dict[str, int]:
             raise RuntimeError("secret-canary raw argv and terminal transcript")
 
         helper = LifecycleHelper(self.config, runner=failing, event_writer=self.writer,
@@ -207,7 +207,7 @@ class LifecycleBoundaryTest(SandboxTestCase):
     def test_failed_initial_create_releases_the_reservation(self) -> None:
         calls = 0
 
-        def failing_launch(argv: list[str]) -> dict[str, int]:
+        def failing_launch(argv: list[str], operation: str) -> dict[str, int]:
             nonlocal calls
             calls += 1
             if calls == 1:
@@ -277,7 +277,7 @@ class LifecycleBoundaryTest(SandboxTestCase):
         self.assertGreaterEqual(int(observed["disk_gib"]), 0)
 
     def test_network_address_drift_denies_new_vm_admission(self) -> None:
-        helper = LifecycleHelper(self.config, runner=lambda argv: self.commands.append(argv), event_writer=self.writer,
+        helper = LifecycleHelper(self.config, runner=lambda argv, operation: self.commands.append(argv), event_writer=self.writer,
                                  observer=lambda: {"memory_mib": 16000, "disk_gib": 256, "fresh": True},
                                  network_checker=lambda config: False)
         with self.assertRaises(AdmissionError):
@@ -286,7 +286,7 @@ class LifecycleBoundaryTest(SandboxTestCase):
 
     def test_lifecycle_operations_reject_a_different_operator_before_incus(self) -> None:
         self.helper.create("agent-1")
-        other = LifecycleHelper(self.config, runner=lambda argv: self.commands.append(argv), event_writer=self.writer,
+        other = LifecycleHelper(self.config, runner=lambda argv, operation: self.commands.append(argv), event_writer=self.writer,
                                 observer=lambda: {"memory_mib": 16000, "disk_gib": 256, "fresh": True},
                                 network_checker=lambda config: True, caller_uid=os.getuid() + 1)
         with self.assertRaises(UsageError):
@@ -328,11 +328,8 @@ class LifecycleBoundaryTest(SandboxTestCase):
 
     def test_status_query_emits_only_the_normalized_document(self) -> None:
         self.helper.create("agent-1")
-        responses = iter([
-            SimpleNamespace(stdout=json.dumps({"status": "Running"})),
-            SimpleNamespace(stdout=json.dumps({"cpu": {"usage": 7}})),
-        ])
-        with patch("tools.incus_sandbox.helper.subprocess.run", side_effect=lambda *args, **kwargs: next(responses)):
+        responses = iter([json.dumps({"status": "Running"}), json.dumps({"cpu": {"usage": 7}})])
+        with patch("tools.incus_sandbox.helper.capture", side_effect=lambda *args, **kwargs: next(responses)):
             self.helper.status("agent-1")
         record = json.loads(self.config.event_log.read_text(encoding="utf-8").splitlines()[-1])
         self.assertEqual(record["action"], "status")
@@ -380,7 +377,7 @@ class EventConcurrencyTest(SandboxTestCase):
 class LifecycleTransitionTest(SandboxTestCase):
     def _failing_runner(self, failing: str):
         """Return a runner that fails the first command containing the given verb."""
-        def runner(argv: list[str]) -> dict[str, int]:
+        def runner(argv: list[str], operation: str) -> dict[str, int]:
             self.commands.append(argv)
             if failing in argv:
                 raise subprocess.CalledProcessError(1, argv)
@@ -420,7 +417,7 @@ class LifecycleTransitionTest(SandboxTestCase):
             self.helper.start("agent-1")
         records = json.loads((self.root / "state" / "allocations.json").read_text(encoding="utf-8"))
         self.assertFalse(records["agent-1"]["active"])
-        self.helper.runner = lambda argv: self.commands.append(argv) or {"returncode": 0}
+        self.helper.runner = lambda argv, operation: self.commands.append(argv) or {"returncode": 0}
         self.helper.start("agent-1")
 
     def test_start_refuses_a_sandbox_this_operator_never_created(self) -> None:
@@ -444,7 +441,8 @@ class BoundaryProbeTest(unittest.TestCase):
         listed = SimpleNamespace(returncode=0, stdout='"10.74.0.129 (enp5s0)"\n')
         for guest_status, expected in ((0, 0), (1, 1)):
             responses = [listed, SimpleNamespace(returncode=guest_status)]
-            with patch("tools.incus_sandbox.probe.subprocess.run", side_effect=responses) as run:
+            with patch("tools.incus_sandbox.probe.load_config", return_value=SimpleNamespace(deadlines=DEFAULT_DEADLINES)), \
+                 patch("tools.incus_sandbox.probe.run_owned", side_effect=responses) as run:
                 self.assertEqual(probe_main(["agent-1", "10.74.0.1", "agent-2"]), expected)
             self.assertEqual(run.call_count, 2)
 

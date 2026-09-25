@@ -11,6 +11,8 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { runGateCommand } from "./lib/gate-command-runner.js";
 
+const GATE_DEADLINE = { timeoutMs: 60_000 };
+
 const CASE_TIMEOUT_MS = 15000;
 
 describe("runGateCommand process-tree reaping (#1495)", () => {
@@ -18,22 +20,22 @@ describe("runGateCommand process-tree reaping (#1495)", () => {
     // The exact publish-hang shape: the leader spawns a background process that
     // keeps stdout open, then exits 0 without waiting. Reaping the group on the
     // leader's exit lets `close` fire promptly instead of blocking on the sleep.
-    const result = await runGateCommand("bash", ["-c", "echo ready; sleep 300 & exit 0"]);
+    const result = await runGateCommand("bash", ["-c", "echo ready; sleep 300 & exit 0"], GATE_DEADLINE);
     assert.ok(result.stdout.includes("ready"));
   });
 
   it("reaps a descendant even when the leader fails", { timeout: CASE_TIMEOUT_MS }, async () => {
     await assert.rejects(
-      runGateCommand("bash", ["-c", "printf boom 1>&2; sleep 300 & exit 4"]),
+      runGateCommand("bash", ["-c", "printf boom 1>&2; sleep 300 & exit 4"], GATE_DEADLINE),
       (error) => error.code === 4,
     );
   });
 
   it("returns the exit status normally for a well-behaved gate", async () => {
-    const ok = await runGateCommand("bash", ["-c", "printf done; exit 0"]);
+    const ok = await runGateCommand("bash", ["-c", "printf done; exit 0"], GATE_DEADLINE);
     assert.equal(ok.stdout, "done");
     await assert.rejects(
-      runGateCommand("bash", ["-c", "printf boom 1>&2; exit 3"]),
+      runGateCommand("bash", ["-c", "printf boom 1>&2; exit 3"], GATE_DEADLINE),
       (error) => error.code === 3,
     );
   });

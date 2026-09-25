@@ -14,7 +14,7 @@ sudo bash tools/incus_sandbox/setup.sh install
 
 Upgrade an existing installation in place before using dirty-work migration or
 repository-scoped task variables. This replaces only the reviewed programs and
-upgrades a v1/v2 root policy to `gc.incus-sandbox/v3`; it keeps guests,
+upgrades a v1–v3 root policy to `gc.incus-sandbox/v4`; it keeps guests,
 allocations, storage, network policy, and sessions:
 
 ```sh
@@ -258,7 +258,7 @@ that differs from the sanitized Git origin. Secret values and provider paths
 never belong in this file.
 
 The host operator separately adds only the intended repository and aliases to
-the root-owned `/etc/gc-incus-sandbox/config.json` v3 policy:
+the root-owned `/etc/gc-incus-sandbox/config.json` v3 or v4 policy:
 
 ```json
 "task_environment": {
@@ -380,6 +380,54 @@ or create a PR, keep the guest branch and its focused-test/review evidence, then
 give the operator guest-local publication steps. Do not widen the credential or
 retry publication through the host. Treat a failed or unavailable check as that
 state, rather than as a successful handoff.
+
+## Command deadlines
+
+Every Incus call the root helpers make has a finite deadline. The helpers hold
+the allocation lock or a per-sandbox lock while they run Incus, so a hung
+daemon, transfer, or guest command cannot keep that lock. At the deadline the
+helper stops the call's whole process tree, first with `SIGTERM` and then with
+`SIGKILL`, and releases the lock only after that tree is gone. If a process
+survives `SIGKILL`, the call fails with a cleanup error rather than succeeding. When `sudo`
+relays `SIGTERM`, `SIGINT`, or `SIGHUP` to a helper waiting on a call, the helper
+reaps the tree in the same way before exiting.
+
+Each call belongs to one operation class. The defaults, in seconds:
+
+| Class | Default | Calls |
+|---|---|---|
+| `query` | 60 | status queries, `list`, host address reads, agent probes |
+| `lifecycle` | 300 | `start`, `stop`, `delete`, limit settings |
+| `launch` | 1800 | `launch`, template provisioning and publication, image import and export |
+| `transfer` | 1800 | the guest source transfer and bootstrap |
+| `task` | 120 | task session start and stop |
+
+A v4 policy may override any class in `deadline_seconds`, for example
+`"deadline_seconds": {"launch": 3600}`. Each value must be a positive integer
+of at most 14400 seconds, and an unknown class fails validation. There is no
+unlimited value. No command-line argument, packet, task frame, or repository
+declaration can choose a deadline. `attach` is the one call without a deadline:
+it is the operator's own terminal session, it holds no lock, and it ends when
+the operator detaches.
+
+A timeout is a failure with the lifecycle error code `command_timeout`:
+
+- **Create:** a launch that times out may still produce an instance, because the
+  daemon can finish it. The helper tries to delete the instance. If it cannot
+  prove the instance is gone, it keeps the reservation, so capacity is never
+  freed under a VM that may exist. `grndctl sandbox delete NAME --confirm NAME`
+  reconciles the reservation, and it succeeds when the instance never
+  materialized.
+- **Stop and delete:** the allocation stays active and nothing is forgotten, so
+  retry after the daemon recovers.
+- **Transfer:** the previous source binding is already cleared, so a task
+  cannot start against a partially prepared source. The command names the
+  guest log to read.
+- **Task start:** the redacted task record is written before the start is sent.
+  After a failed start, the helper sends one bounded task stop. It removes the
+  record only when that stop is confirmed. Until then the sandbox counts as
+  running a task: its source cannot be replaced, and a VM stop or delete first
+  stops the task. `grndctl sandbox task-stop NAME` clears the record.
 
 ## Boundary and lifecycle evidence
 

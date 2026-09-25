@@ -10,6 +10,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from tools.incus_sandbox.config import DEFAULT_DEADLINES
 from tools.incus_sandbox import build_image
 from tools.incus_sandbox.build_image import (
     BuildError,
@@ -28,7 +29,7 @@ from tools.incus_sandbox.build_image import (
 
 def config() -> SimpleNamespace:
     return SimpleNamespace(project="gc-sandbox", profile="gc-sandbox-default",
-                           vm=SimpleNamespace(disk_gib=16))
+                           vm=SimpleNamespace(disk_gib=16), deadlines=DEFAULT_DEADLINES)
 
 
 class TemplateArgumentTest(unittest.TestCase):
@@ -144,7 +145,7 @@ class TemplateBuildTest(unittest.TestCase):
                 raise result
             return result if result is not None else SimpleNamespace(returncode=0, stdout="")
 
-        with patch("tools.incus_sandbox.build_image.subprocess.run", side_effect=runner):
+        with patch("tools.incus_sandbox.build_image.run_owned", side_effect=runner):
             return build_image.build(config(), "images:almalinux/10/cloud", "gc-sandbox-template", **kwargs), commands
 
     def test_a_build_runs_the_fixed_sequence_and_reports_the_published_template(self) -> None:
@@ -166,7 +167,7 @@ class TemplateBuildTest(unittest.TestCase):
                 raise result
             return result if result is not None else SimpleNamespace(returncode=0, stdout="")
 
-        with patch("tools.incus_sandbox.build_image.subprocess.run", side_effect=runner):
+        with patch("tools.incus_sandbox.build_image.run_owned", side_effect=runner):
             with self.assertRaises(BuildError):
                 build_image.build(config(), "images:almalinux/10/cloud", "gc-sandbox-template")
         # The throwaway guest is removed on every exit path.
@@ -175,14 +176,14 @@ class TemplateBuildTest(unittest.TestCase):
 
     def test_an_existing_template_alias_is_refused_before_anything_launches(self) -> None:
         alias_rows = SimpleNamespace(returncode=0, stdout="gc-sandbox-template,abc123\n")
-        with patch("tools.incus_sandbox.build_image.subprocess.run", return_value=alias_rows):
+        with patch("tools.incus_sandbox.build_image.run_owned", return_value=alias_rows):
             with self.assertRaises(BuildError):
                 build_image.build(config(), "images:almalinux/10/cloud", "gc-sandbox-template")
 
     def test_the_agent_wait_gives_up_instead_of_provisioning_a_dead_guest(self) -> None:
-        with patch("tools.incus_sandbox.build_image.subprocess.run",
+        with patch("tools.incus_sandbox.build_image.run_owned",
                    return_value=SimpleNamespace(returncode=1)), \
-             patch("tools.incus_sandbox.build_image.time.monotonic", side_effect=[0.0, 0.0, 10_000.0]), \
+             patch("tools.incus_sandbox.build_image.time.monotonic", side_effect=[0.0, 0.0, 0.0, 10_000.0]), \
              patch("tools.incus_sandbox.build_image.time.sleep"):
             with self.assertRaises(BuildError):
                 build_image._await_agent(config(), "gc-template-build-1")

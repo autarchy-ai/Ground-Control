@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -57,7 +58,7 @@ class SetupContractTest(unittest.TestCase):
         result = subprocess.run(["bash", str(root / "tools/incus_sandbox/setup.sh"), "--dry-run", "upgrade"],
                                 capture_output=True, text=True, check=True)
         self.assertIn("upgrade sandbox programs", result.stdout)
-        self.assertIn("config to v3", result.stdout)
+        self.assertIn("config to v4", result.stdout)
         self.assertNotIn("project delete", result.stdout)
 
     def test_upgrade_program_install_uses_its_payload_and_preserves_ownership(self) -> None:
@@ -107,6 +108,10 @@ class SetupContractTest(unittest.TestCase):
             self.assertEqual(ownership.read_text(encoding="utf-8"), original)
             # The lifecycle client runs from the grndctl package; an upgrade removes the old copy.
             self.assertEqual([path for path in legacy if path.exists()], [])
+            # The root programs run from INSTALL_ROOT, so every sibling module they import
+            # must be installed beside them.
+            subprocess.run([sys.executable, "-c", "import helper, transfer, task_environment"],
+                           cwd=install_root, check=True)
 
     def test_firewall_has_a_scoped_input_deny_and_rollback_requires_the_ownership_record(self) -> None:
         root = Path(__file__).resolve().parents[2]

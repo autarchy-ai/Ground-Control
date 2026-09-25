@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tools.incus_sandbox import guest_bootstrap
+from tools.incus_sandbox.config import DEFAULT_DEADLINES
 from tools.incus_sandbox import transfer as incus_transfer
 from tools.incus_sandbox.guest_bootstrap import PacketError, guest_environment, main, parse_packet
 from tools.incus_sandbox.transfer import TransferError, read_packet, transfer, transfer_commands
@@ -272,10 +273,10 @@ class TransferCommandTest(unittest.TestCase):
             "schema": "gc.incus-sandbox.source/v1", "kind": "clone", "commit": "a" * 40,
             "repository": "https://github.com/example/private.git",
         })
-        with tempfile.TemporaryDirectory() as directory, patch("tools.incus_sandbox.transfer.subprocess.run") as run:
-            transfer("gc-sandbox", Path(directory), "agent-1", io.BytesIO(source))
+        with tempfile.TemporaryDirectory() as directory, patch("tools.incus_sandbox.transfer.run_owned") as run:
+            transfer("gc-sandbox", Path(directory), "agent-1", io.BytesIO(source), deadline_seconds=60)
         self.assertTrue(all(
-            call.kwargs["stdout"] is not None and call.kwargs["stderr"] is not None
+            call.kwargs["streams"] == "discard"
             for call in run.call_args_list
         ))
 
@@ -292,7 +293,7 @@ class TransferCommandTest(unittest.TestCase):
             def write(self, record: dict[str, str]) -> None:
                 records.append(record)
 
-        config = types.SimpleNamespace(event_log=Path("/tmp/events"), event_max_bytes=32,
+        config = types.SimpleNamespace(deadlines=DEFAULT_DEADLINES, event_log=Path("/tmp/events"), event_max_bytes=32,
                                        project="gc-sandbox", state_dir=Path("/tmp/state"))
         events = types.SimpleNamespace(EventWriter=EventWriter)
         clone = packet({"schema": "gc.incus-sandbox.source/v1", "kind": "clone", "commit": "a" * 40,
@@ -319,7 +320,7 @@ class TransferCommandTest(unittest.TestCase):
             binding = state / "source-bindings" / "agent-1.json"
             binding.parent.mkdir()
             binding.write_text('{"obsolete":true}', encoding="utf-8")
-            config = types.SimpleNamespace(event_log=state / "events", event_max_bytes=32,
+            config = types.SimpleNamespace(deadlines=DEFAULT_DEADLINES, event_log=state / "events", event_max_bytes=32,
                                            project="gc-sandbox", state_dir=state)
             with patch.dict(sys.modules, {"events": events}), \
                  patch("tools.incus_sandbox.transfer.transfer"):
@@ -330,7 +331,7 @@ class TransferCommandTest(unittest.TestCase):
         events = types.SimpleNamespace(EventWriter=lambda *_: types.SimpleNamespace(
             ensure_available=lambda: None, write=lambda _: None,
         ))
-        config = types.SimpleNamespace(event_log=Path("/tmp/events"), event_max_bytes=32,
+        config = types.SimpleNamespace(deadlines=DEFAULT_DEADLINES, event_log=Path("/tmp/events"), event_max_bytes=32,
                                        project="gc-sandbox", state_dir=Path("/tmp/state"), migration=None)
         with patch.dict(sys.modules, {"events": events}):
             with self.assertRaises(TransferError) as result:
@@ -353,7 +354,7 @@ class TransferCommandTest(unittest.TestCase):
             def write(self, record: dict[str, str]) -> None:
                 records.append(record)
 
-        config = types.SimpleNamespace(event_log=Path("/tmp/events"), event_max_bytes=32,
+        config = types.SimpleNamespace(deadlines=DEFAULT_DEADLINES, event_log=Path("/tmp/events"), event_max_bytes=32,
                                        project="gc-sandbox", state_dir=Path("/tmp/state"), migration=None)
         events = types.SimpleNamespace(EventWriter=EventWriter)
         source = packet({"schema": "gc.incus-sandbox.migration/v1"})
@@ -369,7 +370,7 @@ class TransferCommandTest(unittest.TestCase):
         events = types.SimpleNamespace(EventWriter=lambda *_: writer)
         limits = types.SimpleNamespace(max_packet_bytes=1024, max_file_count=4,
                                        max_file_bytes=128, max_handoff_bytes=64)
-        config = types.SimpleNamespace(event_log=Path("/tmp/events"), event_max_bytes=32,
+        config = types.SimpleNamespace(deadlines=DEFAULT_DEADLINES, event_log=Path("/tmp/events"), event_max_bytes=32,
                                        project="gc-sandbox", state_dir=Path("/tmp/state"), migration=limits)
         metadata = {
             "entries": {"index": [], "worktree": [], "untracked": []},
