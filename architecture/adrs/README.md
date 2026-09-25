@@ -39,7 +39,7 @@ We use [MADR](https://adr.github.io/madr/) (Markdown Any Decision Records). Each
 | [018](018-aws-ec2-deployment.md) | AWS EC2 Deployment | Superseded by ADR-030 |
 | [019](019-asset-topology-model.md) | Asset Topology and Boundary Relationships | Accepted |
 | [020](020-asset-cross-entity-linking.md) | Asset Cross-Entity Linking | Accepted |
-| [021](021-gated-agentic-development-loop.md) | Gated Agentic Development Loop | Accepted (amended by ADR-029, ADR-036, ADR-081; 2026-07-15 GC-P027/#1399 Release Please) |
+| [021](021-gated-agentic-development-loop.md) | Gated Agentic Development Loop | Accepted (amended by ADR-029, ADR-036, ADR-081; 2026-07-15 GC-P027/#1399 Release Please; 2026-09-22 optional-tooling boundary, 2026-09-24 untracked `.mcp.json`) |
 | [022](022-content-pack-distribution-architecture.md) | Content Pack Distribution Architecture | Accepted |
 | [023](023-plugin-architecture.md) | Plugin Architecture | Accepted |
 | [024](024-threat-model-entry-boundary.md) | Threat Model Entry Boundary | Accepted |
@@ -82,7 +82,7 @@ We use [MADR](https://adr.github.io/madr/) (Markdown Any Decision Records). Each
 | [060](060-requirement-uid-identity.md) | Requirement UID identity | Accepted |
 | [061](061-workflow-run-telemetry-reporting.md) | Workflow-Run Telemetry & Economics Reporting Surface | Superseded (issue #1303) |
 | [062](062-age-graph-projection-snapshot-publication.md) | AGE Graph Projection Snapshot Publication | Accepted |
-| [063](063-release-deployment-model.md) | Release & Deployment Model | Accepted (MCP-only release surface amendment 2026-09-11, #1303; npm distribution as grndctl amendment 2026-09-13, #1587) |
+| [063](063-release-deployment-model.md) | Release & Deployment Model | Accepted (MCP-only release surface amendment 2026-09-11, #1303; npm distribution as grndctl amendment 2026-09-13, #1587; 2026-09-24 untracked `.mcp.json`) |
 | [064](064-research-run-lifecycle-and-stage-gating.md) | Research Run Lifecycle and Stage Gating | Accepted |
 | [065](065-research-run-observability-snapshot.md) | Research Run Observability Snapshot | Accepted |
 | [066](066-research-review-comments-and-resolution-tracking.md) | Research Gate Decision Log and Review Comments | Accepted |
