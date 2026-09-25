@@ -51,6 +51,61 @@ def v4_doc(root: Path, deadlines: dict[str, int]) -> dict[str, object]:
     }
 
 
+def lifecycle_helper(case: "StalledIncusTestCase") -> LifecycleHelper:
+    """A helper for the fixture's operator with fresh host observations."""
+    return LifecycleHelper(
+        case.config, event_writer=case.writer,
+        observer=lambda: {"memory_mib": 16384, "disk_gib": 256, "fresh": True},
+        network_checker=lambda config: True, caller_uid=os.getuid(),
+    )
+
+
+def recorded_events(config: object) -> list[dict[str, object]]:
+    """The lifecycle events the fixture's helper wrote."""
+    return [json.loads(line) for line in config.event_log.read_text(encoding="utf-8").splitlines()]
+
+
+def recorded_allocations(config: object) -> dict[str, dict[str, object]]:
+    """The durable allocation records."""
+    return json.loads((config.state_dir / "allocations.json").read_text(encoding="utf-8") or "{}")
+
+
+def contend_for_allocations(case: "StalledIncusTestCase", observed: dict[str, object]) -> threading.Thread:
+    """A competing request that blocks on the allocation lock the stalled call holds."""
+    def contender() -> None:
+        stalled = descendant_pid(case.fake_dir)
+        started = time.monotonic()
+        lifecycle_helper(case)._headroom()
+        observed["waited"] = time.monotonic() - started
+        observed["descendant_alive"] = process_alive(stalled)
+    thread = threading.Thread(target=contender)
+    thread.start()
+    return thread
+
+
+def task_service(config: object) -> tuple[TaskEnvironmentService, bytes]:
+    """A task service bound to a prepared source, and a matching start request."""
+    raw = declaration("example/one", [])
+    record_source_binding(config.state_dir, "dev", "example/one", raw)
+    service = TaskEnvironmentService(
+        project="gc-sandbox", state_dir=config.state_dir, operator_uid=os.getuid(),
+        repositories={"example/one": {}},
+        runtime=TaskRuntime(active_owner=lambda sandbox, uid: True,
+                            runner=guest_runner(config.deadlines.task),
+                            expected_provider_uid=os.getuid()),
+    )
+    request = json.dumps({"schema": "gc.incus-sandbox.task-start/v1", "repository": "example/one",
+                          "declaration_b64": base64.b64encode(raw).decode()}).encode()
+    return service, request
+
+
+def load_policy(path: Path, doc: dict[str, object]) -> object:
+    """Write a root-policy document with safe permissions and load it."""
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    path.chmod(0o600)
+    return load_config(path, expected_uid=os.getuid())
+
+
 class StalledIncusTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="gc-incus-deadline-")
@@ -74,48 +129,22 @@ class StalledIncusTestCase(unittest.TestCase):
             kill_quietly(int(pid_file.read_text(encoding="utf-8")))
         self.temporary.cleanup()
 
-    def helper(self) -> LifecycleHelper:
-        return LifecycleHelper(
-            self.config, event_writer=self.writer,
-            observer=lambda: {"memory_mib": 16384, "disk_gib": 256, "fresh": True},
-            network_checker=lambda config: True, caller_uid=os.getuid(),
-        )
-
-    def events(self) -> list[dict[str, object]]:
-        return [json.loads(line) for line in self.config.event_log.read_text(encoding="utf-8").splitlines()]
-
-    def allocations(self) -> dict[str, dict[str, object]]:
-        return json.loads((self.config.state_dir / "allocations.json").read_text(encoding="utf-8") or "{}")
-
-    def contend_for_allocations(self, observed: dict[str, object]) -> threading.Thread:
-        """A competing request that blocks on the allocation lock the stalled call holds."""
-        def contender() -> None:
-            stalled = descendant_pid(self.fake_dir)
-            started = time.monotonic()
-            self.helper()._headroom()
-            observed["waited"] = time.monotonic() - started
-            observed["descendant_alive"] = process_alive(stalled)
-        thread = threading.Thread(target=contender)
-        thread.start()
-        return thread
-
-
 class LifecycleDeadlineTest(StalledIncusTestCase):
     def test_stalled_launch_times_out_reaps_its_tree_and_frees_the_lock(self) -> None:
         set_fake_mode(self.fake_dir, "launch", "stall")
         set_fake_output(self.fake_dir, "query", "[]")
         observed: dict[str, object] = {}
         with patch.object(helper_module, "_INCUS", self.fake):
-            contender = self.contend_for_allocations(observed)
+            contender = contend_for_allocations(self, observed)
             with self.assertRaises(subprocess.TimeoutExpired):
-                self.helper().create("dev")
+                lifecycle_helper(self).create("dev")
             contender.join(10)
         # The contender waited for the stalled call, and got the lock only after its tree died.
         self.assertGreater(observed["waited"], 0.5)
         self.assertIs(observed["descendant_alive"], False)
-        self.assertNotIn("dev", self.allocations())
+        self.assertNotIn("dev", recorded_allocations(self.config))
         self.assertTrue(any(line.startswith("delete dev --force") for line in calls(self.fake_dir)))
-        self.assertEqual(self.events()[-1]["error_code"], "command_timeout")
+        self.assertEqual(recorded_events(self.config)[-1]["error_code"], "command_timeout")
 
     def test_a_timed_out_launch_keeps_its_reservation_while_the_instance_may_exist(self) -> None:
         set_fake_mode(self.fake_dir, "launch", "stall")
@@ -123,12 +152,12 @@ class LifecycleDeadlineTest(StalledIncusTestCase):
         set_fake_output(self.fake_dir, "query", '["/1.0/instances/dev"]')
         with patch.object(helper_module, "_INCUS", self.fake):
             with self.assertRaises(subprocess.TimeoutExpired):
-                self.helper().create("dev")
-            self.assertTrue(self.allocations()["dev"]["active"])
+                lifecycle_helper(self).create("dev")
+            self.assertTrue(recorded_allocations(self.config)["dev"]["active"])
             # Once the instance can be deleted, the owner's delete reconciles the reservation.
             set_fake_mode(self.fake_dir, "delete", "ok")
-            self.helper().delete("dev", "dev")
-        self.assertNotIn("dev", self.allocations())
+            lifecycle_helper(self).delete("dev", "dev")
+        self.assertNotIn("dev", recorded_allocations(self.config))
 
     def test_delete_forgets_a_reservation_whose_instance_never_materialized(self) -> None:
         set_fake_mode(self.fake_dir, "launch", "stall")
@@ -136,20 +165,20 @@ class LifecycleDeadlineTest(StalledIncusTestCase):
         set_fake_output(self.fake_dir, "query", '["/1.0/instances/dev"]')
         with patch.object(helper_module, "_INCUS", self.fake):
             with self.assertRaises(subprocess.TimeoutExpired):
-                self.helper().create("dev")
+                lifecycle_helper(self).create("dev")
             set_fake_output(self.fake_dir, "query", '["/1.0/instances/other"]')
-            self.helper().delete("dev", "dev")
-        self.assertNotIn("dev", self.allocations())
+            lifecycle_helper(self).delete("dev", "dev")
+        self.assertNotIn("dev", recorded_allocations(self.config))
 
     def test_a_stalled_stop_keeps_the_allocation_active(self) -> None:
         with patch.object(helper_module, "_INCUS", self.fake):
-            self.helper().create("dev")
+            lifecycle_helper(self).create("dev")
             set_fake_mode(self.fake_dir, "stop", "stall")
             with self.assertRaises(subprocess.TimeoutExpired):
-                self.helper().stop("dev")
-        self.assertTrue(self.allocations()["dev"]["active"])
+                lifecycle_helper(self).stop("dev")
+        self.assertTrue(recorded_allocations(self.config)["dev"]["active"])
         self.assertFalse(process_alive(descendant_pid(self.fake_dir)))
-        self.assertEqual(self.events()[-1]["error_code"], "command_timeout")
+        self.assertEqual(recorded_events(self.config)[-1]["error_code"], "command_timeout")
 
 
 class TransferAndTaskDeadlineTest(StalledIncusTestCase):
@@ -169,23 +198,9 @@ class TransferAndTaskDeadlineTest(StalledIncusTestCase):
         with state_lock(self.config.state_dir, "dev"):
             pass
 
-    def task_service(self) -> tuple[TaskEnvironmentService, bytes]:
-        raw = declaration("example/one", [])
-        record_source_binding(self.config.state_dir, "dev", "example/one", raw)
-        service = TaskEnvironmentService(
-            project="gc-sandbox", state_dir=self.config.state_dir, operator_uid=os.getuid(),
-            repositories={"example/one": {}},
-            runtime=TaskRuntime(active_owner=lambda sandbox, uid: True,
-                                runner=guest_runner(self.config.deadlines.task),
-                                expected_provider_uid=os.getuid()),
-        )
-        request = json.dumps({"schema": "gc.incus-sandbox.task-start/v1", "repository": "example/one",
-                              "declaration_b64": base64.b64encode(raw).decode()}).encode()
-        return service, request
-
     def test_a_timed_out_start_is_forgotten_only_after_a_confirmed_stop(self) -> None:
         set_fake_mode(self.fake_dir, "exec.start", "stall")
-        service, request = self.task_service()
+        service, request = task_service(self.config)
         with patch.object(task_environment, "_INCUS", self.fake):
             with self.assertRaises(subprocess.TimeoutExpired):
                 service.start("dev", request, os.getuid())
@@ -194,7 +209,7 @@ class TransferAndTaskDeadlineTest(StalledIncusTestCase):
 
     def test_an_unconfirmed_stop_keeps_the_task_guard_against_source_replacement(self) -> None:
         set_fake_mode(self.fake_dir, "exec", "stall")
-        service, request = self.task_service()
+        service, request = task_service(self.config)
         with patch.object(task_environment, "_INCUS", self.fake):
             with self.assertRaises(subprocess.TimeoutExpired):
                 service.start("dev", request, os.getuid())
@@ -281,16 +296,11 @@ class DeadlinePolicyTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def load(self, doc: dict[str, object]):
-        self.path.write_text(json.dumps(doc), encoding="utf-8")
-        self.path.chmod(0o600)
-        return load_config(self.path, expected_uid=os.getuid())
-
     def test_policies_before_v4_use_the_finite_defaults(self) -> None:
-        self.assertEqual(self.load(config_doc(self.root)).deadlines, DEFAULT_DEADLINES)
+        self.assertEqual(load_policy(self.path, config_doc(self.root)).deadlines, DEFAULT_DEADLINES)
 
     def test_v4_overrides_individual_operations_and_keeps_the_rest(self) -> None:
-        deadlines = self.load(v4_doc(self.root, {"launch": 3600})).deadlines
+        deadlines = load_policy(self.path, v4_doc(self.root, {"launch": 3600})).deadlines
         self.assertEqual(deadlines.launch, 3600)
         self.assertEqual(deadlines.query, DEFAULT_DEADLINES.query)
 
@@ -298,10 +308,10 @@ class DeadlinePolicyTest(unittest.TestCase):
         for invalid in ({"forever": 10}, {"query": 0}, {"query": -5}, {"query": True},
                         {"query": 1.5}, {"query": "60"}, {"query": MAX_DEADLINE_SECONDS + 1}, []):
             with self.subTest(deadlines=invalid), self.assertRaises(ConfigError):
-                self.load(v4_doc(self.root, invalid))  # type: ignore[arg-type]
+                load_policy(self.path, v4_doc(self.root, invalid))  # type: ignore[arg-type]
 
     def test_upgrade_adds_an_empty_override_section(self) -> None:
-        self.load(config_doc(self.root))
+        load_policy(self.path, config_doc(self.root))
         self.assertTrue(upgrade_config(self.path, expected_uid=os.getuid()))
         upgraded = json.loads(self.path.read_text(encoding="utf-8"))
         self.assertEqual(upgraded["schema"], "gc.incus-sandbox/v4")

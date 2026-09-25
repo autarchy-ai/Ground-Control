@@ -20,6 +20,12 @@ def _stalled_with_descendant(pid_file: Path) -> list[str]:
     return ["/bin/sh", "-c", f"sleep 300 & echo $! > {pid_file}; wait"]
 
 
+def recorded_pid(pid_file: Path) -> int:
+    """The descendant pid the stalled leader recorded."""
+    wait_for_file(pid_file)
+    return int(pid_file.read_text(encoding="utf-8"))
+
+
 class OwnedProcessTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="gc-owned-process-")
@@ -30,16 +36,12 @@ class OwnedProcessTest(unittest.TestCase):
             kill_quietly(int(self.pid_file.read_text(encoding="utf-8")))
         self.temporary.cleanup()
 
-    def _descendant(self) -> int:
-        wait_for_file(self.pid_file)
-        return int(self.pid_file.read_text(encoding="utf-8"))
-
     def test_deadline_reaps_the_stalled_leader_and_its_descendant(self) -> None:
         started = time.monotonic()
         with self.assertRaises(subprocess.TimeoutExpired) as raised:
             run_owned(_stalled_with_descendant(self.pid_file), deadline_seconds=1)
         self.assertLess(time.monotonic() - started, 4)
-        self.assertFalse(process_alive(self._descendant()))
+        self.assertFalse(process_alive(recorded_pid(self.pid_file)))
         # The diagnostic names the executable and deadline, never argv content.
         self.assertEqual(raised.exception.cmd, "sh")
         self.assertEqual(raised.exception.timeout, 1)
@@ -49,7 +51,7 @@ class OwnedProcessTest(unittest.TestCase):
         argv = ["/bin/sh", "-c", f"sleep 300 & echo $! > {self.pid_file}"]
         completed = run_owned(argv, deadline_seconds=30, streams="discard")
         self.assertEqual(completed.returncode, 0)
-        self.assertFalse(process_alive(self._descendant()))
+        self.assertFalse(process_alive(recorded_pid(self.pid_file)))
 
     def test_termination_while_waiting_reaps_the_group_and_interrupts(self) -> None:
         previous = signal.getsignal(signal.SIGTERM)
@@ -62,7 +64,7 @@ class OwnedProcessTest(unittest.TestCase):
         finally:
             timer.cancel()
         self.assertLess(time.monotonic() - started, 5)
-        self.assertFalse(process_alive(self._descendant()))
+        self.assertFalse(process_alive(recorded_pid(self.pid_file)))
         self.assertIs(signal.getsignal(signal.SIGTERM), previous)
 
     def test_a_tree_that_ignores_sigterm_is_killed_after_the_grace(self) -> None:
@@ -71,7 +73,7 @@ class OwnedProcessTest(unittest.TestCase):
         with self.assertRaises(subprocess.TimeoutExpired):
             run_owned(argv, deadline_seconds=0.5, grace_seconds=0.3)
         self.assertLess(time.monotonic() - started, 4)
-        self.assertFalse(process_alive(self._descendant()))
+        self.assertFalse(process_alive(recorded_pid(self.pid_file)))
 
     def test_a_call_from_a_worker_thread_is_still_bounded(self) -> None:
         raised: list[BaseException] = []
@@ -86,7 +88,7 @@ class OwnedProcessTest(unittest.TestCase):
         thread.start()
         thread.join(10)
         self.assertEqual(len(raised), 1)
-        self.assertFalse(process_alive(self._descendant()))
+        self.assertFalse(process_alive(recorded_pid(self.pid_file)))
 
     def test_input_and_captured_output_round_trip(self) -> None:
         completed = run_owned(["/bin/cat"], deadline_seconds=10, input="frame", streams="capture")
