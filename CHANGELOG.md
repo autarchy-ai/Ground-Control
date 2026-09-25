@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > versioned sections are generated from Conventional Commit history when the
 > release PR merges. See ADR-063 (2026-07-15 amendment) and GC-P027.
 
+## [1.3.0](https://github.com/autarchy-ai/Ground-Control/compare/v1.2.1...v1.3.0) (2026-09-25)
+
+
+### Features
+
+* **sandbox:** run every sandbox verb through grndctl and skip redundant image pulls ([9ef7b89](https://github.com/autarchy-ai/Ground-Control/commit/9ef7b89abb198b1889a0c74614e357631be88b0e))
+* **sandbox:** run every sandbox verb through grndctl and skip redundant image pulls ([c87a6d6](https://github.com/autarchy-ai/Ground-Control/commit/c87a6d6be4b991f73e8727fe9f2aedbbf12fe009))
+
+
+### Bug Fixes
+
+* **ci:** evaluate the live PR body so a corrected body passes on re-run ([8f28cca](https://github.com/autarchy-ai/Ground-Control/commit/8f28ccaa643803ccc1f2bb010780e2d7b021c5d2))
+* **mcp:** handle early stdin closure and exact output overflow in model subprocesses ([a5728c6](https://github.com/autarchy-ai/Ground-Control/commit/a5728c6710617f7e95e68a8b930608eebde31368))
+* **mcp:** handle early stdin closure and exact output overflow in model subprocesses ([4dd9bfc](https://github.com/autarchy-ai/Ground-Control/commit/4dd9bfc976e2f0fe4027f2e5f34944e298b313a5))
+* **package:** exclude development tests from tarball ([b425dc4](https://github.com/autarchy-ai/Ground-Control/commit/b425dc4dcdce71c2e32b80c736ec25e7b5a92248))
+* **policy:** simplify optional MCP check ([cdd61c1](https://github.com/autarchy-ai/Ground-Control/commit/cdd61c11dc8673f6daa53a13ad2facb75182a2d0))
+* **release:** stage npm packages and exclude development tests ([6b4475e](https://github.com/autarchy-ai/Ground-Control/commit/6b4475e4b72b2532e71e7cc2d71b72fd2d1e1912))
+* **workflow:** keep Ground Control MCP optional ([acb15a5](https://github.com/autarchy-ai/Ground-Control/commit/acb15a5762ecfcdbe60f0f2919a22e2fd36229bc))
+* **workflow:** keep Ground Control MCP optional ([f094298](https://github.com/autarchy-ai/Ground-Control/commit/f0942989ca47c8630aa3f2ccd9c4ccd37562cd6a))
+* **workflow:** stop tracking .mcp.json and restore the grndctl entry locally ([0e995a5](https://github.com/autarchy-ai/Ground-Control/commit/0e995a5bf83a8233a771f270aab323e296c2b8c9))
+* **workflow:** stop tracking .mcp.json and restore the grndctl entry locally ([ae4ca02](https://github.com/autarchy-ai/Ground-Control/commit/ae4ca02e3fdfc99273365aa506f46f78049c920b))
+
 ## [1.2.1](https://github.com/autarchy-ai/Ground-Control/compare/v1.2.0...v1.2.1) (2026-09-22)
 
 
