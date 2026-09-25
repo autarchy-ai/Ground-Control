@@ -7,7 +7,7 @@ import os
 import re
 import sys
 import tempfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -276,7 +276,7 @@ def _deadlines(doc: dict[str, object]) -> ExecutionDeadlines:
     overrides = {name: _positive(value, f"deadline_seconds.{name}") for name, value in section.items()}
     if any(value > MAX_DEADLINE_SECONDS for value in overrides.values()):
         raise ConfigError(f"deadline_seconds values must not exceed {MAX_DEADLINE_SECONDS}")
-    return replace(DEFAULT_DEADLINES, **overrides)
+    return ExecutionDeadlines(**{name: overrides.get(name, getattr(DEFAULT_DEADLINES, name)) for name in known})
 
 
 def _task_environment_policy(doc: dict[str, object]) -> TaskEnvironmentPolicy:

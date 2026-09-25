@@ -32,6 +32,16 @@ def write_fake_incus(directory: Path) -> Path:
     return path
 
 
+def set_fake_mode(directory: Path, subcommand: str, mode: str) -> None:
+    """Make the fake client succeed (`ok`), fail, or stall for one subcommand."""
+    (directory / f"mode.{subcommand}").write_text(mode, encoding="utf-8")
+
+
+def set_fake_output(directory: Path, subcommand: str, text: str) -> None:
+    """Set what the fake client prints for one subcommand."""
+    (directory / f"out.{subcommand}").write_text(text, encoding="utf-8")
+
+
 def calls(directory: Path) -> list[str]:
     """Return the fake client's recorded argument lines."""
     log = directory / "calls.log"

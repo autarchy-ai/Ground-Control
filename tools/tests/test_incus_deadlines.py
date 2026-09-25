@@ -28,7 +28,7 @@ from tools.incus_sandbox.task_environment import (
     TaskEnvironmentService, TaskRuntime, guest_runner, record_source_binding, state_lock,
 )
 from tools.tests.incus_process_fixtures import (
-    calls, descendant_pid, kill_quietly, process_alive, write_fake_incus,
+    calls, descendant_pid, kill_quietly, process_alive, set_fake_mode, set_fake_output, write_fake_incus,
 )
 from tools.tests.test_incus_sandbox import config_doc
 from tools.tests.test_incus_task_environment import declaration
@@ -74,12 +74,6 @@ class StalledIncusTestCase(unittest.TestCase):
             kill_quietly(int(pid_file.read_text(encoding="utf-8")))
         self.temporary.cleanup()
 
-    def mode(self, subcommand: str, mode: str) -> None:
-        (self.fake_dir / f"mode.{subcommand}").write_text(mode, encoding="utf-8")
-
-    def output(self, subcommand: str, text: str) -> None:
-        (self.fake_dir / f"out.{subcommand}").write_text(text, encoding="utf-8")
-
     def helper(self) -> LifecycleHelper:
         return LifecycleHelper(
             self.config, event_writer=self.writer,
@@ -108,8 +102,8 @@ class StalledIncusTestCase(unittest.TestCase):
 
 class LifecycleDeadlineTest(StalledIncusTestCase):
     def test_stalled_launch_times_out_reaps_its_tree_and_frees_the_lock(self) -> None:
-        self.mode("launch", "stall")
-        self.output("query", "[]")
+        set_fake_mode(self.fake_dir, "launch", "stall")
+        set_fake_output(self.fake_dir, "query", "[]")
         observed: dict[str, object] = {}
         with patch.object(helper_module, "_INCUS", self.fake):
             contender = self.contend_for_allocations(observed)
@@ -124,33 +118,33 @@ class LifecycleDeadlineTest(StalledIncusTestCase):
         self.assertEqual(self.events()[-1]["error_code"], "command_timeout")
 
     def test_a_timed_out_launch_keeps_its_reservation_while_the_instance_may_exist(self) -> None:
-        self.mode("launch", "stall")
-        self.mode("delete", "fail")
-        self.output("query", '["/1.0/instances/dev"]')
+        set_fake_mode(self.fake_dir, "launch", "stall")
+        set_fake_mode(self.fake_dir, "delete", "fail")
+        set_fake_output(self.fake_dir, "query", '["/1.0/instances/dev"]')
         with patch.object(helper_module, "_INCUS", self.fake):
             with self.assertRaises(subprocess.TimeoutExpired):
                 self.helper().create("dev")
             self.assertTrue(self.allocations()["dev"]["active"])
             # Once the instance can be deleted, the owner's delete reconciles the reservation.
-            self.mode("delete", "ok")
+            set_fake_mode(self.fake_dir, "delete", "ok")
             self.helper().delete("dev", "dev")
         self.assertNotIn("dev", self.allocations())
 
     def test_delete_forgets_a_reservation_whose_instance_never_materialized(self) -> None:
-        self.mode("launch", "stall")
-        self.mode("delete", "fail")
-        self.output("query", '["/1.0/instances/dev"]')
+        set_fake_mode(self.fake_dir, "launch", "stall")
+        set_fake_mode(self.fake_dir, "delete", "fail")
+        set_fake_output(self.fake_dir, "query", '["/1.0/instances/dev"]')
         with patch.object(helper_module, "_INCUS", self.fake):
             with self.assertRaises(subprocess.TimeoutExpired):
                 self.helper().create("dev")
-            self.output("query", '["/1.0/instances/other"]')
+            set_fake_output(self.fake_dir, "query", '["/1.0/instances/other"]')
             self.helper().delete("dev", "dev")
         self.assertNotIn("dev", self.allocations())
 
     def test_a_stalled_stop_keeps_the_allocation_active(self) -> None:
         with patch.object(helper_module, "_INCUS", self.fake):
             self.helper().create("dev")
-            self.mode("stop", "stall")
+            set_fake_mode(self.fake_dir, "stop", "stall")
             with self.assertRaises(subprocess.TimeoutExpired):
                 self.helper().stop("dev")
         self.assertTrue(self.allocations()["dev"]["active"])
@@ -160,7 +154,7 @@ class LifecycleDeadlineTest(StalledIncusTestCase):
 
 class TransferAndTaskDeadlineTest(StalledIncusTestCase):
     def test_stalled_transfer_releases_the_sandbox_lock_without_a_binding(self) -> None:
-        self.mode("exec", "stall")
+        set_fake_mode(self.fake_dir, "exec", "stall")
         writer = types.SimpleNamespace(ensure_available=lambda: None, write=self.records.append)
         binding = self.config.state_dir / "source-bindings" / "dev.json"
         binding.parent.mkdir(parents=True)
@@ -190,7 +184,7 @@ class TransferAndTaskDeadlineTest(StalledIncusTestCase):
         return service, request
 
     def test_a_timed_out_start_is_forgotten_only_after_a_confirmed_stop(self) -> None:
-        self.mode("exec.start", "stall")
+        set_fake_mode(self.fake_dir, "exec.start", "stall")
         service, request = self.task_service()
         with patch.object(task_environment, "_INCUS", self.fake):
             with self.assertRaises(subprocess.TimeoutExpired):
@@ -199,7 +193,7 @@ class TransferAndTaskDeadlineTest(StalledIncusTestCase):
         self.assertFalse((self.config.state_dir / "tasks" / "dev.json").exists())
 
     def test_an_unconfirmed_stop_keeps_the_task_guard_against_source_replacement(self) -> None:
-        self.mode("exec", "stall")
+        set_fake_mode(self.fake_dir, "exec", "stall")
         service, request = self.task_service()
         with patch.object(task_environment, "_INCUS", self.fake):
             with self.assertRaises(subprocess.TimeoutExpired):
@@ -213,7 +207,7 @@ class TransferAndTaskDeadlineTest(StalledIncusTestCase):
             with self.assertRaisesRegex(incus_transfer.TransferError, "stop the active task"):
                 incus_transfer.audited_transfer(self.config, "dev", io.BytesIO(clone_packet()), "clone")
         # A confirmed stop clears it.
-        self.mode("exec", "ok")
+        set_fake_mode(self.fake_dir, "exec", "ok")
         with patch.object(task_environment, "_INCUS", self.fake):
             service.stop("dev", os.getuid())
         self.assertFalse((self.config.state_dir / "tasks" / "dev.json").exists())
@@ -266,7 +260,7 @@ class EntryPointTimeoutTest(unittest.TestCase):
 
 class TemplateBuildDeadlineTest(StalledIncusTestCase):
     def test_a_stalled_agent_probe_is_cut_at_the_outer_wait_deadline(self) -> None:
-        self.mode("exec", "stall")
+        set_fake_mode(self.fake_dir, "exec", "stall")
         # The per-probe query deadline alone would allow a minute; the outer wait allows one second.
         patient = replace(self.config, deadlines=replace(self.config.deadlines, query=60))
         started = time.monotonic()
