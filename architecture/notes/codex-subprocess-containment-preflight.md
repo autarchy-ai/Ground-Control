@@ -65,6 +65,27 @@ equivalent tree termination must fail closed for group-owned model execution
 or supply a tested native equivalent; it must not silently fall back to killing
 only the leader.
 
+### Treat stdin closure and output limits as one subprocess lifecycle
+
+For issue #1719, `execFileWithInput` also owns errors from the child's stdin.
+Attach the stdin error listener before sending the prompt, and retain it until
+the stream is closed; an early `EPIPE` must not become an unhandled event in the
+MCP server. A synchronous prompt-write failure belongs to the same cleanup
+path. A failed prompt delivery cannot report success. Preserve an already
+established timeout, abort, overflow, or nonzero child exit as the primary
+failure instead of replacing it with a secondary pipe error. Settle once, after
+the existing child/stream completion and process-group cleanup boundary; do not
+create a second stdin-specific reaper or error hierarchy.
+
+`maxBuffer` is a per-stream byte limit for stdout and stderr. Filling a limit
+exactly is allowed, including with a zero-byte limit; the next byte must take
+the existing `ERR_CHILD_PROCESS_STDIO_MAXBUFFER` path. Count bytes from the
+pipe before UTF-8 decoding and bound retained bytes, rather than slicing a
+decoded JavaScript string by character count. Keep the surfaced output as
+strings and avoid exposing a partial UTF-8 character at a truncated boundary.
+Continue draining both pipes while termination and cleanup complete. Preserve
+the first terminal cause when a later stream event, abort, or timer fires.
+
 ### Keep a finite host-owned wall cap
 
 `DEFAULT_CODEX_TIMEOUT_MS` and the per-call `timeoutMs` option are the existing
@@ -174,6 +195,12 @@ cleanup and the wall timeout.
   temp-directory cleanup behavior remains covered. Tests must clean up their
   fixtures defensively if the assertion fails so the regression suite cannot
   reproduce the production orphan.
+- Real executable fixtures must cover a child exiting before a large stdin
+  prompt is consumed, exact-cap output followed by another chunk on each
+  stream, and multibyte UTF-8 at the cap. The early-exit case must survive as
+  a structured failure with the child's primary cause; overflow must reject
+  without returning a successful truncated response. The existing `spawnImpl`
+  seam can supplement these fixtures for deterministic event-order assertions.
 - Timeout environment parsing covers unset, valid, malformed, zero, negative,
   and excessive values and proves none of the invalid forms disables the cap.
 - Prompt and argv tests pin repo-only search guidance, stdin prompt transport,
