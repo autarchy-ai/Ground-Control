@@ -4,6 +4,12 @@ Ground Control is the MCP server for the `/implement` workflow over repo-local f
 (issue #1500). This page is navigation only. Each reference below owns its subject, so
 a contract is stated once and read in one place.
 
+The workflow is optional maintainer automation, including in the Ground Control
+source repository. Contributors can use ordinary Git, GitHub, and the
+repo-native build and test commands without installing or running Ground
+Control. MCP server registrations live in `.mcp.json`, which is per-developer
+and git-ignored; copy `.mcp.json.example` to register them.
+
 | Question | Reference |
 |----------|-----------|
 | How do I install Ground Control and set up a repository? | [`docs/public/`](public/index.md) (published on Read the Docs): `npm install -g grndctl`, `grndctl init`, `grndctl doctor` |

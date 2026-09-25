@@ -1,14 +1,19 @@
 # Agent Instructions
 
-This repository is developed through its own Ground Control `/implement` workflow. Requirements and ADRs are repo-local files (issue #1500): there is no backend, database, or frontend.
+Ground Control is optional maintainer tooling for this repository, not a
+prerequisite for contributing. Contributors may use ordinary Git, GitHub, and
+the repo-native build and test commands. Requirements and ADRs are repo-local
+files (issue #1500): there is no backend, database, or frontend.
 
 ## Ground Control Context
 
-This repo's Ground Control project id, workflow commands, SonarCloud
-settings, and plan rules live in `.ground-control.yaml` at repo root
-(with larger rule files under `.gc/`). Agents read it via the
-`gc_get_repo_ground_control_context` MCP tool, which returns the full
-workflow config in a single call.
+Maintainers who opt into Ground Control use the project id, workflow commands,
+SonarCloud settings, and plan rules in `.ground-control.yaml` at repo root
+(with larger rule files under `.gc/`). Ground Control agents read it via the
+`gc_get_repo_ground_control_context` MCP tool, which returns the full workflow
+config in a single call. `.mcp.json` is per-developer and git-ignored; copy
+`.mcp.json.example` to register the Ground Control, citation, and SonarQube
+servers.
 
 ## Workflow Notes
 

@@ -58,7 +58,7 @@ _REPO_IDENTITY_URL_RE = re.compile(
 
 # Bare owner/Ground-Control config slug (github_repo:, --repo, etc.). The
 # negative lookbehind excludes filesystem paths like `src/Ground-Control`, so a
-# local checkout path (e.g. in .mcp.json args) is not mistaken for an identity
+# local checkout path is not mistaken for an identity
 # slug.
 _REPO_IDENTITY_SLUG_RE = re.compile(
     r"(?<![\w./-])([A-Za-z0-9][A-Za-z0-9-]*)/Ground-Control\b"
@@ -85,7 +85,7 @@ _STALE_OWNER_RE = re.compile(
 # The full-slug assignment matcher runs ONLY on real config declarations, where
 # `github_repo:` / `GH_REPO` carry this repo's live identity. Docs legitimately
 # show a generic `github_repo: owner/repo` format example that is not a drift.
-_REPO_IDENTITY_CONFIG_FILES = frozenset({".ground-control.yaml", ".mcp.json"})
+_REPO_IDENTITY_CONFIG_FILES = frozenset({".ground-control.yaml"})
 
 
 # Active surfaces that name this repository, so an owner rename or a copied
@@ -95,7 +95,6 @@ _REPO_IDENTITY_CONFIG_FILES = frozenset({".ground-control.yaml", ".mcp.json"})
 # never-resolving paths hides how little the gate is actually reading.
 REPO_IDENTITY_INVENTORY: tuple[Path, ...] = (
     Path(".ground-control.yaml"),
-    Path(".mcp.json"),
     Path(".github/workflows/ci.yml"),
     Path(".github/workflows/security.yml"),
     Path(".github/workflows/sonarcloud.yml"),

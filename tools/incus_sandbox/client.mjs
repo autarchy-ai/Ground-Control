@@ -1,5 +1,5 @@
-#!/usr/bin/env node
 // The user-facing side of the sandbox boundary deliberately has no Incus client.
+// `grndctl sandbox` loads this module and calls runProgram; it is not a command of its own.
 
 import { spawnSync } from "node:child_process";
 import { readSync } from "node:fs";
@@ -82,13 +82,4 @@ export function runProgram(argv, run = ({ command, args, options }) => spawnSync
     return;
   }
   runClient(argv, (command, args, options) => run({ command, args, options }));
-}
-
-if (import.meta.main) {
-  try {
-    runProgram(process.argv.slice(2));
-  } catch (error) {
-    process.stderr.write(`${error.message}\n`);
-    process.exitCode = 64;
-  }
 }

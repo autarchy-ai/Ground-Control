@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-09-19
-- **Amended:** 2026-09-21 for existing-session migration (#1645) and explicit repository-scoped task processes (#1691)
+- **Amended:** 2026-09-21 for existing-session migration (#1645) and explicit repository-scoped task processes (#1691); 2026-09-23 for a single `grndctl sandbox` command with a closed provider choice
 - **Issue:** #1643
 - **Requirement:** none
 - **Supersedes:** none
@@ -155,7 +155,18 @@ the repository, so a host that runs agents can install the sandbox and build its
 template without a checkout, from the same reviewed and published version. The
 command that exposes them is an unprivileged front end: it names the privileged
 program it is about to run, delegates through `sudo`, and acquires no VM
-authority for the Ground Control service. Setup records only the exact resources it
+authority for the Ground Control service.
+
+That front end is `grndctl sandbox`, and it is the only operator command: the
+lifecycle client above is a module it loads from the same package, not a second
+installed executable, so host setup, the guest template, and every lifecycle
+verb share one reviewed version. Moving the client changes no authority, since
+it was always unprivileged and the root-owned helpers named by the sudo rule
+remain the boundary. The sandbox kind is a closed, packaged provider set chosen
+by name: a leading `--provider` switch, else the operator's `grndctl`
+configuration, else Incus, which is today the only member. Configuration selects
+a provider by name and never names a program or path, so it is not a plugin
+mechanism. Setup records only the exact resources it
 created. Rollback removes only those resources and its sandbox-owned firewall
 objects, and refuses while an owned VM remains running; it never destroys an
 existing Incus project, storage pool, bridge, firewall rule, Docker/libvirt

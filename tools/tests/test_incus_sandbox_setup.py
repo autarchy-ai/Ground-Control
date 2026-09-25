@@ -73,9 +73,12 @@ class SetupContractTest(unittest.TestCase):
             task_client = sandbox / "bin/task_client.mjs"
             repository_identity = sandbox / "bin/repository_identity.mjs"
             source_binding = sandbox / "bin/source_binding.mjs"
+            legacy = (client, source, guard, task_client, repository_identity, source_binding)
             config_root.mkdir()
             state_root.mkdir()
             client.parent.mkdir(parents=True)
+            for path in legacy:
+                path.write_text("an earlier standalone client\n", encoding="utf-8")
             (config_root / "config.json").write_text("{}\n", encoding="utf-8")
             original = "files\nsudoers\nrules\nconfig\nproject\npool\nnetwork\nprofile\ncomplete\nforwarding FORWARD\n"
             ownership.write_text(original, encoding="utf-8")
@@ -102,6 +105,8 @@ class SetupContractTest(unittest.TestCase):
             unrelated.mkdir()
             subprocess.run(["bash", str(harness)], cwd=unrelated, env=environment, check=True)
             self.assertEqual(ownership.read_text(encoding="utf-8"), original)
+            # The lifecycle client runs from the grndctl package; an upgrade removes the old copy.
+            self.assertEqual([path for path in legacy if path.exists()], [])
 
     def test_firewall_has_a_scoped_input_deny_and_rollback_requires_the_ownership_record(self) -> None:
         root = Path(__file__).resolve().parents[2]

@@ -2,6 +2,10 @@
 
 This documents the automated development workflow using the `/implement` skill from Claude Code, Codex, or Cursor CLI. The workflow takes a Ground Control requirement from plan through PR-ready with a single skill invocation.
 
+This workflow is optional maintainer automation. Contributors can build, test,
+and submit changes with ordinary Git and GitHub tooling; they do not need
+Ground Control installed or registered as an MCP server.
+
 > **File-based requirement flow (issues #1500, #1541).** Ground Control is now the MCP server over repo-local files. The `/implement` requirement edits are made in the delivery diff, **before publish**: Step 15 sets `status: ACTIVE` in the `docs/requirements/<UID>/requirement.md` frontmatter, and Step 16 records IMPLEMENTS / TESTS entries in its `## Traceability` section - both reviewed in and merged by the delivery PR. Phase E then makes no requirement-file edits; it verifies the merged files at the immutable merge revision before the final report and close. There is no backend, database, or graph.
 
 ## Prerequisites
@@ -733,7 +737,8 @@ Ground-Control repos also ship a project wrapper at `.cursor/skills/implement/SK
 **Prerequisites** (same orchestrator dependencies as Claude Code / Codex):
 
 - `make ground-control-mcp-install` once on the host
-- Repo [`.mcp.json`](../.mcp.json) present (Ground Control MCP server)
+- A `ground-control` entry in `.mcp.json` that launches `grndctl mcp` (copy
+  `.mcp.json.example`; `.mcp.json` is per-developer and git-ignored)
 - `gh` authenticated to the repo
 - Codex CLI on `PATH` (architecture preflight and pre-push review MCP tools)
 - Commit signing configured for non-interactive commits

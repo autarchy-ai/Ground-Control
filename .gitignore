@@ -212,6 +212,9 @@ dist/
 .env.local
 .env.*.local
 
+# Per-developer MCP server registrations (Ground Control, citation, SonarQube).
+.mcp.json
+
 # OS files
 .DS_Store
 Thumbs.db

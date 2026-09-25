@@ -8,6 +8,14 @@ Accepted
 
 2026-04-05
 
+> **Optional-tooling boundary (2026-09-22):** This ADR governs runs that opt
+> into `/implement`; it does not require contributors to use Ground Control to
+> work on the Ground Control source repository. Ordinary Git, GitHub, build,
+> and test workflows remain supported. `.mcp.json` is per-developer and
+> git-ignored (amended 2026-09-24); maintainers who use this lane copy the
+> tracked `.mcp.json.example`, which registers the Ground Control MCP server.
+> The gate contract below remains mandatory once a run chooses the lane.
+
 > **Documentation sync for issues #650 and #1303 (2026-09-11):** The ADR-061
 > projection went with the backend (#1500), and #1303 removes the surviving
 > emitters and the active `telemetry` configuration surface. Legacy consumer

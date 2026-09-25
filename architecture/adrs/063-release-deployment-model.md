@@ -128,6 +128,13 @@ publishing (GitHub OIDC). A one-time `NPM_TOKEN` secret bootstraps the first
 publish only, because npm cannot configure a trusted publisher before the
 package exists; it is deleted once trusted publishing is configured.
 
+The Ground Control source repository does not track `.mcp.json` at all
+(amended 2026-09-24): the file is per-developer and git-ignored, and the tracked
+`.mcp.json.example` carries the `ground-control`, `citation`, and `sonarqube`
+entries to copy. Running the product while developing the product stays
+optional. Contributors can build, test, and submit changes without an installed
+`grndctl` or a running Ground Control MCP server.
+
 ## 2026-09-11 Amendment: MCP-only Release Surface (issue #1303)
 
 The #1500 re-platform removed the backend, frontend, container publication, and
