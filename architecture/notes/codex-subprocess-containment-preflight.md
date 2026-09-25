@@ -197,8 +197,8 @@ cleanup and the wall timeout.
   reproduce the production orphan.
 - Real executable fixtures must cover a child exiting before a large stdin
   prompt is consumed, exact-cap output followed by another chunk on each
-  stream, and multibyte UTF-8 at the cap. The early-exit case must survive as
-  a structured failure with the child's primary cause; overflow must reject
+  stream, and multibyte UTF-8 at the cap. A child that exits before reading its
+  prompt must yield a structured failure with its primary cause; overflow must reject
   without returning a successful truncated response. The existing `spawnImpl`
   seam can supplement these fixtures for deterministic event-order assertions.
 - Timeout environment parsing covers unset, valid, malformed, zero, negative,
