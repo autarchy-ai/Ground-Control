@@ -4,6 +4,7 @@
 // unchanged.
 
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { isProcessGroupAlive, isPosixProcessGroupCapable, terminateProcessGroup } from "./process-group.js";
 
 export const CODEX_TIMEOUT_MS_MIN = 1000; // 1 second floor
@@ -31,6 +32,20 @@ export function getDefaultCodexTimeoutMs() {
 }
 const KILL_GRACE_MS_DEFAULT = 5000;
 const MAX_BUFFER_DEFAULT = 1024 * 1024; // 1 MiB, matches Node's own execFile default
+
+function newOutputBuffer() {
+  return { chunks: [], length: 0, overflowed: false };
+}
+
+// An overflowed stream was cut at a byte boundary that may split a UTF-8
+// character; StringDecoder.write() withholds that incomplete tail instead of
+// surfacing a replacement character the child never wrote. A complete stream
+// decodes as-is.
+function decodeOutput({ chunks, overflowed }) {
+  const bytes = Buffer.concat(chunks);
+  return overflowed ? new StringDecoder("utf8").write(bytes) : bytes.toString("utf8");
+}
+
 // child_process.execFile() silently drops `detached` before it reaches the
 // real spawn() call (it forwards only an explicit options allowlist), so it
 // can never produce a real process-group leader — confirmed by reading
@@ -51,12 +66,12 @@ class BufferedProcessExecution {
     this.killTimer = null;
     this.settled = false;
     this.pendingCleanup = null;
-    this.stdoutChunks = [];
-    this.stderrChunks = [];
-    this.stdoutLen = 0;
-    this.stderrLen = 0;
+    this.output = { stdout: newOutputBuffer(), stderr: newOutputBuffer() };
     this.stdoutDone = false;
     this.stderrDone = false;
+    this.stdinDone = false;
+    this.stdinError = null;
+    this.inputFailed = false;
     this.closeResult = null;
   }
 
@@ -71,7 +86,60 @@ class BufferedProcessExecution {
     this.attachOutputHandlers();
     this.attachLifecycleHandlers();
     this.armTerminationTriggers();
-    if (config.input != null) this.child.stdin.end(config.input);
+    this.deliverInput();
+  }
+
+  deliverInput() {
+    const { stdin } = this.child;
+    if (!stdin) {
+      this.stdinDone = true;
+      return;
+    }
+    // A child that exits before reading its whole prompt makes the pending
+    // write fail with EPIPE. Without a listener that error is unhandled and
+    // crashes the whole MCP server (issue #1719), so the stdin outcome is part
+    // of this lifecycle.
+    const markStdinDone = () => {
+      this.stdinDone = true;
+      this.maybeFinalize();
+    };
+    const onInputError = (error) => {
+      this.failInput(error);
+      markStdinDone();
+    };
+    stdin.on("error", onInputError);
+    stdin.on("finish", markStdinDone);
+    stdin.on("close", markStdinDone);
+    try {
+      // Always end stdin, even without input, so a child that reads it sees
+      // EOF instead of blocking until the timeout.
+      if (this.config.input == null) stdin.end();
+      else stdin.end(this.config.input);
+    } catch (error) {
+      onInputError(error);
+    }
+  }
+
+  hasTerminalCause() {
+    return this.timedOut || this.aborted || this.maxBufferExceeded !== null || this.inputFailed;
+  }
+
+  clearKillTimer() {
+    if (this.killTimer) {
+      clearTimeout(this.killTimer);
+      this.killTimer = null;
+    }
+  }
+
+  failInput(error) {
+    this.stdinError ??= error;
+    if (this.hasTerminalCause()) return;
+    // An undelivered prompt makes any output worthless, and a child that
+    // closed stdin but kept its output pipes open would otherwise hold the
+    // call until the timeout (or forever without one): terminate the group.
+    this.inputFailed = true;
+    this.clearKillTimer();
+    this.ensureGroupEmpty();
   }
 
   ensureGroupEmpty() {
@@ -92,41 +160,33 @@ class BufferedProcessExecution {
     return this.pendingCleanup;
   }
 
-  trackChunk(chunks, chunk, which, currentLen) {
-    const { maxBuffer } = this.config;
-    // Saturates currentLen to maxBuffer on overflow so every later chunk for
-    // this stream is dropped outright, instead of re-appending the same
-    // stale "remaining allowance" on every subsequent data event.
-    if (currentLen >= maxBuffer) return currentLen;
-    const length = Buffer.byteLength(chunk);
-    if (currentLen + length > maxBuffer) {
-      const allowed = maxBuffer - currentLen;
-      if (allowed > 0) chunks.push(chunk.slice(0, allowed));
-      if (!this.maxBufferExceeded && !this.timedOut && !this.aborted) {
-        this.maxBufferExceeded = which;
-        // maxBuffer is the first terminal cause. Cleanup can legitimately
-        // outlive timeoutMs, but that later timer must not rewrite the result.
-        if (this.killTimer) {
-          clearTimeout(this.killTimer);
-          this.killTimer = null;
-        }
-        this.ensureGroupEmpty();
-      }
-      return maxBuffer;
+  trackChunk(which, chunk) {
+    // Counts raw pipe bytes, before any UTF-8 decoding, so the limit is a true
+    // byte limit. Filling it exactly is allowed; the first byte past it (in
+    // the same chunk or any later one) is overflow (issue #1719).
+    const buffer = this.output[which];
+    if (buffer.overflowed) return;
+    const allowed = this.config.maxBuffer - buffer.length;
+    if (chunk.length <= allowed) {
+      buffer.chunks.push(chunk);
+      buffer.length += chunk.length;
+      return;
     }
-    chunks.push(chunk);
-    return currentLen + length;
+    if (allowed > 0) buffer.chunks.push(chunk.subarray(0, allowed));
+    buffer.length += allowed;
+    buffer.overflowed = true;
+    if (!this.hasTerminalCause()) {
+      this.maxBufferExceeded = which;
+      // maxBuffer is the first terminal cause. Cleanup can legitimately
+      // outlive timeoutMs, but that later timer must not rewrite the result.
+      this.clearKillTimer();
+      this.ensureGroupEmpty();
+    }
   }
 
   attachOutputHandlers() {
-    this.child.stdout.setEncoding("utf8");
-    this.child.stderr.setEncoding("utf8");
-    this.child.stdout.on("data", (chunk) => {
-      this.stdoutLen = this.trackChunk(this.stdoutChunks, chunk, "stdout", this.stdoutLen);
-    });
-    this.child.stderr.on("data", (chunk) => {
-      this.stderrLen = this.trackChunk(this.stderrChunks, chunk, "stderr", this.stderrLen);
-    });
+    this.child.stdout.on("data", (chunk) => this.trackChunk("stdout", chunk));
+    this.child.stderr.on("data", (chunk) => this.trackChunk("stderr", chunk));
   }
 
   markStreamDone(which) {
@@ -164,7 +224,7 @@ class BufferedProcessExecution {
   }
 
   maybeFinalize() {
-    if (!this.closeResult || !this.stdoutDone || !this.stderrDone) return;
+    if (!this.closeResult || !this.stdoutDone || !this.stderrDone || !this.stdinDone) return;
     // Await in-flight cleanup before settling so descendants cannot outlive the call.
     Promise.resolve(this.pendingCleanup).then(() => this.settleFromClose());
   }
@@ -172,8 +232,8 @@ class BufferedProcessExecution {
   settleFromClose() {
     const { code, closeSignal } = this.closeResult;
     const { timeoutMs, killSignal, killGraceMs } = this.config;
-    const stdout = this.stdoutChunks.join("");
-    const stderr = this.stderrChunks.join("");
+    const stdout = decodeOutput(this.output.stdout);
+    const stderr = decodeOutput(this.output.stderr);
     if (this.timedOut || this.aborted) {
       const error = new Error(
         this.timedOut
@@ -196,6 +256,20 @@ class BufferedProcessExecution {
       this.finish(this.reject, error);
       return;
     }
+    // A child that failed on its own (nonzero exit, no signal) keeps that as
+    // the primary cause even when the EPIPE it caused was observed first; a
+    // clean exit or the group termination failInput() sent is reported as the
+    // undelivered prompt.
+    const exitedWithOwnFailure = code !== 0 && closeSignal === null;
+    if (this.inputFailed && !exitedWithOwnFailure) {
+      const error = new Error(`${this.file} did not accept its full input: ${this.stdinError.message}`);
+      error.code = this.stdinError.code ?? "ERR_CHILD_PROCESS_STDIN";
+      error.cause = this.stdinError;
+      error.stdout = stdout;
+      error.stderr = stderr;
+      this.finish(this.reject, error);
+      return;
+    }
     if (code !== 0 || closeSignal !== null) {
       const error = new Error(`Command failed: ${this.file} ${this.args.join(" ")}\n${stderr}`);
       error.code = code;
@@ -211,7 +285,7 @@ class BufferedProcessExecution {
   finish(fn, value) {
     if (this.settled) return;
     this.settled = true;
-    if (this.killTimer) clearTimeout(this.killTimer);
+    this.clearKillTimer();
     fn(value);
   }
 
@@ -219,19 +293,16 @@ class BufferedProcessExecution {
     const { timeoutMs, signal } = this.config;
     if (timeoutMs && timeoutMs > 0) {
       this.killTimer = setTimeout(() => {
-        if (this.maxBufferExceeded || this.aborted) return;
+        if (this.hasTerminalCause()) return;
         this.timedOut = true;
         this.ensureGroupEmpty();
       }, timeoutMs);
     }
     if (signal) {
       const onAbort = () => {
-        if (this.timedOut || this.maxBufferExceeded || this.aborted) return;
+        if (this.hasTerminalCause()) return;
         this.aborted = true;
-        if (this.killTimer) {
-          clearTimeout(this.killTimer);
-          this.killTimer = null;
-        }
+        this.clearKillTimer();
         this.ensureGroupEmpty();
       };
       if (signal.aborted) onAbort();
