@@ -2,7 +2,7 @@
 // (docs/CODING_STANDARDS.md). Declaration bodies are unchanged.
 
 import { detectSensitiveBodyContent, ensureGitRepo, getOwnerRepo } from "../lib.js";
-import { DEFAULT_MODE, VALID_ACTIONS, VALID_MODES, defaultAcquireIntegrationLock, defaultExecFile, defaultReadYaml, defaultRunCiWatcher, defaultRunSonarWatcher, defaultWriteHaltLedger, errorEnvelope } from "./exec-file-async.js";
+import { DEFAULT_MODE, VALID_ACTIONS, VALID_MODES, defaultAcquireIntegrationLock, defaultExecFile, defaultReadYaml, defaultRunGate, defaultRunCiWatcher, defaultRunSonarWatcher, defaultWriteHaltLedger, errorEnvelope } from "./exec-file-async.js";
 import { runPlanAction } from "./run-plan-action.js";
 import { defaultReadFile, defaultReaddir, defaultRmFile, defaultStatFile, runPrepareAction, runReleaseAction, runStatusAction } from "./run-prepare-action.js";
 
@@ -21,6 +21,7 @@ export async function runIntegrationManager(args = {}, deps = {}) {
   // Fill in production defaults for any uninjected deps.
   const resolvedDeps = {
     execFile: deps.execFile ?? defaultExecFile,
+    runGate: deps.runGate ?? defaultRunGate,
     ensureGitRepo: deps.ensureGitRepo ?? ensureGitRepo,
     getOwnerRepo: deps.getOwnerRepo ?? getOwnerRepo,
     readYaml: deps.readYaml ?? defaultReadYaml,

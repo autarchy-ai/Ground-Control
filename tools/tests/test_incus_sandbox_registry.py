@@ -15,6 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from tools.incus_sandbox.config import DEFAULT_DEADLINES
 from tools.incus_sandbox import registry_image
 from tools.incus_sandbox.registry_image import (
     RegistryError,
@@ -27,7 +28,7 @@ from tools.incus_sandbox.registry_image import (
 
 
 def config() -> SimpleNamespace:
-    return SimpleNamespace(project="gc-sandbox")
+    return SimpleNamespace(project="gc-sandbox", deadlines=DEFAULT_DEADLINES)
 
 
 def manifest(digest: str = "sha256:" + "a" * 64, size: int = 64) -> dict[str, object]:
@@ -91,7 +92,7 @@ class RegistryTransferTest(unittest.TestCase):
                    return_value=(json.dumps(manifest(digest, len(payload))).encode("utf-8"), {})), \
              patch("tools.incus_sandbox.registry_image.image_present", return_value=False), \
              patch("tools.incus_sandbox.registry_image._download_blob", side_effect=download), \
-             patch("tools.incus_sandbox.registry_image.subprocess.run",
+             patch("tools.incus_sandbox.registry_image.run_owned",
                    return_value=SimpleNamespace(returncode=0, stderr="",
                                                 stdout=f"fingerprint: {'c' * 64}")) as run:
             result = registry_image.pull(config(), "ghcr.io/autarchy-ai/gc-sandbox-template:latest")
@@ -107,7 +108,7 @@ class RegistryTransferTest(unittest.TestCase):
                    return_value=(json.dumps(manifest()).encode("utf-8"), {})), \
              patch("tools.incus_sandbox.registry_image.image_present", return_value=False), \
              patch("tools.incus_sandbox.registry_image._download_blob", side_effect=download), \
-             patch("tools.incus_sandbox.registry_image.subprocess.run") as run:
+             patch("tools.incus_sandbox.registry_image.run_owned") as run:
             with self.assertRaises(RegistryError):
                 registry_image.pull(config(), "ghcr.io/autarchy-ai/gc-sandbox-template:latest")
         run.assert_not_called()
@@ -118,7 +119,7 @@ class RegistryTransferTest(unittest.TestCase):
              patch("tools.incus_sandbox.registry_image._request",
                    return_value=(json.dumps(manifest(digest, 905)).encode("utf-8"), {})), \
              patch("tools.incus_sandbox.registry_image._download_blob") as download, \
-             patch("tools.incus_sandbox.registry_image.subprocess.run",
+             patch("tools.incus_sandbox.registry_image.run_owned",
                    return_value=SimpleNamespace(returncode=0, stdout="", stderr="")) as run:
             result = registry_image.pull(config(), "ghcr.io/autarchy-ai/gc-sandbox-template:latest")
         download.assert_not_called()
@@ -137,7 +138,7 @@ class RegistryTransferTest(unittest.TestCase):
         )
         for error, message in cases:
             with patch("tools.incus_sandbox.registry_image._request", side_effect=error), \
-                 patch("tools.incus_sandbox.registry_image.subprocess.run") as run:
+                 patch("tools.incus_sandbox.registry_image.run_owned") as run:
                 with self.assertRaisesRegex(RegistryError, message):
                     registry_image.pull(config(), reference)
             run.assert_not_called()
@@ -166,7 +167,7 @@ class RegistryTransferTest(unittest.TestCase):
             with patch("tools.incus_sandbox.registry_image.registry_token", return_value="scoped"), \
                  patch("tools.incus_sandbox.registry_image.tempfile.TemporaryDirectory",
                        return_value=nullcontext(directory)), \
-                 patch("tools.incus_sandbox.registry_image.subprocess.run", side_effect=export), \
+                 patch("tools.incus_sandbox.registry_image.run_owned", side_effect=export), \
                  patch("tools.incus_sandbox.registry_image._request", side_effect=request):
                 result = registry_image.push(config(), "ghcr.io/autarchy-ai/gc-sandbox-template:latest",
                                              "d" * 64, "secret-canary")
@@ -247,7 +248,7 @@ class ArtifactNormalizationTest(unittest.TestCase):
                    return_value=(json.dumps(manifest(digest, len(payload))).encode("utf-8"), {})), \
              patch("tools.incus_sandbox.registry_image.image_present", return_value=False), \
              patch("tools.incus_sandbox.registry_image._download_blob", side_effect=download), \
-             patch("tools.incus_sandbox.registry_image.subprocess.run",
+             patch("tools.incus_sandbox.registry_image.run_owned",
                    return_value=SimpleNamespace(returncode=1, stdout="",
                                                 stderr="Error: Architecture isn't supported: x86_64_v2")):
             with self.assertRaises(RegistryError) as result:

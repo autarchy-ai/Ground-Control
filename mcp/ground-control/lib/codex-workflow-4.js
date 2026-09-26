@@ -18,7 +18,7 @@ import {
 } from "./knowledge-capture.js";
 import { isSafeGitRefName } from "./repo-context.js";
 import { getRepoGroundControlContext } from "./repo-vocabulary-2.js";
-import { execFile } from "./runtime-primitives.js";
+import { execFileBounded } from "./bounded-exec.js";
 import { prepareCommittedRetryCompletion, validateBaseSyncCompletionInput } from "../implement/sync-inputs.js";
 import { resolveDeliveryBinding } from "./delivery-binding.js";
 import { readTrustedRunLane } from "./run-lane-evidence.js";
@@ -44,7 +44,7 @@ function validateBaseSyncInput(input) {
 
 export async function runSynchronizeImplementBranch(input, {
   workspaceAuthorizationResolver = resolveMcpLaunchWorkspaceAuthorization,
-  commandRunner = execFile,
+  commandRunner = execFileBounded,
   contextResolver = getRepoGroundControlContext,
   syncRecordReader = readTrustedImplementSyncRecord,
   issueThreadReader = (args) => runGetIssueThread(args, { workspaceAuthorizationResolver }),

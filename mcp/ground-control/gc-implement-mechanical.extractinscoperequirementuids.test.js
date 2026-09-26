@@ -70,8 +70,8 @@ function baseDeps(overrides = {}) {
   };
   deps.runGit ??= async (repoRoot, argv, commandRunner) =>
     commandRunner("git", ["-C", repoRoot, ...argv], { cwd: repoRoot });
-  deps.preCommit ??= async (repoRoot, commandRunner, context) =>
-    commandRunner(
+  deps.preCommit ??= async (repoRoot, context) =>
+    deps.execFile(
       "bash",
       ["-c", context?.workflow?.precommit_command ?? "pre-commit run --hook-stage pre-commit"],
       { cwd: repoRoot },

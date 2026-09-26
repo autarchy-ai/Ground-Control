@@ -29,6 +29,7 @@ import {
   writeImplementPublishJournal,
   removeImplementPublishJournal,
 } from "./lib.js";
+import { runBoundedGateCommand } from "./lib/bounded-exec.js";
 import { runRecordDeliveryReadiness } from "./lib/delivery-readiness.js";
 import { readRemoteGateSnapshot } from "./lib/remote-gates.js";
 import { verifyPhaseEReadiness } from "./lib/phase-e-readiness.js";
@@ -122,7 +123,9 @@ const defaultDeps = {
   authorizeRepo: authorizeImplementMutationCheckout,
   runGit: runImplementGitCommand,
   commit: runImplementCommit,
-  preCommit: runImplementPreCommit,
+  // The pre-commit hook owns its runner: the bounded, tail-only gate runner (issue #1720).
+  preCommit: (repoRoot, context, requestedRequirementUid) =>
+    runImplementPreCommit(repoRoot, runBoundedGateCommand, context, requestedRequirementUid),
   getContext: getRepoGroundControlContext,
   prepareBranch: runPrepareImplementBranch,
   markPickedUp: runMarkImplementIssuePickedUp,

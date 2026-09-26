@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from tools.incus_sandbox import task_environment
-from tools.incus_sandbox.config import ConfigError, load_config, upgrade_config
+from tools.incus_sandbox.config import DEFAULT_DEADLINES, ConfigError, load_config, upgrade_config
 from tools.incus_sandbox.repository_environment import (
     DeclarationError,
     parse_repository_environment,
@@ -135,7 +135,7 @@ class HostPolicyTest(unittest.TestCase):
         self.write(doc)
         self.assertTrue(upgrade_config(self.path, expected_uid=os.getuid()))
         upgraded = json.loads(self.path.read_text())
-        self.assertEqual(upgraded["schema"], "gc.incus-sandbox/v3")
+        self.assertEqual(upgraded["schema"], "gc.incus-sandbox/v4")
         self.assertEqual(upgraded["task_environment"]["repositories"], {})
 
 
@@ -296,6 +296,7 @@ class TaskEnvironmentServiceTest(unittest.TestCase):
             project="gc-sandbox", state_dir=self.state, operator_uid=os.getuid(),
             event_log=self.root / "events", event_max_bytes=1024,
             task_environment=SimpleNamespace(repositories={}, max_value_bytes=16384),
+            deadlines=DEFAULT_DEADLINES,
         )
         service, events, lifecycle = MagicMock(), MagicMock(), MagicMock()
         with patch.object(task_environment.os, "geteuid", return_value=0), \

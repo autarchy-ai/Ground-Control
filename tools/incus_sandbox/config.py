@@ -63,6 +63,17 @@ class TaskEnvironmentPolicy(object):
 
 
 @dataclass(frozen=True)
+class ExecutionDeadlines(object):
+    """Finite wall deadlines, in seconds, for each closed class of Incus call."""
+
+    query: int
+    lifecycle: int
+    launch: int
+    transfer: int
+    task: int
+
+
+@dataclass(frozen=True)
 class SandboxConfig(object):
     """Validated host policy used by the root-side lifecycle helper."""
 
@@ -80,6 +91,7 @@ class SandboxConfig(object):
     host: HostLimits
     migration: MigrationLimits | None
     task_environment: TaskEnvironmentPolicy
+    deadlines: ExecutionDeadlines
 
 
 _TOP_LEVEL = {
@@ -89,6 +101,7 @@ _TOP_LEVEL = {
 }
 _TOP_LEVEL_V2 = _TOP_LEVEL | {"migration"}
 _TOP_LEVEL_V3 = _TOP_LEVEL_V2 | {"task_environment"}
+_TOP_LEVEL_V4 = _TOP_LEVEL_V3 | {"deadline_seconds"}
 _VM_FIELDS = ("cpu", "memory_mib", "disk_gib")
 _HOST_FIELDS = (
     "reserve_memory_mib", "reserve_disk_gib", "max_cpu", "max_memory_mib",
@@ -99,6 +112,11 @@ _MIN_EVENT_BYTES = 512
 _SCHEMA_V1 = "gc.incus-sandbox/v1"
 _SCHEMA_V2 = "gc.incus-sandbox/v2"
 _SCHEMA_V3 = "gc.incus-sandbox/v3"
+_SCHEMA_V4 = "gc.incus-sandbox/v4"
+# Every privileged Incus call has a finite deadline (issue #1720). A launch can pull an
+# image and a transfer can copy a 1 GiB packet; a query or task control is quick.
+DEFAULT_DEADLINES = ExecutionDeadlines(query=60, lifecycle=300, launch=1800, transfer=1800, task=120)
+MAX_DEADLINE_SECONDS = 4 * 3600
 _DEFAULT_MIGRATION = {
     "max_packet_bytes": 1024 * 1024 * 1024,
     "max_file_count": 2048,
@@ -165,6 +183,7 @@ def _check_top_level(doc: dict[str, object]) -> None:
     schema = doc.get("schema")
     expected = {
         _SCHEMA_V1: _TOP_LEVEL, _SCHEMA_V2: _TOP_LEVEL_V2, _SCHEMA_V3: _TOP_LEVEL_V3,
+        _SCHEMA_V4: _TOP_LEVEL_V4,
     }.get(schema)
     if expected is None or set(doc) != expected:
         raise ConfigError("configuration keys do not match the declared gc.incus-sandbox schema")
@@ -246,9 +265,23 @@ def _provider_repositories(raw: object) -> dict[str, dict[str, ProviderLocator]]
     return repositories
 
 
+def _deadlines(doc: dict[str, object]) -> ExecutionDeadlines:
+    """Apply v4 per-operation overrides to the finite defaults; nothing means unlimited."""
+    if doc["schema"] != _SCHEMA_V4:
+        return DEFAULT_DEADLINES
+    section = doc["deadline_seconds"]
+    known = set(DEFAULT_DEADLINES.__dataclass_fields__)
+    if not isinstance(section, dict) or not set(section) <= known:
+        raise ConfigError("deadline_seconds names an unknown operation")
+    overrides = {name: _positive(value, f"deadline_seconds.{name}") for name, value in section.items()}
+    if any(value > MAX_DEADLINE_SECONDS for value in overrides.values()):
+        raise ConfigError(f"deadline_seconds values must not exceed {MAX_DEADLINE_SECONDS}")
+    return ExecutionDeadlines(**{name: overrides.get(name, getattr(DEFAULT_DEADLINES, name)) for name in known})
+
+
 def _task_environment_policy(doc: dict[str, object]) -> TaskEnvironmentPolicy:
     """Validate the closed v3 repository-to-provider authority map."""
-    if doc["schema"] != _SCHEMA_V3:
+    if doc["schema"] not in {_SCHEMA_V3, _SCHEMA_V4}:
         return TaskEnvironmentPolicy(max_value_bytes=16 * 1024, repositories={})
     section = doc.get("task_environment")
     if not isinstance(section, dict) or set(section) != {"max_value_bytes", "repositories"}:
@@ -280,6 +313,7 @@ def _build_config(doc: dict[str, object]) -> SandboxConfig:
         ),
         operator_uid=_positive(doc["operator_uid"], "operator_uid"), vm=vm, host=host,
         migration=migration, task_environment=_task_environment_policy(doc),
+        deadlines=_deadlines(doc),
     )
 
 
@@ -292,17 +326,18 @@ def load_config(path: Path, *, expected_uid: int = 0) -> SandboxConfig:
 
 
 def upgrade_config(path: Path, *, expected_uid: int = 0) -> bool:
-    """Atomically add the closed v2 migration limits to a valid v1 policy."""
+    """Atomically migrate a valid v1-v3 policy to v4, keeping every configured value."""
     _owned_regular(path, expected_uid)
     document = _read_document(path)
     _check_top_level(document)
     _build_config(document)
-    if document["schema"] == _SCHEMA_V3:
+    if document["schema"] == _SCHEMA_V4:
         return False
     upgraded = {
-        **document, "schema": _SCHEMA_V3,
+        **document, "schema": _SCHEMA_V4,
         "migration": document.get("migration", _DEFAULT_MIGRATION),
-        "task_environment": _DEFAULT_TASK_ENVIRONMENT,
+        "task_environment": document.get("task_environment", _DEFAULT_TASK_ENVIRONMENT),
+        "deadline_seconds": {},
     }
     _check_top_level(upgraded)
     _build_config(upgraded)

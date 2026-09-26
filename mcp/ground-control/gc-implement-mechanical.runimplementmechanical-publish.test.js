@@ -94,7 +94,7 @@ describe("runImplementMechanical publish", () => {
           precommit_command: "lefthook run pre-commit",
         },
       }),
-      preCommit: async (repoRoot, commandRunner, context) => {
+      preCommit: async (repoRoot, context) => {
         preCommitArgs.push([repoRoot, context?.workflow?.precommit_command]);
         return { stdout: "" };
       },
@@ -117,7 +117,7 @@ describe("runImplementMechanical publish", () => {
       commitMessage: "fix: carry requirement identity into repository gates",
     }, baseDeps({
       execFile: git.execFile,
-      preCommit: async (repoRoot, commandRunner, context, requestedRequirementUid) => {
+      preCommit: async (repoRoot, context, requestedRequirementUid) => {
         preCommitUids.push(requestedRequirementUid);
         return { stdout: "" };
       },

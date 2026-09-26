@@ -107,6 +107,8 @@ both the template and the code.
 | Variable | Effect when set |
 |---|---|
 | `GC_CODEX_TIMEOUT_MS` | Per-invocation timeout for Codex-backed tools, within the bounds in `lib/model-subprocess.js`. |
+| `GC_COMMAND_TIMEOUT_MS` | Deadline for each fixed Git or GitHub command that `/implement` publish, base synchronization, and the integration manager run while they hold their lease or lock. Defaults to 10 minutes and is capped at 1 hour. A malformed or out-of-range value falls back to the default, never to unlimited. |
+| `GC_GATE_TIMEOUT_MS` | Deadline for a repository gate shell: the `/implement` pre-commit hook and the integration completion gate. Defaults to 30 minutes and is capped at 3 hours. At the deadline the gate's whole process tree is stopped, and the run reports a timeout. |
 | `GC_CODEX_REVIEW_PARALLEL` | Runs the core and security reviewers concurrently when set to `2`. |
 | `GC_CODEX_REVIEW_MAX_DIFF_BYTES` | Diff-slice budget for a review cycle (see diff transport below). |
 | `GH_VERIFY_FINDING_AUTHORS` | Extra comma-separated GitHub logins `gc_codex_verify_finding` accepts as finding authors, for a service-identity deployment. |

@@ -3,76 +3,81 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
-import re
 import subprocess
 import sys
 import time
 from pathlib import Path
 from collections.abc import Callable
 if __package__:
+    from .allocations import SANDBOX_NAME, AdmissionError, locked_allocations, save_allocations, unlock
     from .config import SandboxConfig, load_config
     from .events import EventWriter
     from .observations import observation, observed_facts, positive_fact, query_payload, status_state
+    from .owned_process import COMMAND_ERRORS, capture, run_owned
     from .task_environment import redacted_task_observation, state_lock
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from allocations import SANDBOX_NAME, AdmissionError, locked_allocations, save_allocations, unlock
     from config import SandboxConfig, load_config
     from events import EventWriter
     from observations import observation, observed_facts, positive_fact, query_payload, status_state
+    from owned_process import COMMAND_ERRORS, capture, run_owned
     from task_environment import redacted_task_observation, state_lock
 
 
 class UsageError(RuntimeError):
     """The caller requested a lifecycle action outside the closed vocabulary."""
 
-class AdmissionError(RuntimeError):
-    """Host capacity facts do not safely admit a VM operation."""
-
-_NAME = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
 _ACTIONS = {"create", "list", "attach", "stop", "start", "delete", "status", "diagnose"}
 _INCUS = "/usr/bin/incus"
 _IP = "/usr/sbin/ip"
-_INVALID_ALLOCATION = "allocation state is invalid"
 _INVALID_OPERATOR = "caller is not the configured sandbox operator"
-
-def _run(argv: list[str]) -> dict[str, int]:
-    """Run one already-allowlisted executable argument vector."""
-    completed = subprocess.run(argv, check=True, stdin=None, stdout=None, stderr=None)
-    return {"returncode": completed.returncode}
-
 
 def _network_policy_fresh(config: SandboxConfig) -> bool:
     """A changed host address set invalidates starts until setup refreshes nft sets."""
     stamp = config.state_dir / "network-addresses.sha256"
     try:
         expected = stamp.read_text(encoding="ascii").strip()
-        addresses = subprocess.check_output([_IP, "-o", "-4", "addr", "show"], text=True)
-    except (OSError, subprocess.SubprocessError):
+        addresses = capture([_IP, "-o", "-4", "addr", "show"], config.deadlines.query)
+    except COMMAND_ERRORS:
         return False
     return expected == hashlib.sha256(addresses.encode("utf-8")).hexdigest()
+
+
+def _failure_code(error: BaseException) -> str:
+    """Map a failed call to the bounded audit vocabulary."""
+    return "command_timeout" if isinstance(error, subprocess.TimeoutExpired) else "command_failed"
 
 
 class LifecycleHelper(object):
     """Validates caller intent, reserves capacity, then emits only fixed Incus argv."""
 
-    def __init__(self, config: SandboxConfig, *, runner: Callable[[list[str]], object] = _run,
+    def __init__(self, config: SandboxConfig, *, runner: Callable[[list[str], str], object] | None = None,
                  event_writer: EventWriter, observer: Callable[[], dict[str, int | bool]] = observation,
                  network_checker: Callable[[SandboxConfig], bool] = _network_policy_fresh,
                  caller_uid: int | None = None) -> None:
+        """Bind the host policy; the runner defaults to deadline-bounded Incus execution."""
         self.config = config
-        self.runner = runner
+        self.runner = runner if runner is not None else self._run
         self.events = event_writer
         self.observer = observer
         self.network_checker = network_checker
         self.caller_uid = os.getuid() if caller_uid is None else caller_uid
 
+    def _run(self, argv: list[str], operation: str) -> object:
+        """Run one fixed Incus argv under its operation's configured deadline."""
+        if operation == "attach":
+            # The operator's own terminal session: it holds no lock, needs the controlling
+            # tty, and lasts until they detach, so it is the one call without a deadline.
+            return subprocess.run(argv, check=True)
+        return run_owned(argv, deadline_seconds=getattr(self.config.deadlines, operation))
+
     @staticmethod
     def _name(name: str) -> str:
-        if not isinstance(name, str) or not _NAME.fullmatch(name):
+        if not isinstance(name, str) or not SANDBOX_NAME.fullmatch(name):
             raise UsageError("sandbox name must be lowercase letters, digits, and hyphens")
         return name
 
@@ -86,49 +91,9 @@ class LifecycleHelper(object):
                                         "disk_gib": self.config.vm.disk_gib},
                            "observed": observed})
 
-    def _allocation_path(self) -> Path:
-        self.config.state_dir.mkdir(mode=0o750, parents=True, exist_ok=True)
-        return self.config.state_dir / "allocations.json"
-
     def _locked_allocations(self) -> tuple[int, dict[str, dict[str, int]]]:
-        path = self._allocation_path()
-        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o640)
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        try:
-            raw = os.read(fd, 1024 * 1024).decode("utf-8")
-            doc = json.loads(raw) if raw else {}
-            if not isinstance(doc, dict):
-                raise AdmissionError(_INVALID_ALLOCATION)
-            records: dict[str, dict[str, int]] = {}
-            for name, value in doc.items():
-                if not _NAME.fullmatch(name) or not isinstance(value, dict):
-                    raise AdmissionError(_INVALID_ALLOCATION)
-                fields = ("cpu", "memory_mib", "disk_gib", "owner_uid")
-                valid_fields = set(value) == {*fields, "active"}
-                if not valid_fields:
-                    raise AdmissionError(_INVALID_ALLOCATION)
-                valid_numbers = all(isinstance(value[key], int) and value[key] > 0 for key in fields)
-                if not valid_numbers or not isinstance(value["active"], bool):
-                    raise AdmissionError(_INVALID_ALLOCATION)
-                records[name] = value
-            return fd, records
-        except Exception:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
-            raise
-
-    @staticmethod
-    def _save_allocations(fd: int, records: dict[str, dict[str, int]]) -> None:
-        payload = json.dumps(records, separators=(",", ":")).encode("utf-8")
-        os.lseek(fd, 0, os.SEEK_SET)
-        os.ftruncate(fd, 0)
-        os.write(fd, payload)
-        os.fsync(fd)
-
-    @staticmethod
-    def _unlock(fd: int) -> None:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
+        """Take the allocation lock for this host policy's state directory."""
+        return locked_allocations(self.config.state_dir)
 
     def _admission_observation(self) -> dict[str, int | bool]:
         """Read and validate the host facts used for a new reservation."""
@@ -191,7 +156,7 @@ class LifecycleHelper(object):
         try:
             self._check_transition(previous, fresh, records)
         except Exception:
-            self._unlock(fd)
+            unlock(fd)
             raise
         records[name] = {"cpu": self.config.vm.cpu, "memory_mib": self.config.vm.memory_mib,
                          "disk_gib": self.config.vm.disk_gib, "owner_uid": self.caller_uid, "active": True}
@@ -206,7 +171,7 @@ class LifecycleHelper(object):
             if record is None or record["owner_uid"] != self.caller_uid:
                 raise UsageError("sandbox is not owned by this operator")
         finally:
-            self._unlock(fd)
+            unlock(fd)
 
     def require_active_owner(self, name: str) -> None:
         """Admit transfer only to this operator's active, still-isolated sandbox."""
@@ -221,24 +186,24 @@ class LifecycleHelper(object):
             if record is None or record["owner_uid"] != self.caller_uid or not record["active"]:
                 raise UsageError("migration target is not an active sandbox owned by this operator")
         finally:
-            self._unlock(fd)
+            unlock(fd)
 
     def _release(self, name: str) -> None:
         fd, records = self._locked_allocations()
         try:
             if name in records:
                 records[name]["active"] = False
-            self._save_allocations(fd, records)
+            save_allocations(fd, records)
         finally:
-            self._unlock(fd)
+            unlock(fd)
 
     def _forget(self, name: str) -> None:
         fd, records = self._locked_allocations()
         try:
             records.pop(name, None)
-            self._save_allocations(fd, records)
+            save_allocations(fd, records)
         finally:
-            self._unlock(fd)
+            unlock(fd)
         (self.config.state_dir / "source-bindings" / f"{name}.json").unlink(missing_ok=True)
         (self.config.state_dir / "tasks" / f"{name}.json").unlink(missing_ok=True)
 
@@ -255,7 +220,7 @@ class LifecycleHelper(object):
                 ),
             }
         finally:
-            self._unlock(fd)
+            unlock(fd)
 
     def normalized_observation(self, name: str, incus_info: dict[str, object] | None) -> dict[str, object]:
         """Render the closed status shape; malformed daemon JSON remains unavailable."""
@@ -282,7 +247,7 @@ class LifecycleHelper(object):
         try:
             return {name for name, record in records.items() if record["active"]}
         finally:
-            self._unlock(fd)
+            unlock(fd)
 
     def _query(self, name: str, action: str) -> None:
         name = self._name(name)
@@ -290,20 +255,17 @@ class LifecycleHelper(object):
         self._require_owner(name)
         started = time.monotonic()
         try:
+            deadline = self.config.deadlines.query
             instance_path = f"/1.0/instances/{name}?project={self.config.project}"
-            completed = subprocess.run([_INCUS, "query", instance_path, "--raw"],
-                                       check=True, text=True, capture_output=True)
-            info = query_payload(completed.stdout)
+            info = query_payload(capture([_INCUS, "query", instance_path, "--raw"], deadline))
             if isinstance(info, dict):
                 state_path = f"/1.0/instances/{name}/state?project={self.config.project}"
-                state = subprocess.run([_INCUS, "query", state_path, "--raw"],
-                                       check=True, text=True, capture_output=True)
-                info["state"] = query_payload(state.stdout)
+                info["state"] = query_payload(capture([_INCUS, "query", state_path, "--raw"], deadline))
             report = self.normalized_observation(name, info)
             print(json.dumps(report, separators=(",", ":")))
             self._emit(action, "success", name, started=started, observed=self.observer())
-        except Exception:
-            self._emit(action, "failure", name, error_code="command_failed", started=started)
+        except Exception as exc:
+            self._emit(action, "failure", name, error_code=_failure_code(exc), started=started)
             raise
 
     def _reservation(self, name: str, reserve: bool, fresh: bool) -> tuple[
@@ -314,26 +276,44 @@ class LifecycleHelper(object):
             self._require_owner(name)
             return None, None, None, None
         descriptor, records, observed, previous = self._admit(name, fresh)
-        self._save_allocations(descriptor, records)
+        save_allocations(descriptor, records)
         return descriptor, records, observed, previous
+
+    def _instance_absent(self, name: str) -> bool:
+        """True only on positive proof that the project holds no instance of this name."""
+        try:
+            listed = json.loads(capture([_INCUS, "query", f"/1.0/instances?project={self.config.project}",
+                                          "--raw"], self.config.deadlines.query))
+        except (*COMMAND_ERRORS, ValueError):
+            return False
+        return isinstance(listed, list) and f"/1.0/instances/{name}" not in listed
+
+    def _delete_instance(self, name: str) -> None:
+        """Delete the instance; one that provably no longer exists counts as deleted."""
+        try:
+            self.runner([_INCUS, "delete", name, "--force", "--project", self.config.project], "lifecycle")
+        except COMMAND_ERRORS:
+            if not self._instance_absent(name):
+                raise
 
     def _rollback_reservation(self, name: str, descriptor: int | None,
                               records: dict[str, dict[str, int]] | None,
                               previous: dict[str, int] | None, *, delete: bool) -> None:
-        """Restore the prior allocation and remove only an instance this call created."""
+        """Remove only an instance this call may have created, then restore the prior allocation."""
         if descriptor is None or records is None:
             return
+        if delete:
+            try:
+                self._delete_instance(name)
+            except Exception:
+                # The instance may still exist, so its reservation stays held and the
+                # owner's delete reconciles it; capacity is never freed under a live VM.
+                return
         if previous is None:
             records.pop(name, None)
         else:
             records[name] = previous
-        self._save_allocations(descriptor, records)
-        if not delete:
-            return
-        try:
-            self.runner([_INCUS, "delete", name, "--force", "--project", self.config.project])
-        except Exception:
-            return
+        save_allocations(descriptor, records)
 
     @staticmethod
     def _admission_error_code(error: AdmissionError) -> str:
@@ -342,8 +322,13 @@ class LifecycleHelper(object):
             return "admission_observation_stale"
         return "admission_insufficient"
 
-    def _mutate(self, action: str, name: str, commands: list[list[str]], *, reserve: bool = False,
+    def _step(self, operation: str, argv: list[str]) -> Callable[[], object]:
+        """Bind one fixed argv to its operation's deadline for a lifecycle mutation."""
+        return lambda: self.runner(argv, operation)
+
+    def _mutate(self, action: str, name: str, steps: list[Callable[[], object]], *, reserve: bool = False,
                 release: bool = False, fresh: bool = False) -> None:
+        """Run one audited lifecycle mutation, rolling back a reservation it could not complete."""
         name = self._name(name)
         started = time.monotonic()
         self.events.ensure_available()
@@ -354,11 +339,11 @@ class LifecycleHelper(object):
         created = False
         try:
             descriptor, records, observed, previous = self._reservation(name, reserve, fresh)
-            for argv in commands:
-                self.runner(argv)
+            for step in steps:
+                step()
                 created = fresh
             if descriptor is not None and records is not None:
-                self._save_allocations(descriptor, records)
+                save_allocations(descriptor, records)
             if release:
                 self._release(name)
             self._emit(action, "success", name, started=started, observed=observed)
@@ -366,32 +351,37 @@ class LifecycleHelper(object):
             code = self._admission_error_code(exc)
             self._emit(action, "denied", name, error_code=code, started=started, observed=observed)
             raise
-        except Exception:
-            # Only an instance this invocation launched is deleted; a reservation that
-            # never completed is returned to the state it replaced.
-            self._rollback_reservation(name, descriptor, records, previous, delete=created)
-            self._emit(action, "failure", name, error_code="command_failed", started=started, observed=observed)
+        except Exception as exc:
+            # Only an instance this invocation launched is deleted, including a launch that
+            # timed out after the daemon may have created it; a reservation that never
+            # completed is returned to the state it replaced.
+            timed_out = isinstance(exc, subprocess.TimeoutExpired)
+            self._rollback_reservation(name, descriptor, records, previous, delete=created or (fresh and timed_out))
+            self._emit(action, "failure", name, error_code=_failure_code(exc), started=started, observed=observed)
             raise
         finally:
             if descriptor is not None:
-                self._unlock(descriptor)
+                unlock(descriptor)
 
     def create(self, name: str) -> None:
         name = self._name(name)
         project = self.config.project
-        commands = [
-            [_INCUS, "launch", self.config.image, name, "--project", project,
-             "--profile", self.config.profile, "--vm", "--device",
-             f"root,size={self.config.vm.disk_gib}GiB"],
-            [_INCUS, "config", "set", name, "limits.cpu", str(self.config.vm.cpu), "--project", project],
-            [_INCUS, "config", "set", name, "limits.memory", f"{self.config.vm.memory_mib}MiB", "--project", project],
+        steps = [
+            self._step("launch", [_INCUS, "launch", self.config.image, name, "--project", project,
+                                  "--profile", self.config.profile, "--vm", "--device",
+                                  f"root,size={self.config.vm.disk_gib}GiB"]),
+            self._step("lifecycle", [_INCUS, "config", "set", name, "limits.cpu", str(self.config.vm.cpu),
+                                     "--project", project]),
+            self._step("lifecycle", [_INCUS, "config", "set", name, "limits.memory",
+                                     f"{self.config.vm.memory_mib}MiB", "--project", project]),
         ]
-        self._mutate("create", name, commands, reserve=True, fresh=True)
+        self._mutate("create", name, steps, reserve=True, fresh=True)
         self._emit("boot", "success", name)
     def start(self, name: str) -> None:
         name = self._name(name)
         with state_lock(self.config.state_dir, name):
-            self._mutate("start", name, [[_INCUS, "start", name, "--project", self.config.project]], reserve=True)
+            self._mutate("start", name, [self._step("lifecycle", [_INCUS, "start", name, "--project",
+                                                                  self.config.project])], reserve=True)
             self._task_state_path(name).unlink(missing_ok=True)
     def _task_state_path(self, name: str) -> Path:
         return self.config.state_dir / "tasks" / f"{name}.json"
@@ -401,7 +391,7 @@ class LifecycleHelper(object):
         if not state.exists():
             return
         self.runner([_INCUS, "exec", name, "--project", self.config.project, "--",
-                     "/usr/bin/python3", "/usr/local/lib/gc-incus-sandbox/task-launcher.py", "stop"])
+                     "/usr/bin/python3", "/usr/local/lib/gc-incus-sandbox/task-launcher.py", "stop"], "task")
         state.unlink(missing_ok=True)
 
     def stop(self, name: str) -> None:
@@ -409,7 +399,8 @@ class LifecycleHelper(object):
         with state_lock(self.config.state_dir, name):
             self._require_owner(name)
             self._terminate_task(name)
-            self._mutate("stop", name, [[_INCUS, "stop", name, "--project", self.config.project]], release=True)
+            self._mutate("stop", name, [self._step("lifecycle", [_INCUS, "stop", name, "--project",
+                                                                 self.config.project])], release=True)
 
     def delete(self, name: str, confirmation: str | None = None) -> None:
         name = self._name(name)
@@ -418,19 +409,18 @@ class LifecycleHelper(object):
         with state_lock(self.config.state_dir, name):
             self._require_owner(name)
             self._terminate_task(name)
-            command = [_INCUS, "delete", name, "--force", "--project", self.config.project]
-            self._mutate("delete", name, [command], release=True)
+            self._mutate("delete", name, [lambda: self._delete_instance(name)], release=True)
             self._forget(name)
 
     def attach(self, name: str) -> None:
         name = self._name(name)
-        self._mutate("attach", name, [[_INCUS, "exec", name, "--project", self.config.project, "--",
-                                        "/usr/bin/tmux", "-S", "/run/gc-sandbox-task/control",
-                                        "attach-session", "-t", "gc-task"]])
+        self._mutate("attach", name, [self._step("attach", [
+            _INCUS, "exec", name, "--project", self.config.project, "--",
+            "/usr/bin/tmux", "-S", "/run/gc-sandbox-task/control", "attach-session", "-t", "gc-task"])])
 
     def list(self) -> None:
         self.events.ensure_available()
-        self.runner([_INCUS, "list", "--project", self.config.project, "--format", "json"])
+        self.runner([_INCUS, "list", "--project", self.config.project, "--format", "json"], "query")
         self._emit("status", "success", None)
 
     def status(self, name: str) -> None:

@@ -10,7 +10,7 @@
 
 import { readImplementGitOid, runImplementGit } from "./codex-workflow-2.js";
 import { readImplementPublishJournal, removeImplementPublishJournal } from "./implement-recovery-journal.js";
-import { execFile } from "./runtime-primitives.js";
+import { execFileBounded } from "./bounded-exec.js";
 
 // Compare the staged merge control state — MERGE_HEAD, the feature HEAD, and the
 // unmerged index set — against the attempt the completion boundary is about to
@@ -22,7 +22,7 @@ import { execFile } from "./runtime-primitives.js";
 export async function assertImplementMergeAttemptUnchanged(
   repoRoot,
   { preSyncSha, fetchedBaseSha },
-  commandRunner = execFile,
+  commandRunner = execFileBounded,
 ) {
   const mergeHead = await readImplementGitOid(repoRoot, "MERGE_HEAD", commandRunner).catch(() => null);
   if (mergeHead !== fetchedBaseSha) {
@@ -56,7 +56,7 @@ export async function assertImplementMergeAttemptUnchanged(
 // The authorized per-worktree Git metadata directory. The publish lease and the
 // recovery journal both live here, so a linked worktree is isolated from the
 // common directory instead of serializing on it.
-export async function resolvePublishGitDir(repoRoot, commandRunner = execFile) {
+export async function resolvePublishGitDir(repoRoot, commandRunner = execFileBounded) {
   const { stdout } = await runImplementGit(repoRoot, ["rev-parse", "--absolute-git-dir"], commandRunner);
   const gitDir = stdout.trim();
   if (gitDir === "") throw new Error("Unable to resolve the per-worktree Git directory");
@@ -69,7 +69,7 @@ export async function resolvePublishGitDir(repoRoot, commandRunner = execFile) {
 // `{ proceed: true }` when there is nothing to recover (clearing a spent
 // same-attempt journal on the way), or `{ resolved }` with a bounded terminal
 // envelope the caller returns unchanged (issue #1495).
-export async function reconcileInterruptedPublish({ repoRoot, gitDir, branchName, issueNumber, commandRunner = execFile }) {
+export async function reconcileInterruptedPublish({ repoRoot, gitDir, branchName, issueNumber, commandRunner = execFileBounded }) {
   const journal = readImplementPublishJournal(gitDir);
   if (!journal.ok) {
     return { resolved: {

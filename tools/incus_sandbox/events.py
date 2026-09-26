@@ -20,7 +20,7 @@ _ACTIONS = {
 _OUTCOMES = {"success", "failure", "denied"}
 _ERRORS = {
     "none", "admission_observation_stale", "admission_insufficient", "command_failed",
-    "invalid_input", "event_unavailable",
+    "command_timeout", "invalid_input", "event_unavailable",
     "task_unavailable",
 }
 _INPUT_FIELDS = {"action", "outcome", "sandbox_id", "error_code", "assigned", "observed", "duration_ms"}

@@ -12,6 +12,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+if __package__:
+    from .owned_process import run_owned
+else:
+    from owned_process import run_owned
+
 
 class TransferError(RuntimeError):
     """The caller requested a transfer outside the closed boundary."""
@@ -176,8 +181,12 @@ def transfer_commands(project: str, sandbox: str, packet_path: str) -> list[list
 
 
 def transfer(project: str, state_dir: Path, sandbox: str, stream: object,
-             *, max_bytes: int = _MAX_PACKET_BYTES) -> None:
-    """Persist the bounded packet in root-owned state only while Incus copies it to the guest."""
+             *, deadline_seconds: int, max_bytes: int = _MAX_PACKET_BYTES) -> None:
+    """Persist the bounded packet in root-owned state only while Incus copies it to the guest.
+
+    Each command has the transfer deadline; the caller's sandbox lock is held until a
+    stalled command's whole process tree is gone.
+    """
     packet = read_packet(stream, max_bytes=max_bytes)
     state_dir.mkdir(mode=0o750, parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=state_dir, prefix="transfer-", suffix=".gcs", delete=False) as handle:
@@ -185,8 +194,7 @@ def transfer(project: str, state_dir: Path, sandbox: str, stream: object,
         packet_path = handle.name
     try:
         for command in transfer_commands(project, sandbox, packet_path):
-            subprocess.run(command, check=True, stdin=subprocess.DEVNULL,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            run_owned(command, deadline_seconds=deadline_seconds, streams="discard")
     finally:
         Path(packet_path).unlink(missing_ok=True)
 
@@ -217,14 +225,14 @@ def audited_transfer(config: object, sandbox: str, stream: object, kind: str,
                 raise TransferError("stop the active task before replacing its source")
             clear_source_binding(config.state_dir, sandbox)
             transfer(config.project, config.state_dir, sandbox, io.BytesIO(packet),
-                     max_bytes=max_bytes)
+                     deadline_seconds=config.deadlines.transfer, max_bytes=max_bytes)
             binding = _packet_binding(packet)
             if binding is not None:
                 record_source_digest(config.state_dir, sandbox, *binding)
         events.write({"action": "transfer", "outcome": "success", "sandbox_id": sandbox})
-    except Exception:
-        events.write({"action": "transfer", "outcome": "failure", "sandbox_id": sandbox,
-                      "error_code": "command_failed"})
+    except Exception as exc:
+        code = "command_timeout" if isinstance(exc, subprocess.TimeoutExpired) else "command_failed"
+        events.write({"action": "transfer", "outcome": "failure", "sandbox_id": sandbox, "error_code": code})
         raise
 
 
@@ -241,6 +249,9 @@ def main(argv: list[str]) -> int:
         raise TransferError("caller is not the configured sandbox operator")
     try:
         audited_transfer(config, argv[0], sys.stdin.buffer, argv[1], caller_uid=int(sudo_uid))
+    except subprocess.TimeoutExpired as exc:
+        raise TransferError(f"guest transfer did not finish within {exc.timeout} seconds; "
+                            "read ~/.gc-transfer/bootstrap.log in the guest") from exc
     except subprocess.CalledProcessError as exc:
         # Guest output never reaches the host, so name the guest-local log instead of
         # reporting a host command the operator cannot act on.

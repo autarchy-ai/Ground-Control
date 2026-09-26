@@ -19,10 +19,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 if __package__:
+    from .owned_process import run_owned
     from .repository_environment import (
         DeclarationError, MAX_TASK_FRAME_BYTES, parse_repository_environment,
     )
 else:
+    from owned_process import run_owned
     from repository_environment import DeclarationError, MAX_TASK_FRAME_BYTES, parse_repository_environment
 
 
@@ -299,18 +301,29 @@ class TaskEnvironmentService(object):
         }, separators=(",", ":")).encode()
         if len(frame) > MAX_TASK_FRAME_BYTES:
             raise ProviderError("resolved task environment exceeds the delivery limit")
-        self.runner(self._start_argv(sandbox), input_bytes=frame)
         state = {
             "schema": "gc.incus-sandbox.task-state/v1", "task_id": task_id,
             "repository": repository, "declaration_digest": parsed.digest,
             "variables": redacted,
         }
+        # Recorded before dispatch: a task the guest may be running always has a record,
+        # so source replacement and lifecycle stops treat it as active (issue #1720).
+        state_path = self.state_dir / "tasks" / f"{sandbox}.json"
+        _atomic_json(state_path, state)
         try:
-            _atomic_json(self.state_dir / "tasks" / f"{sandbox}.json", state)
+            self.runner(self._start_argv(sandbox), input_bytes=frame)
         except Exception:
-            self.runner(self._stop_argv(sandbox), input_bytes=None)
+            self._stop_after_failed_start(sandbox, state_path)
             raise
         return state
+
+    def _stop_after_failed_start(self, sandbox: str, state_path: Path) -> None:
+        """Forget a failed start only once a stop is confirmed; the guest may have started it."""
+        try:
+            self.runner(self._stop_argv(sandbox), input_bytes=None)
+        except Exception:
+            return
+        state_path.unlink(missing_ok=True)
 
     def stop(self, sandbox: str, caller_uid: int) -> None:
         sandbox = self._sandbox(sandbox)
@@ -340,10 +353,13 @@ class TaskEnvironmentService(object):
         }
 
 
-def _run_guest(argv: list[str], input_bytes: bytes | None = None) -> None:
-    """Run the fixed guest endpoint without returning child output or placing input in argv."""
-    subprocess.run(argv, input=input_bytes, check=True, stdout=subprocess.DEVNULL,
-                   stderr=subprocess.DEVNULL)
+def guest_runner(deadline_seconds: int) -> Callable[..., object]:
+    """Run the fixed guest endpoint under the task deadline, never returning child output
+    or placing input in argv."""
+    def run(argv: list[str], input_bytes: bytes | None = None) -> object:
+        """Deliver the optional frame on standard input and discard the guest's output."""
+        return run_owned(argv, deadline_seconds=deadline_seconds, streams="discard", input=input_bytes)
+    return run
 
 
 def main(argv: list[str]) -> int:
@@ -376,7 +392,7 @@ def main(argv: list[str]) -> int:
     service = TaskEnvironmentService(
         project=config.project, state_dir=config.state_dir, operator_uid=config.operator_uid,
         repositories=config.task_environment.repositories,
-        runtime=TaskRuntime(active_owner=active_owner, runner=_run_guest),
+        runtime=TaskRuntime(active_owner=active_owner, runner=guest_runner(config.deadlines.task)),
         max_value_bytes=config.task_environment.max_value_bytes,
     )
     action, sandbox = argv
@@ -388,9 +404,10 @@ def main(argv: list[str]) -> int:
         elif action == "stop":
             service.stop(sandbox, caller_uid)
         events.write({"action": event_action, "outcome": "success", "sandbox_id": sandbox})
-    except Exception:
+    except Exception as exc:
+        code = "command_timeout" if isinstance(exc, subprocess.TimeoutExpired) else "task_unavailable"
         events.write({"action": event_action, "outcome": "failure", "sandbox_id": sandbox,
-                      "error_code": "task_unavailable"})
+                      "error_code": code})
         raise
     return 0
 

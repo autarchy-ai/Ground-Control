@@ -5,7 +5,8 @@ import { extractGhErrorMessage } from "./grc-legacy-compat-2.js";
 import { assertSafeImplementCheckoutConfiguration, authorizeImplementRepoRoot, ensureGitRepo, readGitIdentity, resolveMcpLaunchWorkspaceAuthorization } from "./grc-legacy-compat-4.js";
 import { isSafeGitRefName, resolveWorkflowPrecommitCommand } from "./repo-context.js";
 import { extractInScopeRequirementUids } from "./issue-requirements-scope.js";
-import { EXACT_REQUIREMENT_UID_RE, execFile } from "./runtime-primitives.js";
+import { EXACT_REQUIREMENT_UID_RE } from "./runtime-primitives.js";
+import { execFileBounded, runBoundedGateCommand } from "./bounded-exec.js";
 
 function validatePrepareImplementBranchInput({
   invocationRoot,
@@ -119,7 +120,7 @@ export async function runPrepareImplementBranch({
   checkoutMode = "same_checkout",
 }, {
   workspaceAuthorizationResolver = resolveMcpLaunchWorkspaceAuthorization,
-  commandRunner = execFile,
+  commandRunner = execFileBounded,
 } = {}) {
   const inputValidation = validatePrepareImplementBranchInput({
     invocationRoot,
@@ -171,7 +172,7 @@ export async function runPrepareImplementBranch({
   let activeBranch;
   try {
     after = await readGitIdentity(pinnedRoot);
-    const branch = await execFile("git", ["-C", pinnedRoot, "branch", "--show-current"]);
+    const branch = await execFileBounded("git", ["-C", pinnedRoot, "branch", "--show-current"]);
     activeBranch = branch.stdout.trim();
   } catch (error) {
     return {
@@ -238,7 +239,7 @@ export function requestedRequirementUidAuthorization(issueBody, requestedRequire
 }
 // Signing follows the host configuration (issue #1580); a checkout-selected
 // signing program is refused by assertSafeImplementCheckoutConfiguration.
-export async function runImplementGit(repoRoot, args, commandRunner = execFile, envOverrides = {}) {
+export async function runImplementGit(repoRoot, args, commandRunner = execFileBounded, envOverrides = {}) {
   return commandRunner(
     "git",
     ["-c", "core.hooksPath=/dev/null", "-C", repoRoot, ...args],
@@ -274,12 +275,12 @@ export async function authorizeImplementMutationCheckout(repoPath, {
   }
   return { ok: true, repoRoot };
 }
-export async function runImplementGitCommand(repoRoot, args, commandRunner = execFile) {
+export async function runImplementGitCommand(repoRoot, args, commandRunner = execFileBounded) {
   return runImplementGit(repoRoot, args, commandRunner);
 }
 export async function runImplementPreCommit(
   repoRoot,
-  commandRunner = execFile,
+  commandRunner = runBoundedGateCommand,
   context = null,
   requestedRequirementUid = null,
 ) {
@@ -295,7 +296,7 @@ export async function runImplementPreCommit(
     },
   );
 }
-export async function readImplementGitOid(repoRoot, ref, commandRunner = execFile) {
+export async function readImplementGitOid(repoRoot, ref, commandRunner = execFileBounded) {
   const { stdout } = await runImplementGit(
     repoRoot,
     ["rev-parse", "--verify", `${ref}^{commit}`],
@@ -307,7 +308,7 @@ export async function readImplementGitOid(repoRoot, ref, commandRunner = execFil
   }
   return oid;
 }
-export async function readImplementTreeOid(repoRoot, ref, commandRunner = execFile) {
+export async function readImplementTreeOid(repoRoot, ref, commandRunner = execFileBounded) {
   const { stdout } = await runImplementGit(
     repoRoot,
     ["rev-parse", "--verify", `${ref}^{tree}`],
@@ -319,7 +320,7 @@ export async function readImplementTreeOid(repoRoot, ref, commandRunner = execFi
   }
   return oid;
 }
-export async function readImplementIndexTreeOid(repoRoot, commandRunner = execFile) {
+export async function readImplementIndexTreeOid(repoRoot, commandRunner = execFileBounded) {
   const { stdout } = await runImplementGit(repoRoot, ["write-tree"], commandRunner);
   const oid = stdout.trim().toLowerCase();
   if (!GIT_OBJECT_ID_RE.test(oid)) {
@@ -327,7 +328,7 @@ export async function readImplementIndexTreeOid(repoRoot, commandRunner = execFi
   }
   return oid;
 }
-async function readImplementActiveBranch(repoRoot, commandRunner = execFile) {
+async function readImplementActiveBranch(repoRoot, commandRunner = execFileBounded) {
   const { stdout } = await runImplementGit(
     repoRoot,
     ["symbolic-ref", "--quiet", "--short", "HEAD"],
@@ -339,7 +340,7 @@ export async function assertImplementSyncCheckout({
   repoRoot,
   issueNumber,
   branchName,
-  commandRunner = execFile,
+  commandRunner = execFileBounded,
   allowMergeState = false,
 }) {
   const activeBranch = await readImplementActiveBranch(repoRoot, commandRunner);
@@ -368,7 +369,7 @@ export async function assertImplementSyncCheckout({
   }
   return { ok: true };
 }
-export async function fetchImplementBase(repoRoot, baseBranch, commandRunner = execFile) {
+export async function fetchImplementBase(repoRoot, baseBranch, commandRunner = execFileBounded) {
   const remoteRef = `refs/remotes/origin/${baseBranch}`;
   await runImplementGit(
     repoRoot,
@@ -385,7 +386,7 @@ export async function fetchImplementBase(repoRoot, baseBranch, commandRunner = e
     fetchedBaseSha: await readImplementGitOid(repoRoot, remoteRef, commandRunner),
   };
 }
-export async function isImplementAncestor(repoRoot, ancestor, descendant, commandRunner = execFile) {
+export async function isImplementAncestor(repoRoot, ancestor, descendant, commandRunner = execFileBounded) {
   try {
     await runImplementGit(
       repoRoot,
@@ -398,7 +399,7 @@ export async function isImplementAncestor(repoRoot, ancestor, descendant, comman
     throw error;
   }
 }
-export async function readRemoteImplementBranchSha(repoRoot, branchName, commandRunner = execFile) {
+export async function readRemoteImplementBranchSha(repoRoot, branchName, commandRunner = execFileBounded) {
   const { stdout } = await runImplementGit(
     repoRoot,
     ["ls-remote", "--heads", "origin", `refs/heads/${branchName}`],

@@ -6,6 +6,7 @@
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { isProcessGroupAlive, isPosixProcessGroupCapable, terminateProcessGroup } from "./process-group.js";
+import { parseBoundedTimeoutMs } from "./timeout-bounds.js";
 
 export const CODEX_TIMEOUT_MS_MIN = 1000; // 1 second floor
 export const CODEX_TIMEOUT_MS_MAX = 3600000; // 1 hour ceiling
@@ -15,12 +16,11 @@ export const CODEX_TIMEOUT_MS_DEFAULT = 1200000; // 20 minutes
 // the finite default rather than disabling or effectively removing the wall
 // cap that bounds every codex/claude subprocess this server spawns.
 export function parseCodexTimeoutMs(raw) {
-  if (typeof raw !== "string" || raw.trim() === "") return CODEX_TIMEOUT_MS_DEFAULT;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isInteger(parsed) || parsed < CODEX_TIMEOUT_MS_MIN || parsed > CODEX_TIMEOUT_MS_MAX) {
-    return CODEX_TIMEOUT_MS_DEFAULT;
-  }
-  return parsed;
+  return parseBoundedTimeoutMs(raw, {
+    min: CODEX_TIMEOUT_MS_MIN,
+    max: CODEX_TIMEOUT_MS_MAX,
+    default: CODEX_TIMEOUT_MS_DEFAULT,
+  });
 }
 // Resolved on every call, not once at module-import time (issue #1521): the
 // import graph that reaches this module executes before index.js's
@@ -152,10 +152,16 @@ class BufferedProcessExecution {
     // is the shared terminateProcessGroup primitive (issue #1495).
     if (this.pendingCleanup !== null) return this.pendingCleanup;
     if (!this.child.pid || !isProcessGroupAlive(this.child.pid)) return Promise.resolve();
-    this.pendingCleanup = terminateProcessGroup(this.child.pid, {
+    // A group that outlived SIGKILL settles the call as that failure at once: the
+    // surviving descendant may hold the pipes, so `close` might never fire (#1720).
+    this.pendingCleanup = this.config.terminateGroup(this.child.pid, {
       killSignal: this.config.killSignal,
       killGraceMs: this.config.killGraceMs,
       label: this.file,
+    }).catch((error) => {
+      error.stdout = decodeOutput(this.output.stdout);
+      error.stderr = decodeOutput(this.output.stderr);
+      this.finish(this.reject, error);
     });
     return this.pendingCleanup;
   }
@@ -327,6 +333,8 @@ export async function execFileWithInput(
     // instead of racing a real child's scheduling under load (issue #1532).
     // Production callers never pass this; it defaults to the real spawn().
     spawnImpl = spawn,
+    // Test seam only, for the cleanup-failure branch; production uses the real primitive.
+    terminateGroup = terminateProcessGroup,
     ...options
   } = {},
 ) {
@@ -347,6 +355,7 @@ export async function execFileWithInput(
       signal,
       maxBuffer,
       spawnImpl,
+      terminateGroup,
       options,
     }, resolve, reject).start();
   });
