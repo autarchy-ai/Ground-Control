@@ -89,8 +89,10 @@ class LedgerTestCase(unittest.TestCase):
             self.instances[argv[2]]["status"] = "Stopped" if argv[1] == "stop" else "Running"
         return {"returncode": 0}
 
-    def headroom(self) -> dict[str, int | None]:
-        return self.helper.normalized_observation("agent-1", None)["admission_headroom"]
+
+def headroom(case: LedgerTestCase) -> dict[str, int | None]:
+    """The aggregate headroom status reports, which admission uses too."""
+    return case.helper.normalized_observation("agent-1", None)["admission_headroom"]
 
 
 class StoppedDiskAccountingTest(LedgerTestCase):
@@ -101,7 +103,7 @@ class StoppedDiskAccountingTest(LedgerTestCase):
             self.helper.stop(name)
         with self.assertRaises(AdmissionError):
             self.helper.create("agent-3")
-        self.assertEqual(self.headroom(), {"cpu": 8, "memory_mib": 32768, "disk_gib": 0})
+        self.assertEqual(headroom(self), {"cpu": 8, "memory_mib": 32768, "disk_gib": 0})
         self.assertEqual(events(self)[-1]["error_code"], "admission_insufficient")
 
     def test_starting_a_stopped_vm_does_not_charge_its_disk_twice(self) -> None:
@@ -118,7 +120,7 @@ class StoppedDiskAccountingTest(LedgerTestCase):
         self.failing = {"delete"}
         with self.assertRaises(subprocess.CalledProcessError):
             self.helper.delete("agent-2", "agent-2")
-        self.assertEqual(self.headroom()["disk_gib"], 0)
+        self.assertEqual(headroom(self)["disk_gib"], 0)
         self.failing = set()
         self.helper.delete("agent-2", "agent-2")
         self.helper.create("agent-3")
@@ -140,7 +142,7 @@ class StoppedDiskAccountingTest(LedgerTestCase):
         with self.assertRaises(AdmissionError):
             self.helper.create("agent-1")
         self.assertEqual(events(self)[-1]["error_code"], "admission_observation_stale")
-        self.assertIsNone(self.headroom()["disk_gib"])
+        self.assertIsNone(headroom(self)["disk_gib"])
 
 
 class PoolObservationTest(LedgerTestCase):
@@ -176,7 +178,7 @@ class FailedCompensationTest(LedgerTestCase):
         self.assertEqual([(event["action"], event["outcome"]) for event in events(self)],
                          [("create", "failure"), ("cleanup", "failure")])
         # The VM that may still be running keeps its compute and its disk.
-        self.assertEqual(self.headroom(), {"cpu": 6, "memory_mib": 28672, "disk_gib": 16})
+        self.assertEqual(headroom(self), {"cpu": 6, "memory_mib": 28672, "disk_gib": 16})
 
     def test_a_pending_vm_is_only_inspected_or_deleted(self) -> None:
         self.failing = {"limits.cpu", "delete"}

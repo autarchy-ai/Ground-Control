@@ -22,17 +22,21 @@ OPEN_ISSUE_STATUSES = "OPEN,CONFIRMED"
 
 @dataclass(frozen=True)
 class AnalysisScope:
+    """The pull request or branch whose new-code issues the gate reads."""
+
     query_key: str
     query_value: str
 
     @property
     def label(self) -> str:
+        """A human label for the analysed pull request or branch."""
         if self.query_key == "pullRequest":
             return f"PR {self.query_value}"
         return f"branch {self.query_value}"
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse the gate's command line."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-key", required=True, help="SonarCloud project key.")
     parser.add_argument(
@@ -57,6 +61,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def resolve_scope(args: argparse.Namespace) -> AnalysisScope:
+    """Pick the pull request or branch the gate inspects."""
     if args.pull_request:
         return AnalysisScope("pullRequest", args.pull_request)
     if args.branch:
@@ -77,6 +82,7 @@ def resolve_scope(args: argparse.Namespace) -> AnalysisScope:
 
 
 def build_request_url(project_key: str, scope: AnalysisScope, page: int, organization: str | None) -> str:
+    """One page of the open new-code issue search for the scope."""
     query = {
         **({"organization": organization} if organization else {}),
         "componentKeys": project_key,
@@ -90,6 +96,7 @@ def build_request_url(project_key: str, scope: AnalysisScope, page: int, organiz
 
 
 def fetch_json(url: str, token: str) -> dict[str, Any]:
+    """GET a SonarCloud API document with token authentication."""
     encoded = base64.b64encode(f"{token}:".encode("utf-8")).decode("ascii")
     request = urllib.request.Request(url, headers={"Authorization": f"Basic {encoded}"})
     with urllib.request.urlopen(request, timeout=30) as response:
@@ -99,6 +106,7 @@ def fetch_json(url: str, token: str) -> dict[str, Any]:
 def fetch_issues(
     project_key: str, scope: AnalysisScope, token: str, organization: str | None,
 ) -> list[dict[str, Any]]:
+    """Every open new-code issue for the scope, across pages."""
     issues: list[dict[str, Any]] = []
     page = 1
     total = 0
@@ -120,6 +128,7 @@ def fetch_issues_with_retry(
     poll_interval: int,
     organization: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Fetch the issues, retrying API failures until the wait expires."""
     deadline = time.monotonic() + wait_seconds
     while True:
         try:
@@ -132,6 +141,7 @@ def fetch_issues_with_retry(
 
 
 def render_issue(issue: dict[str, Any]) -> str:
+    """One line naming an open issue, without its source text."""
     component = issue.get("component", "")
     line = issue.get("line")
     location = f"{component}:{line}" if line else component
@@ -142,6 +152,7 @@ def render_issue(issue: dict[str, Any]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the gate; 0 when the scope has no open new-code issue."""
     args = parse_args(argv or sys.argv[1:])
     token = os.environ.get("SONAR_TOKEN")
     if not token:
