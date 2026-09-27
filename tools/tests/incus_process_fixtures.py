@@ -9,7 +9,8 @@ from pathlib import Path
 # A stand-in for the Incus client. Each call is logged, and a mode file decides
 # whether it succeeds, fails, or stalls while holding a descendant, the shape of a
 # hung daemon call whose client never returns. `mode.<subcommand>.<last argument>`
-# takes precedence over `mode.<subcommand>`.
+# takes precedence over `mode.<subcommand>`. A successful call prints the next unread
+# `out.<subcommand>.<n>` in sequence, then `out.<subcommand>` once the sequence is spent.
 _FAKE_INCUS = """#!/bin/sh
 dir="$FAKE_INCUS_DIR"
 printf '%s\\n' "$*" >> "$dir/calls.log"
@@ -18,7 +19,9 @@ mode=$(cat "$dir/mode.$1.$last" 2>/dev/null || cat "$dir/mode.$1" 2>/dev/null ||
 case "$mode" in
   stall) sleep 300 & echo $! > "$dir/descendant.pid"; wait ;;
   fail) exit 1 ;;
-  *) if [ -f "$dir/out.$1" ]; then cat "$dir/out.$1"; fi; exit 0 ;;
+  *) n=$(cat "$dir/seq.$1" 2>/dev/null || echo 0)
+     if [ -f "$dir/out.$1.$n" ]; then cat "$dir/out.$1.$n"; echo $((n + 1)) > "$dir/seq.$1"; exit 0; fi
+     if [ -f "$dir/out.$1" ]; then cat "$dir/out.$1"; fi; exit 0 ;;
 esac
 """
 
@@ -40,6 +43,12 @@ def set_fake_mode(directory: Path, subcommand: str, mode: str) -> None:
 def set_fake_output(directory: Path, subcommand: str, text: str) -> None:
     """Set what the fake client prints for one subcommand."""
     (directory / f"out.{subcommand}").write_text(text, encoding="utf-8")
+
+
+def set_fake_outputs(directory: Path, subcommand: str, texts: list[str]) -> None:
+    """Set what successive successful calls of one subcommand print, in order."""
+    for index, text in enumerate(texts):
+        (directory / f"out.{subcommand}.{index}").write_text(text, encoding="utf-8")
 
 
 def calls(directory: Path) -> list[str]:

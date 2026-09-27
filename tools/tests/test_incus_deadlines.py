@@ -23,14 +23,17 @@ from tools.incus_sandbox.config import (
     DEFAULT_DEADLINES, MAX_DEADLINE_SECONDS, ConfigError, load_config, upgrade_config,
 )
 from tools.incus_sandbox.events import EventWriter
-from tools.incus_sandbox.helper import LifecycleHelper
+from tools.incus_sandbox.helper import CleanupPendingError, LifecycleHelper
 from tools.incus_sandbox.task_environment import (
     TaskEnvironmentService, TaskRuntime, guest_runner, record_source_binding, state_lock,
 )
 from tools.tests.incus_process_fixtures import (
-    calls, descendant_pid, kill_quietly, process_alive, set_fake_mode, set_fake_output, write_fake_incus,
+    calls, descendant_pid, kill_quietly, process_alive, set_fake_mode, set_fake_output, set_fake_outputs,
+    write_fake_incus,
 )
-from tools.tests.test_incus_sandbox import config_doc
+from tools.tests.test_incus_sandbox import config_doc, host_facts, initialize_ledger
+
+ABSENT, PRESENT = "[]", '["/1.0/instances/dev"]'
 from tools.tests.test_incus_task_environment import declaration
 
 
@@ -55,8 +58,7 @@ def lifecycle_helper(case: "StalledIncusTestCase") -> LifecycleHelper:
     """A helper for the fixture's operator with fresh host observations."""
     return LifecycleHelper(
         case.config, event_writer=case.writer,
-        observer=lambda: {"memory_mib": 16384, "disk_gib": 256, "fresh": True},
-        network_checker=lambda config: True, caller_uid=os.getuid(),
+        observer=host_facts, network_checker=lambda config: True, caller_uid=os.getuid(),
     )
 
 
@@ -120,6 +122,7 @@ class StalledIncusTestCase(unittest.TestCase):
                                                       "transfer": 1, "task": 1})), encoding="utf-8")
         path.chmod(0o600)
         self.config = load_config(path, expected_uid=os.getuid())
+        initialize_ledger(self.config.state_dir)
         self.writer = EventWriter(self.config.event_log, self.config.event_max_bytes,
                                   expected_uid=os.getuid())
 
@@ -132,7 +135,9 @@ class StalledIncusTestCase(unittest.TestCase):
 class LifecycleDeadlineTest(StalledIncusTestCase):
     def test_stalled_launch_times_out_reaps_its_tree_and_frees_the_lock(self) -> None:
         set_fake_mode(self.fake_dir, "launch", "stall")
-        set_fake_output(self.fake_dir, "query", "[]")
+        # Admission proves the name unused; the timed-out launch may still have created it.
+        set_fake_outputs(self.fake_dir, "query", [ABSENT, PRESENT])
+        set_fake_output(self.fake_dir, "query", ABSENT)
         observed: dict[str, object] = {}
         with patch.object(helper_module, "_INCUS", self.fake):
             contender = contend_for_allocations(self, observed)
@@ -149,11 +154,14 @@ class LifecycleDeadlineTest(StalledIncusTestCase):
     def test_a_timed_out_launch_keeps_its_reservation_while_the_instance_may_exist(self) -> None:
         set_fake_mode(self.fake_dir, "launch", "stall")
         set_fake_mode(self.fake_dir, "delete", "fail")
-        set_fake_output(self.fake_dir, "query", '["/1.0/instances/dev"]')
+        set_fake_outputs(self.fake_dir, "query", [ABSENT])
+        set_fake_output(self.fake_dir, "query", PRESENT)
         with patch.object(helper_module, "_INCUS", self.fake):
-            with self.assertRaises(subprocess.TimeoutExpired):
+            with self.assertRaises(CleanupPendingError) as raised:
                 lifecycle_helper(self).create("dev")
-            self.assertTrue(recorded_allocations(self.config)["dev"]["active"])
+            self.assertIsInstance(raised.exception.__cause__, subprocess.TimeoutExpired)
+            self.assertEqual(raised.exception.primary_code, "command_timeout")
+            self.assertEqual(recorded_allocations(self.config)["dev"]["state"], "cleanup_pending")
             # Once the instance can be deleted, the owner's delete reconciles the reservation.
             set_fake_mode(self.fake_dir, "delete", "ok")
             lifecycle_helper(self).delete("dev", "dev")
@@ -162,21 +170,23 @@ class LifecycleDeadlineTest(StalledIncusTestCase):
     def test_delete_forgets_a_reservation_whose_instance_never_materialized(self) -> None:
         set_fake_mode(self.fake_dir, "launch", "stall")
         set_fake_mode(self.fake_dir, "delete", "fail")
-        set_fake_output(self.fake_dir, "query", '["/1.0/instances/dev"]')
+        set_fake_outputs(self.fake_dir, "query", [ABSENT])
+        set_fake_output(self.fake_dir, "query", PRESENT)
         with patch.object(helper_module, "_INCUS", self.fake):
-            with self.assertRaises(subprocess.TimeoutExpired):
+            with self.assertRaises(CleanupPendingError):
                 lifecycle_helper(self).create("dev")
             set_fake_output(self.fake_dir, "query", '["/1.0/instances/other"]')
             lifecycle_helper(self).delete("dev", "dev")
         self.assertNotIn("dev", recorded_allocations(self.config))
 
     def test_a_stalled_stop_keeps_the_allocation_active(self) -> None:
+        set_fake_output(self.fake_dir, "query", ABSENT)
         with patch.object(helper_module, "_INCUS", self.fake):
             lifecycle_helper(self).create("dev")
             set_fake_mode(self.fake_dir, "stop", "stall")
             with self.assertRaises(subprocess.TimeoutExpired):
                 lifecycle_helper(self).stop("dev")
-        self.assertTrue(recorded_allocations(self.config)["dev"]["active"])
+        self.assertEqual(recorded_allocations(self.config)["dev"]["state"], "running")
         self.assertFalse(process_alive(descendant_pid(self.fake_dir)))
         self.assertEqual(recorded_events(self.config)[-1]["error_code"], "command_timeout")
 

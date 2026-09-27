@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-09-19
-- **Amended:** 2026-09-21 for existing-session migration (#1645) and explicit repository-scoped task processes (#1691); 2026-09-23 for a single `grndctl sandbox` command with a closed provider choice
+- **Amended:** 2026-09-21 for existing-session migration (#1645) and explicit repository-scoped task processes (#1691); 2026-09-23 for a single `grndctl sandbox` command with a closed provider choice; 2026-09-27 for persistent-disk accounting, cleanup-pending recovery, and durable ledger writes (#1721)
 - **Issue:** #1643
 - **Requirement:** none
 - **Supersedes:** none
@@ -190,6 +190,17 @@ loop-backed 64 GiB Btrfs pool, then runs that probe. It does not use unbounded
 `dir` storage, repartition or reformat existing storage, or infer enforcement
 from configuration text.
 
+Capacity is charged for the lifetime of the resource, not the run state (issue
+#1721). A running VM holds CPU and memory. Every VM that may still exist,
+whether running, stopped, or awaiting cleanup, holds its full disk until its
+deletion is confirmed or Incus positively reports it absent. Admission and the
+reported headroom use one calculation over the prospective ledger. Its disk
+ceiling is the smaller of the configured aggregate and the configured storage
+pool's observed size. A new VM also needs its disk in the pool's observed free
+space. Those pool facts come from Incus for the configured pool, bounded and
+validated. When they are unavailable, admission is denied and the headroom is
+reported unknown.
+
 This is deliberately separate from `gc-test-dispatch`: that dispatcher owns
 host-wide CPU admission for verification commands, has a CPU-only ledger, and
 is not a sandbox or privilege boundary. Its host-owned configuration, strict
@@ -282,6 +293,43 @@ dispatch. After a failed start, the record is removed only when a stop is
 confirmed, so source replacement and lifecycle stops keep treating a task the
 guest may still be running as active. A transfer keeps its already-cleared binding. The design adds
 no PID registry, no background reaper, and no new lease schema.
+
+### Ownership and durable ledger state (issue #1721)
+
+The allocation ledger is the only record of which VMs the helper owns, so it
+may never forget a VM that may exist. A fresh create first proves, under the
+ledger lock, that no instance has its name. Any instance present after a
+failed create step is therefore that call's own. The helper deletes it, or it
+releases the reservation once Incus reports the instance absent. When
+compensation fails, the record becomes `cleanup_pending` with its full
+capacity. The event stream gets separate `create` and `cleanup` failure events,
+and the caller sees both failure codes, but no raw daemon output. A
+cleanup-pending VM can only be inspected or deleted through the ordinary
+exact-name delete. A start that timed out keeps its reservation, because the VM
+may have started.
+
+The closed verb `reconcile` aligns the ledger with one complete, validated
+inventory of the project, and deletes nothing. It reads that inventory under the
+ledger lock and saves the result before releasing the lock, so a concurrent
+create or start cannot land between the observation and the update. It forgets only positively
+absent VMs and syncs running or stopped state. It adopts an unrecorded instance
+only when it carries the sandbox profile and its root disk is on the sandbox
+pool, so a VM whose owner was lost is recovered rather than orphaned. Template
+builds and the quota probe are excluded. It is the one way to rebuild a ledger
+that no longer parses, and the damaged bytes are kept beside it.
+
+The ledger and the event log are replaced atomically by one shared primitive:
+a complete-write loop, a synced same-directory temporary file, a rename, and a
+directory sync. Each read-modify-write happens under a stable lock file that the
+replacement never swaps. An interrupted write leaves the last complete file. Only
+setup's install writes an empty ledger, for the project it has just created. A
+missing, empty, or malformed ledger fails closed rather than reading as empty, and a
+malformed event log blocks mutation rather than being reset. The two files are
+not one transaction. After an Incus step succeeds, a ledger or audit failure is
+raised as it is and never triggers compensation, so the ledger keeps the
+truthful state. The event schema is `gc.incus-sandbox.event/v3`
+and the status schema is `gc.incus-sandbox.status/v3`. They add the pool facts,
+the `cleanup` and `reconcile` actions, and the `admission_conflict` code.
 
 ## Consequences
 

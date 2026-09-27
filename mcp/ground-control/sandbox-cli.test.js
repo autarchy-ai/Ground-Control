@@ -69,10 +69,11 @@ test("lifecycle verbs run through the provider's own client, not a second comman
     runProgram: (argv) => seen.push({ directory, argv }),
   });
   for (const argv of [["create", "agent-1"], ["attach", "agent-1"], ["delete", "agent-1", "--confirm", "agent-1"],
-    ["prepare", "agent-1", "bundle", "/src", "HEAD"], ["task-start", "agent-1"], ["list"]]) {
+    ["prepare", "agent-1", "bundle", "/src", "HEAD"], ["task-start", "agent-1"], ["list"], ["reconcile"]]) {
     assert.equal(await runSandboxCli(argv, { loadClient, readConfigured: noConfig, write: () => {} }), 0);
   }
-  assert.deepEqual(seen.map(({ argv }) => argv[0]), ["create", "attach", "delete", "prepare", "task-start", "list"]);
+  assert.deepEqual(seen.map(({ argv }) => argv[0]),
+    ["create", "attach", "delete", "prepare", "task-start", "list", "reconcile"]);
   assert.match(seen[0].directory, /tools\/incus_sandbox\/$/);
   assert.deepEqual(seen[2].argv, ["delete", "agent-1", "--confirm", "agent-1"]);
 });

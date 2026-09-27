@@ -13,17 +13,18 @@ import secrets
 import stat
 import subprocess
 import sys
-import tempfile
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 if __package__:
+    from .durable import replace_file
     from .owned_process import run_owned
     from .repository_environment import (
         DeclarationError, MAX_TASK_FRAME_BYTES, parse_repository_environment,
     )
 else:
+    from durable import replace_file
     from owned_process import run_owned
     from repository_environment import DeclarationError, MAX_TASK_FRAME_BYTES, parse_repository_environment
 
@@ -50,21 +51,7 @@ def _new_task_id() -> str:
 
 def _atomic_json(path: Path, document: object) -> None:
     """Replace one private JSON state file atomically."""
-    path.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent,
-                                         prefix=f"{path.name}-", delete=False) as handle:
-            temporary = Path(handle.name)
-            json.dump(document, handle, separators=(",", ":"))
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        temporary.chmod(0o600)
-        os.replace(temporary, path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    replace_file(path, (json.dumps(document, separators=(",", ":")) + "\n").encode("utf-8"), 0o600)
 
 
 def record_source_binding(state_dir: Path, sandbox: str, repository: str, declaration: bytes) -> str:

@@ -44,6 +44,10 @@ class SetupContractTest(unittest.TestCase):
         self.assertIn('project set gc-sandbox restricted.devices.nic allow', result.stdout)
         self.assertIn('profile device add gc-sandbox-default agent disk source=agent:config --project gc-sandbox', result.stdout)
         self.assertIn("record network-addresses.sha256", result.stdout)
+        # The ledger starts empty only for the project this install just created (issue #1721).
+        stdout = result.stdout
+        self.assertLess(stdout.index("incus project create gc-sandbox"),
+                        stdout.index("initialize empty allocation ledger"))
         self.assertNotIn("flush ruleset", result.stdout)
         self.assertNotIn("mkfs", result.stdout)
 

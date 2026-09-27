@@ -6,9 +6,13 @@ import json
 import os
 import re
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+if __package__:
+    from .durable import replace_file
+else:
+    from durable import replace_file
 
 
 class ConfigError(RuntimeError):
@@ -341,28 +345,7 @@ def upgrade_config(path: Path, *, expected_uid: int = 0) -> bool:
     }
     _check_top_level(upgraded)
     _build_config(upgraded)
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=path.parent, prefix="config-", suffix=".json",
-            delete=False,
-        ) as handle:
-            temporary = Path(handle.name)
-            json.dump(upgraded, handle, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        temporary.chmod(0o600)
-        os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    except Exception:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
-        raise
+    replace_file(path, (json.dumps(upgraded, indent=2) + "\n").encode("utf-8"), 0o600)
     return True
 
 

@@ -4,21 +4,49 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 
+if __package__:
+    from .allocations import CLEANUP_PENDING, RUNNING, STOPPED
+else:
+    from allocations import CLEANUP_PENDING, RUNNING, STOPPED
 
-def observation() -> dict[str, int | bool]:
-    """Return conservative host availability facts without exposing process state."""
+
+_GIB = 1024 ** 3
+
+
+def pool_space(payload: object) -> dict[str, int] | None:
+    """Validate a storage-pool resources document into whole free and total GiB."""
+    space = payload.get("space") if isinstance(payload, dict) else None
+    if not isinstance(space, dict):
+        return None
+    total, used = space.get("total"), space.get("used")
+    valid = all(isinstance(value, int) and not isinstance(value, bool) for value in (total, used))
+    if not valid or not 0 <= used <= total or total == 0:
+        return None
+    return {"pool_total_gib": total // _GIB, "pool_free_gib": (total - used) // _GIB}
+
+
+def observation(pool_resources: Callable[[], object] | None = None) -> dict[str, int | bool]:
+    """Return conservative host and storage-pool availability without exposing process state.
+
+    `disk_gib` is the host root file system, where a loop-backed pool grows; the pool facts
+    are the configured Incus pool itself and are absent when it cannot be observed.
+    """
     memory_available = 0
     try:
         for line in Path("/proc/meminfo").read_text(encoding="ascii").splitlines():
             if line.startswith("MemAvailable:"):
                 memory_available = int(line.split()[1]) // 1024
                 break
-        disk_available = os.statvfs("/").f_bavail * os.statvfs("/").f_frsize // (1024 ** 3)
-        return {"memory_mib": memory_available, "disk_gib": disk_available, "fresh": True}
+        root = os.statvfs("/")
+        facts: dict[str, int | bool] = {"memory_mib": memory_available,
+                                        "disk_gib": root.f_bavail * root.f_frsize // _GIB, "fresh": True}
     except OSError:
         return {"memory_mib": 0, "disk_gib": 0, "fresh": False}
+    pool = pool_space(pool_resources()) if pool_resources is not None else None
+    return {**facts, **(pool or {})}
 
 
 def positive_fact(value: object) -> int | None:
@@ -69,7 +97,28 @@ def observed_facts(observed: dict[str, int | bool], info: object, available: boo
     disk = positive_fact(observed.get("disk_gib")) if available else None
     return {
         "availability": "fresh" if available else "unavailable", "memory_mib": memory,
-        "disk_gib": disk, "cpu_usage_ns": cpu_usage,
+        "disk_gib": disk, "pool_total_gib": positive_fact(observed.get("pool_total_gib")),
+        "pool_free_gib": positive_fact(observed.get("pool_free_gib")), "cpu_usage_ns": cpu_usage,
         "guest_memory_mib": memory_usage // (1024 * 1024) if memory_usage is not None else None,
         "guest_disk_gib": disk_usage // (1024 ** 3) if disk_usage is not None else None,
+    }
+
+
+def status_document(name: str, state: str, assigned: dict[str, int | str], observed: dict[str, int | bool],
+                    incus_info: object, headroom: dict[str, int | None],
+                    task: Callable[[bool], dict[str, object]]) -> dict[str, object]:
+    """The closed `status`/`diagnose` document for one recorded VM in its ledger `state`."""
+    available, status = status_state(incus_info, observed)
+    return {
+        "schema": "gc.incus-sandbox.status/v3",
+        "sandbox_id": name,
+        "desired_state": {RUNNING: "running", STOPPED: "stopped", CLEANUP_PENDING: "deleted"}[state],
+        "observed_state": status,
+        "assigned": {key: assigned[key] for key in ("cpu", "memory_mib", "disk_gib")},
+        "observed": observed_facts(observed, incus_info, available),
+        "admission_headroom": headroom,
+        "last_transition": "unavailable",
+        "failure_reason": ("cleanup_pending" if state == CLEANUP_PENDING
+                           else "none" if available else "observation_unavailable"),
+        "task_environment": task(status == "running"),
     }
