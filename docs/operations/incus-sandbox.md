@@ -21,6 +21,15 @@ allocations, storage, network policy, and sessions:
 grndctl sandbox setup upgrade
 ```
 
+Upgrade while no lifecycle command is running. Since #1721 the helpers lock the
+allocation ledger through a separate `allocations.lock` file, not the ledger
+itself, so a helper from the earlier version must not overlap the first new one.
+Existing allocation records keep their meaning. Only `setup.sh install` writes an
+empty ledger, for the project it has just created. A missing or empty
+`allocations.json` is refused as invalid state; earlier versions could leave an
+empty one after an interrupted write or a first read. Run
+`grndctl sandbox reconcile` once to rebuild it from the VMs Incus reports.
+
 A host without a checkout runs the same programs from the installed package:
 
 ```sh
@@ -148,6 +157,7 @@ grndctl sandbox stop agent-1
 grndctl sandbox start agent-1
 grndctl sandbox delete agent-1 --confirm agent-1
 grndctl sandbox list
+grndctl sandbox reconcile
 ```
 
 `attach` joins the explicit `gc-task` session created by `task-start`; it never
@@ -174,8 +184,20 @@ never names a program or path. Incus is the only provider today.
 
 Each VM starts with 2 vCPU, 4 GiB RAM, and a 16 GiB root disk. Creation and
 start also reserve host-owned aggregate CPU, memory, disk, image/snapshot, and
-log allowance. Missing, stale, or insufficient memory, disk, or network-policy
-facts deny admission instead of reporting a healthy zero.
+log allowance. Missing, stale, or insufficient memory, disk, storage-pool, or
+network-policy facts deny admission instead of reporting a healthy zero.
+
+A running VM holds its CPU and memory. Stopping it returns them, but its disk
+still exists, so every VM that is running, stopped, or awaiting cleanup keeps
+its full disk charged until a delete is confirmed. The disk ceiling is the
+smaller of `host.max_disk_gib` and the size of the configured storage pool,
+less `host.overhead_disk_gib` for images, snapshots, and logs. A new VM also
+needs its disk in the pool's free space. Both pool facts come from Incus for
+the configured pool, not from the host root filesystem. The host root check
+stays, because the loop-backed pool grows into it. `status` reports the pool's
+total and free space and the same disk headroom that admission uses, or `null`
+when the pool cannot be observed. With the default policy and the 64 GiB pool
+that setup creates, three 16 GiB VMs fit.
 
 ## Private-repository work in a guest
 
@@ -413,11 +435,10 @@ the operator detaches.
 A timeout is a failure with the lifecycle error code `command_timeout`:
 
 - **Create:** a launch that times out may still produce an instance, because the
-  daemon can finish it. The helper tries to delete the instance. If it cannot
-  prove the instance is gone, it keeps the reservation, so capacity is never
-  freed under a VM that may exist. `grndctl sandbox delete NAME --confirm NAME`
-  reconciles the reservation, and it succeeds when the instance never
-  materialized.
+  daemon can finish it. Create first proves that no instance has the name, so
+  an instance found after any failed create step is that create's own. The
+  helper deletes it, or releases the reservation when Incus reports it absent.
+  If it cannot remove it, the VM is recorded as cleanup-pending (see below).
 - **Stop and delete:** the allocation stays active and nothing is forgotten, so
   retry after the daemon recovers.
 - **Transfer:** the previous source binding is already cleared, so a task
@@ -428,6 +449,46 @@ A timeout is a failure with the lifecycle error code `command_timeout`:
   record only when that stop is confirmed. Until then the sandbox counts as
   running a task: its source cannot be replaced, and a VM stop or delete first
   stops the task. `grndctl sandbox task-stop NAME` clears the record.
+
+## Recovering ownership and capacity
+
+A VM that may still exist is never forgotten, and its capacity is never
+released on an uncertain result.
+
+- **Cleanup-pending VMs.** When a create fails and deleting the instance it
+  launched also fails, the VM stays recorded as `cleanup_pending` with its CPU,
+  memory, and disk charged. The command exits non-zero and names both failures,
+  for example `create failed (command_failed) and its cleanup also failed
+  (command_timeout)`. The event log has one `create` and one `cleanup` failure.
+  `status` and `diagnose` report `failure_reason: cleanup_pending`. `start`,
+  `stop`, and `attach` refuse the VM. Retry the cleanup with
+  `grndctl sandbox delete NAME --confirm NAME`, which succeeds once Incus deletes
+  the instance or reports it absent.
+- **Reconciling with Incus.** `grndctl sandbox reconcile` reads one complete
+  inventory of the `gc-sandbox` project and aligns the ledger with it. It holds
+  the ledger lock from the inventory read to the save, so it runs between
+  lifecycle changes rather than during one. It
+  forgets a recorded VM only when Incus reports it absent, and then clears that
+  VM's source binding and task state. It updates running or stopped state to
+  what Incus reports, and it keeps cleanup-pending VMs. It adopts an unrecorded
+  VM only when that VM uses the sandbox profile and its root disk is on the
+  sandbox pool, so an owner lost by an earlier failure is restored. Other
+  instances are listed as `unmanaged` and left alone, and template-build and
+  quota-probe guests are skipped. Reconcile deletes nothing. When Incus cannot
+  be read, it changes nothing and fails.
+- **An unrecorded instance blocks create.** `create` refuses a name that
+  already belongs to an unrecorded instance in the project, and reports
+  `admission_conflict`, rather than launching over it. Run `reconcile` to adopt
+  it, then use the ordinary verbs.
+- **Durable records.** The allocation ledger and the event log are each
+  replaced atomically: the new content is fully written and synced to a
+  temporary file, which is then renamed over the old one. A crash or a full disk
+  leaves the last complete version. A missing, empty, or malformed
+  `allocations.json` fails closed, so no VM is admitted until `reconcile`
+  rebuilds the ledger from the inventory. Reconcile keeps the damaged bytes in `allocations.json.invalid`.
+  A malformed `lifecycle.jsonl` blocks every lifecycle change until the log is
+  moved aside, because the helper will not mutate state it cannot audit. It is
+  never overwritten, so the history it holds survives.
 
 ## Boundary and lifecycle evidence
 

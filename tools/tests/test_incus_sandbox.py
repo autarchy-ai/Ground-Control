@@ -26,6 +26,18 @@ from tools.incus_sandbox.probe import (
 )
 
 
+def host_facts(**overrides: object) -> dict[str, object]:
+    """Fresh host and storage-pool observations that admit one more VM."""
+    return {"memory_mib": 16000, "disk_gib": 256, "pool_total_gib": 64, "pool_free_gib": 60, "fresh": True,
+            **overrides}
+
+
+def initialize_ledger(state_dir: Path) -> None:
+    """Write the empty ledger setup install writes for the project it creates."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "allocations.json").write_text("{}", encoding="utf-8")
+
+
 def config_doc(tmp: Path) -> dict[str, object]:
     return {
         "schema": "gc.incus-sandbox/v1",
@@ -59,20 +71,36 @@ class SandboxTestCase(unittest.TestCase):
         self.config_path.write_text(json.dumps(config_doc(self.root)), encoding="utf-8")
         self.config_path.chmod(0o600)
         self.config = load_config(self.config_path, expected_uid=os.getuid())
+        initialize_ledger(self.config.state_dir)
         self.commands: list[list[str]] = []
+        self.instances: set[str] = set()
         self.writer = EventWriter(self.config.event_log, self.config.event_max_bytes,
                                   expected_uid=os.getuid())
         self.helper = LifecycleHelper(
             self.config,
-            runner=lambda argv, operation: self.commands.append(argv) or {"returncode": 0},
+            runner=self.record,
             event_writer=self.writer,
-            observer=lambda: {"memory_mib": 16384, "disk_gib": 256, "fresh": True},
+            observer=host_facts,
             network_checker=lambda config: True,
             caller_uid=os.getuid(),
+            query=self.query,
         )
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+
+    def record(self, argv: list[str], operation: str) -> dict[str, int]:
+        """A daemon that succeeds, whose instances follow the launches and deletes it runs."""
+        self.commands.append(argv)
+        if argv[1] == "launch":
+            self.instances.add(argv[3])
+        elif argv[1] == "delete":
+            self.instances.discard(argv[2])
+        return {"returncode": 0}
+
+    def query(self, argv: list[str], deadline: int) -> str:
+        """The project inventory of that daemon."""
+        return json.dumps([f"/1.0/instances/{name}" for name in sorted(self.instances)])
 
 
 class ConfigBoundaryTest(SandboxTestCase):
@@ -172,8 +200,7 @@ class LifecycleBoundaryTest(SandboxTestCase):
     def test_stale_or_insufficient_observations_deny_admission_before_incus_runs(self) -> None:
         stale = LifecycleHelper(
             self.config, runner=lambda argv, operation: self.commands.append(argv), event_writer=self.writer,
-            observer=lambda: {"memory_mib": 99999, "disk_gib": 99999, "fresh": False},
-            network_checker=lambda config: True,
+            observer=lambda: host_facts(fresh=False), network_checker=lambda config: True, query=self.query,
         )
         with self.assertRaises(AdmissionError):
             stale.create("agent-1")
@@ -182,10 +209,10 @@ class LifecycleBoundaryTest(SandboxTestCase):
         self.assertEqual(event["error_code"], "admission_observation_stale")
 
     def test_start_and_create_reserve_aggregate_capacity_including_overhead(self) -> None:
-        self.config.state_dir.mkdir(parents=True)
         allocation = self.config.state_dir / "allocations.json"
-        allocation.write_text(json.dumps({"agent-0": {"cpu": 7, "memory_mib": 28000,
-                                            "disk_gib": 480}}), encoding="utf-8")
+        allocation.write_text(json.dumps({"agent-0": {"cpu": 7, "memory_mib": 28000, "disk_gib": 480,
+                                                      "owner_uid": os.getuid(), "state": "running"}}),
+                              encoding="utf-8")
         with self.assertRaises(AdmissionError):
             self.helper.create("agent-1")
         self.assertEqual(self.commands, [])
@@ -195,8 +222,7 @@ class LifecycleBoundaryTest(SandboxTestCase):
             raise RuntimeError("secret-canary raw argv and terminal transcript")
 
         helper = LifecycleHelper(self.config, runner=failing, event_writer=self.writer,
-                                 observer=lambda: {"memory_mib": 16000, "disk_gib": 256, "fresh": True},
-                                 network_checker=lambda config: True)
+                                 observer=host_facts, network_checker=lambda config: True, query=self.query)
         self.helper.create("agent-1")
         with self.assertRaises(RuntimeError):
             helper.stop("agent-1")
@@ -215,8 +241,7 @@ class LifecycleBoundaryTest(SandboxTestCase):
             return {"returncode": 0}
 
         helper = LifecycleHelper(self.config, runner=failing_launch, event_writer=self.writer,
-                                 observer=lambda: {"memory_mib": 16000, "disk_gib": 256, "fresh": True},
-                                 network_checker=lambda config: True)
+                                 observer=host_facts, network_checker=lambda config: True, query=self.query)
         with self.assertRaises(RuntimeError):
             helper.create("agent-1")
         allocations = json.loads((self.config.state_dir / "allocations.json").read_text(encoding="utf-8"))
@@ -277,25 +302,25 @@ class LifecycleBoundaryTest(SandboxTestCase):
         self.assertGreaterEqual(int(observed["disk_gib"]), 0)
 
     def test_network_address_drift_denies_new_vm_admission(self) -> None:
-        helper = LifecycleHelper(self.config, runner=lambda argv, operation: self.commands.append(argv), event_writer=self.writer,
-                                 observer=lambda: {"memory_mib": 16000, "disk_gib": 256, "fresh": True},
-                                 network_checker=lambda config: False)
+        helper = LifecycleHelper(self.config, runner=lambda argv, operation: self.commands.append(argv),
+                                 event_writer=self.writer, observer=host_facts,
+                                 network_checker=lambda config: False, query=self.query)
         with self.assertRaises(AdmissionError):
             helper.create("agent-1")
         self.assertEqual(self.commands, [])
 
     def test_lifecycle_operations_reject_a_different_operator_before_incus(self) -> None:
         self.helper.create("agent-1")
-        other = LifecycleHelper(self.config, runner=lambda argv, operation: self.commands.append(argv), event_writer=self.writer,
-                                observer=lambda: {"memory_mib": 16000, "disk_gib": 256, "fresh": True},
-                                network_checker=lambda config: True, caller_uid=os.getuid() + 1)
+        other = LifecycleHelper(self.config, runner=lambda argv, operation: self.commands.append(argv),
+                                event_writer=self.writer, observer=host_facts,
+                                network_checker=lambda config: True, caller_uid=os.getuid() + 1, query=self.query)
         with self.assertRaises(UsageError):
             other.attach("agent-1")
         self.assertEqual(len(self.commands), 3)
 
     def test_status_normalizes_missing_guest_observations_instead_of_raw_incus_json(self) -> None:
         report = self.helper.normalized_observation("agent-1", None)
-        self.assertEqual(report["schema"], "gc.incus-sandbox.status/v2")
+        self.assertEqual(report["schema"], "gc.incus-sandbox.status/v3")
         self.assertEqual(report["observed_state"], "unavailable")
         self.assertEqual(report["observed"]["availability"], "unavailable")
         self.assertIn("admission_headroom", report)
@@ -329,8 +354,8 @@ class LifecycleBoundaryTest(SandboxTestCase):
     def test_status_query_emits_only_the_normalized_document(self) -> None:
         self.helper.create("agent-1")
         responses = iter([json.dumps({"status": "Running"}), json.dumps({"cpu": {"usage": 7}})])
-        with patch("tools.incus_sandbox.helper.capture", side_effect=lambda *args, **kwargs: next(responses)):
-            self.helper.status("agent-1")
+        self.helper.query = lambda argv, deadline: next(responses)
+        self.helper.status("agent-1")
         record = json.loads(self.config.event_log.read_text(encoding="utf-8").splitlines()[-1])
         self.assertEqual(record["action"], "status")
         self.assertEqual(record["outcome"], "success")
@@ -378,10 +403,10 @@ class LifecycleTransitionTest(SandboxTestCase):
     def _failing_runner(self, failing: str):
         """Return a runner that fails the first command containing the given verb."""
         def runner(argv: list[str], operation: str) -> dict[str, int]:
-            self.commands.append(argv)
             if failing in argv:
+                self.commands.append(argv)
                 raise subprocess.CalledProcessError(1, argv)
-            return {"returncode": 0}
+            return self.record(argv, operation)
         return runner
 
     def test_create_refuses_a_sandbox_that_is_already_allocated(self) -> None:
@@ -416,7 +441,7 @@ class LifecycleTransitionTest(SandboxTestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             self.helper.start("agent-1")
         records = json.loads((self.root / "state" / "allocations.json").read_text(encoding="utf-8"))
-        self.assertFalse(records["agent-1"]["active"])
+        self.assertEqual(records["agent-1"]["state"], "stopped")
         self.helper.runner = lambda argv, operation: self.commands.append(argv) or {"returncode": 0}
         self.helper.start("agent-1")
 

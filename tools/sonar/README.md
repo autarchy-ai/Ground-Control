@@ -19,10 +19,12 @@ artifacts, lives under this directory.
 
 ## New-issue gate
 
-The CI `sonar` job runs Gradle with `-Dsonar.qualitygate.wait=true`, then runs
+The CI `sonar` job runs the SonarCloud scan and quality-gate check, then runs
 `tools/sonar/assert_no_new_issues.py`. The script uses `SONAR_TOKEN` only for
 SonarCloud API authentication, derives the pull request number from the GitHub
-event payload, and prints only issue metadata when it fails. This keeps the
+event payload, and prints only issue metadata when it fails. Pass
+`--organization` with an organization token: SonarCloud refuses that token's
+issue search without the organization (HTTP 400). This keeps the
 repo-side merge gate stricter than a SonarCloud project gate that may still
 allow non-blocking code smells.
 

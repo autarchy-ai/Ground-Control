@@ -17,6 +17,17 @@ test("accepts closed lifecycle verbs and invokes only the fixed root helper", ()
   }]);
 });
 
+test("reconcile takes no sandbox name and runs only the fixed root helper", () => {
+  assert.deepEqual(parseArguments(["reconcile"]), { action: "reconcile", name: undefined });
+  assert.throws(() => parseArguments(["reconcile", "agent-1"]), /does not accept/);
+  const calls = [];
+  runClient(["reconcile"], (command, args) => {
+    calls.push({ command, args });
+    return { status: 0 };
+  });
+  assert.deepEqual(calls, [{ command: "/usr/bin/sudo", args: ["--", "/usr/local/lib/gc-incus-sandbox/helper.py", "reconcile"] }]);
+});
+
 test("does not turn a failed helper call into a host command fallback", () => {
   assert.throws(() => runClient(["create", "agent-1"], () => ({ status: 75 })), /failed/);
   assert.throws(() => parseArguments(["exec", "agent-1"]), /unsupported/);

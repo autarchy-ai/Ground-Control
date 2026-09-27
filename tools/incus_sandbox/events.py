@@ -3,26 +3,30 @@
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
 import os
 import time
 import uuid
-from collections.abc import Iterator
 from pathlib import Path
 from typing import TypedDict
+
+if __package__:
+    from .durable import exclusive_lock, replace_file
+else:
+    from durable import exclusive_lock, replace_file
 
 
 _ACTIONS = {
     "create", "boot", "attach", "stop", "start", "delete", "status", "diagnose", "transfer",
-    "task_start", "task_restart", "task_stop",
+    "task_start", "task_restart", "task_stop", "cleanup", "reconcile",
 }
 _OUTCOMES = {"success", "failure", "denied"}
 _ERRORS = {
-    "none", "admission_observation_stale", "admission_insufficient", "command_failed",
-    "command_timeout", "invalid_input", "event_unavailable",
+    "none", "admission_observation_stale", "admission_insufficient", "admission_conflict",
+    "command_failed", "command_timeout", "invalid_input", "event_unavailable",
     "task_unavailable",
 }
+_RESOURCE_FACTS = {"cpu", "memory_mib", "disk_gib", "pool_total_gib", "pool_free_gib", "fresh"}
 _INPUT_FIELDS = {"action", "outcome", "sandbox_id", "error_code", "assigned", "observed", "duration_ms"}
 
 
@@ -58,7 +62,7 @@ class EventWriter(object):
     @staticmethod
     def _resource_facts(value: object) -> dict[str, int | bool]:
         """Validate the small resource fact vocabulary retained in an event."""
-        if not isinstance(value, dict) or set(value) - {"cpu", "memory_mib", "disk_gib", "fresh"}:
+        if not isinstance(value, dict) or set(value) - _RESOURCE_FACTS:
             raise ValueError("event resource facts are invalid")
         if not all(isinstance(key, str) and isinstance(item, (int, bool)) for key, item in value.items()):
             raise ValueError("event resource facts are invalid")
@@ -84,7 +88,7 @@ class EventWriter(object):
         """Build one schema-constrained JSONL record from approved facts."""
         action, outcome, error_code, sandbox_id = self._identity(event)
         record: dict[str, object] = {
-            "schema": "gc.incus-sandbox.event/v2",
+            "schema": "gc.incus-sandbox.event/v3",
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "duration_ms": int(event.get("duration_ms", 0)), "event_id": str(uuid.uuid4()),
             "host_id": "local", "operation_id": str(uuid.uuid4()),
@@ -106,33 +110,28 @@ class EventWriter(object):
 
     def _read_retained(self, remaining: int) -> str:
         """Keep only complete newest events that fit beside the next record."""
-        if not self.path.exists():
-            return ""
-        previous = self.path.read_text(encoding="utf-8")
+        previous = self._read_log()
         while previous and len(previous.encode("utf-8")) > remaining:
             previous = previous.partition("\n")[2]
         return previous
 
-    def _replace_log(self, content: str) -> None:
-        """Write through a no-follow descriptor after path validation."""
-        descriptor = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o640)
+    def _read_log(self) -> str:
+        """Read the retained events; a damaged log is refused rather than silently replaced."""
+        if not self.path.exists():
+            return ""
         try:
-            os.write(descriptor, content.encode("utf-8"))
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        os.chmod(self.path, 0o640)
+            content = self.path.read_bytes().decode("utf-8")
+            complete = content == "" or content.endswith("\n")
+            valid = complete and all(isinstance(json.loads(line), dict) for line in content.splitlines())
+        except ValueError:
+            valid = False
+        if not valid:
+            raise RuntimeError("event log is malformed; move it aside to keep it and resume")
+        return content
 
-    @contextlib.contextmanager
-    def _exclusive(self) -> Iterator[None]:
-        """Serialize the read-retain-replace sequence across lifecycle processes."""
-        self.path.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
-        descriptor = os.open(self.path.with_suffix(".lock"), os.O_WRONLY | os.O_CREAT, 0o600)
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
-            yield
-        finally:
-            os.close(descriptor)
+    def _exclusive(self) -> contextlib.AbstractContextManager[None]:
+        """Serialize the read-retain-replace sequence on a lock file the replacement never swaps."""
+        return exclusive_lock(self.path.with_suffix(".lock"))
 
     def write(self, event: EventInput) -> None:
         """Append an approved event while enforcing the configured byte bound."""
@@ -140,10 +139,12 @@ class EventWriter(object):
         with self._exclusive():
             self._validate_path()
             retained = self._read_retained(self.max_bytes - len(rendered.encode("utf-8")))
-            self._replace_log(retained + rendered)
+            replace_file(self.path, (retained + rendered).encode("utf-8"), 0o640)
 
     def ensure_available(self) -> None:
-        """Prove the audit destination is safe before a lifecycle mutation."""
-        self._validate_path()
-        if self.path.exists() and not os.access(self.path, os.W_OK):
-            raise RuntimeError("event log is unavailable")
+        """Prove the audit destination is safe and intact before a lifecycle mutation."""
+        with self._exclusive():
+            self._validate_path()
+            if self.path.exists() and not os.access(self.path, os.W_OK):
+                raise RuntimeError("event log is unavailable")
+            self._read_log()

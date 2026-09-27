@@ -14,7 +14,7 @@ const PYTHON = "/usr/bin/python3";
 const SETUP_VERBS = new Set(["install", "upgrade", "refresh", "rollback"]);
 // Verbs the provider's own lifecycle client validates and carries out.
 const LIFECYCLE_VERBS = new Set([
-  "create", "list", "attach", "stop", "start", "delete", "status", "diagnose",
+  "create", "list", "attach", "stop", "start", "delete", "status", "diagnose", "reconcile",
   "prepare", "export", "import", "migrate", "task-start", "task-restart", "task-stop",
 ]);
 
@@ -39,6 +39,7 @@ sandboxes:
   create NAME | start NAME | stop NAME | status NAME | diagnose NAME | list
   attach NAME                          join the task session running in the sandbox
   delete NAME --confirm NAME           delete a sandbox; the name must be repeated
+  reconcile                            align recorded capacity and ownership with the VMs Incus reports
   prepare NAME <bundle|clone> CHECKOUT REVISION  put a committed source in the sandbox
   migrate NAME CHECKOUT < REQUEST      move uncommitted work into the sandbox
   export CHECKOUT < REQUEST > PACKET   save uncommitted work; import NAME < PACKET loads it

@@ -16,7 +16,7 @@
     "reserve_disk_gib": 32,
     "max_cpu": 8,
     "max_memory_mib": 32768,
-    "max_disk_gib": 512,
+    "max_disk_gib": 64,
     "overhead_disk_gib": 16
   },
   "migration": {

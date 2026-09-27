@@ -7,7 +7,8 @@ import { assertRealpathInRepo } from "./repo-context-2.js";
 import { resolveRepoRelativePath } from "./repo-context.js";
 import { execFile as _execFile } from "./runtime-primitives.js";
 import { buildSonarScopeEvidence, classifySonarProducer, fetchSonarProducerEvidence, readSonarCloudConfigStrict, selectSonarProducerChecks } from "./sonar-scope.js";
-import { SONAR_BASE_URL, SONAR_EXPORT_RETENTION, SONAR_RETRY_DELAYS_MS, _pruneSonarExports, _sonarAuthHeader, shouldRetrySonarStatus, summarizeSonarHotspots, summarizeSonarIssues } from "./repo-vocabulary.js";
+import { SONAR_EXPORT_RETENTION, _pruneSonarExports, summarizeSonarHotspots, summarizeSonarIssues } from "./repo-vocabulary.js";
+import { _fetchSonarIssuesAndHotspots, _fetchSonarQualityGate } from "./sonar-api.js";
 
 /**
  * The one deadline for a watch.
@@ -28,115 +29,6 @@ function createWatchBudget({ totalTimeoutSeconds, now, sleepMs }) {
       if (capped > 0) await sleepMs(capped);
     },
   };
-}
-async function _sonarFetchWithRetry(url, init, budget) {
-  let lastErr = null;
-  for (let attempt = 0; attempt <= SONAR_RETRY_DELAYS_MS.length; attempt++) {
-    let resp;
-    try {
-      resp = await fetch(url, init);
-    } catch (err) {
-      // Network failure (DNS, connection reset, timeout). Treated as
-      // transient at the same retry tier as 5xx.
-      lastErr = err;
-      if (attempt < SONAR_RETRY_DELAYS_MS.length && !budget.expired()) {
-        await budget.sleep(SONAR_RETRY_DELAYS_MS[attempt]);
-        continue;
-      }
-      throw err;
-    }
-    if (!shouldRetrySonarStatus(resp.status)) return resp;
-    if (attempt >= SONAR_RETRY_DELAYS_MS.length || budget.expired()) return resp;
-    await budget.sleep(SONAR_RETRY_DELAYS_MS[attempt]);
-  }
-  // Unreachable — loop above always returns or throws. Keep the throw
-  // as a sentinel so a future refactor that breaks the loop semantics
-  // surfaces cleanly.
-  throw lastErr ?? new Error("sonar fetch retry exhausted");
-}
-// A credential the API rejected is not a credential the host is missing, and the
-// two have different repairs. Raised as a tagged error so the watcher can name
-// the right one instead of folding both into a generic fetch failure.
-function _sonarError(code, message) {
-  const err = new Error(message);
-  err.sonarErrorCode = code;
-  return err;
-}
-async function _fetchSonarQualityGate({ projectKey, prNumber, token, budget }) {
-  const url = `${SONAR_BASE_URL}/api/qualitygates/project_status?projectKey=${encodeURIComponent(projectKey)}&pullRequest=${encodeURIComponent(String(prNumber))}`;
-  const resp = await _sonarFetchWithRetry(url, {
-    headers: { Authorization: _sonarAuthHeader(token), Accept: "application/json" },
-  }, budget);
-  if (resp.status === 404) return { available: false };
-  if (resp.status === 401 || resp.status === 403) {
-    throw _sonarError(
-      "sonar_watch_authentication_failed",
-      `SonarCloud rejected the host credential: HTTP ${resp.status}`,
-    );
-  }
-  if (!resp.ok) {
-    throw new Error(`sonar quality gate fetch failed: HTTP ${resp.status}`);
-  }
-  const data = await resp.json();
-  // HTTP status and response shape are separate signals. SonarCloud answers a
-  // pull request it has no component for with a 200 carrying an `errors`
-  // document; that is the propagation case and stays a poll. Anything else
-  // without a gate status is a body this code cannot read, and turning it into
-  // another "not available" poll spends the whole cap on a parse failure.
-  const status = data?.projectStatus?.status;
-  if (typeof status === "string" && status.length > 0) {
-    return { available: true, status };
-  }
-  if (data != null && typeof data === "object" && Array.isArray(data.errors)) {
-    return { available: false };
-  }
-  throw _sonarError(
-    "sonar_watch_quality_gate_malformed",
-    "SonarCloud returned a quality-gate response carrying neither a status nor an error document",
-  );
-}
-async function _fetchSonarIssues({ projectKey, prNumber, token, budget, maxPages = 20 }) {
-  const out = [];
-  for (let page = 1; page <= maxPages; page++) {
-    const url = `${SONAR_BASE_URL}/api/issues/search?componentKeys=${encodeURIComponent(projectKey)}&pullRequest=${encodeURIComponent(String(prNumber))}&resolved=false&ps=500&p=${page}`;
-    const resp = await _sonarFetchWithRetry(url, {
-      headers: { Authorization: _sonarAuthHeader(token), Accept: "application/json" },
-    }, budget);
-    if (!resp.ok) {
-      throw new Error(`sonar issues fetch failed (page ${page}): HTTP ${resp.status}`);
-    }
-    const data = await resp.json();
-    const issues = Array.isArray(data?.issues) ? data.issues : [];
-    out.push(...issues);
-    const total = typeof data?.total === "number" ? data.total : out.length;
-    if (out.length >= total) break;
-    if (issues.length === 0) break;
-    // Pagination used to run past the last elapsed-time check, so a wide result
-    // set could spend well beyond the cap after the gate was already read.
-    if (budget.expired()) break;
-  }
-  return out;
-}
-async function _fetchSonarHotspots({ projectKey, prNumber, token, budget, maxPages = 20 }) {
-  const out = [];
-  for (let page = 1; page <= maxPages; page++) {
-    const url = `${SONAR_BASE_URL}/api/hotspots/search?projectKey=${encodeURIComponent(projectKey)}&pullRequest=${encodeURIComponent(String(prNumber))}&status=TO_REVIEW&ps=500&p=${page}`;
-    const resp = await _sonarFetchWithRetry(url, {
-      headers: { Authorization: _sonarAuthHeader(token), Accept: "application/json" },
-    }, budget);
-    if (!resp.ok) {
-      throw new Error(`sonar hotspots fetch failed (page ${page}): HTTP ${resp.status}`);
-    }
-    const data = await resp.json();
-    const hotspots = Array.isArray(data?.hotspots) ? data.hotspots : [];
-    out.push(...hotspots);
-    const paging = data?.paging;
-    const total = typeof paging?.total === "number" ? paging.total : out.length;
-    if (out.length >= total) break;
-    if (hotspots.length === 0) break;
-    if (budget.expired()) break;
-  }
-  return out;
 }
 function _writeSonarExport(repoRoot, prNumber, payload) {
   // Best-effort, repo-relative, containment-checked write under
@@ -210,14 +102,14 @@ function sonarWatchTimedOut(prNumber) {
 // The shared `budget` is the whole watch's deadline, not this loop's: the
 // propagation wait that precedes it spends from the same allowance, and its
 // sleeps are clipped to what remains rather than run in full.
-async function pollSonarQualityGateUntilReady({ projectKey, prNumber, token, pollIntervalSeconds, budget }) {
+async function pollSonarQualityGateUntilReady({ projectKey, organization, prNumber, token, pollIntervalSeconds, budget }) {
   while (true) {
     if (budget.expired()) {
       return { earlyReturn: sonarWatchTimedOut(prNumber) };
     }
     let qg;
     try {
-      qg = await _fetchSonarQualityGate({ projectKey, prNumber, token, budget });
+      qg = await _fetchSonarQualityGate({ projectKey, organization, prNumber, token, budget });
     } catch (e) {
       return {
         earlyReturn: {
@@ -236,39 +128,6 @@ async function pollSonarQualityGateUntilReady({ projectKey, prNumber, token, pol
       await budget.sleep(pollIntervalSeconds * 1000);
     }
   }
-}
-// Fetch the PR's open issues then hotspots. Returns `{ issues, hotspots }`, or
-// `{ earlyReturn }` carrying the exact failure envelope the caller returns.
-async function _fetchSonarIssuesAndHotspots({ projectKey, prNumber, token, qgStatus, budget }) {
-  let issues = [];
-  let hotspots = [];
-  try {
-    issues = await _fetchSonarIssues({ projectKey, prNumber, token, budget });
-  } catch (e) {
-    return {
-      earlyReturn: {
-        ok: false,
-        error: "sonar_watch_issues_fetch_failed",
-        message: e?.message ?? "sonar issues fetch failed",
-        pr_number: prNumber,
-        quality_gate: qgStatus,
-      },
-    };
-  }
-  try {
-    hotspots = await _fetchSonarHotspots({ projectKey, prNumber, token, budget });
-  } catch (e) {
-    return {
-      earlyReturn: {
-        ok: false,
-        error: "sonar_watch_hotspots_fetch_failed",
-        message: e?.message ?? "sonar hotspots fetch failed",
-        pr_number: prNumber,
-        quality_gate: qgStatus,
-      },
-    };
-  }
-  return { issues, hotspots };
 }
 const PRODUCER_SKIPPED_MESSAGE =
   "The pull request's SonarCloud producer check concluded 'skipped', so no analysis will ever be "
@@ -315,7 +174,7 @@ async function resolveSonarProducerScope({ repoRoot, repoSlug, prNumber, project
 /**
  * Read the repo's SonarCloud declaration into the watch's inputs.
  *
- * Returns `{ projectKey, selector }` when the repo opted into the gate, or
+ * Returns `{ projectKey, organization, selector }` when the repo opted into the gate, or
  * `{ earlyReturn }` carrying the exact envelope the caller returns: a skip for a
  * repo that declares no `sonarcloud` block, and a refusal for a declaration this
  * server could not read at all — the permissive reader turned both an
@@ -348,6 +207,7 @@ function resolveSonarDeclaration(repoRoot, prNumber) {
   }
   return {
     projectKey: declared.config.project_key,
+    organization: declared.config.organization ?? null,
     selector: declared.config.analysis_check ?? null,
   };
 }
@@ -359,15 +219,15 @@ function resolveSonarDeclaration(repoRoot, prNumber) {
  * it is separated from the applicability checks that decide whether to get this
  * far at all.
  */
-async function readSonarGate({ repoRoot, projectKey, prNumber, token, pollIntervalSeconds, budget }) {
+async function readSonarGate({ repoRoot, projectKey, organization, prNumber, token, pollIntervalSeconds, budget }) {
   const pollResult = await pollSonarQualityGateUntilReady({
-    projectKey, prNumber, token, pollIntervalSeconds, budget,
+    projectKey, organization, prNumber, token, pollIntervalSeconds, budget,
   });
   if (pollResult.earlyReturn) return pollResult.earlyReturn;
   const qg = pollResult.qg;
 
   const fetched = await _fetchSonarIssuesAndHotspots({
-    projectKey, prNumber, token, qgStatus: qg.status, budget,
+    projectKey, organization, prNumber, token, qgStatus: qg.status, budget,
   });
   if (fetched.earlyReturn) return fetched.earlyReturn;
   const { issues, hotspots } = fetched;
@@ -442,7 +302,7 @@ export async function runWatchSonarAnalysis({
 
   const declaration = resolveSonarDeclaration(repoRoot, prNumber);
   if (declaration.earlyReturn) return declaration.earlyReturn;
-  const { projectKey, selector } = declaration;
+  const { projectKey, organization, selector } = declaration;
 
   // The producer read spends the MCP host's GitHub credentials, so the checkout
   // has to be one this server is authorized to act on and the destination has to
@@ -495,5 +355,5 @@ export async function runWatchSonarAnalysis({
     await budget.sleep(initialWaitSeconds * 1000);
   }
 
-  return readSonarGate({ repoRoot, projectKey, prNumber, token, pollIntervalSeconds, budget });
+  return readSonarGate({ repoRoot, projectKey, organization, prNumber, token, pollIntervalSeconds, budget });
 }

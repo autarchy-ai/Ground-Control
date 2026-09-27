@@ -142,9 +142,11 @@ install_files() {
   run install -d -m 0750 "$INSTALL_ROOT" "$STATE_ROOT" /var/log/gc-incus-sandbox
   run install -m 0640 "$PAYLOAD_ROOT/allocations.py" "$INSTALL_ROOT/allocations.py"
   run install -m 0640 "$PAYLOAD_ROOT/config.py" "$INSTALL_ROOT/config.py"
+  run install -m 0640 "$PAYLOAD_ROOT/durable.py" "$INSTALL_ROOT/durable.py"
   run install -m 0640 "$PAYLOAD_ROOT/events.py" "$INSTALL_ROOT/events.py"
   run install -m 0640 "$PAYLOAD_ROOT/observations.py" "$INSTALL_ROOT/observations.py"
   run install -m 0640 "$PAYLOAD_ROOT/owned_process.py" "$INSTALL_ROOT/owned_process.py"
+  run install -m 0640 "$PAYLOAD_ROOT/reconcile.py" "$INSTALL_ROOT/reconcile.py"
   run install -m 0640 "$PAYLOAD_ROOT/repository_environment.py" "$INSTALL_ROOT/repository_environment.py"
   run install -m 0750 "$PAYLOAD_ROOT/task_environment.py" "$INSTALL_ROOT/task_environment.py"
   run install -m 0644 "$PAYLOAD_ROOT/task_launcher.py" "$INSTALL_ROOT/task-launcher.py"
@@ -173,6 +175,15 @@ EOF
   fi
 }
 
+initialize_ledger() {
+  # The project was created empty by this install, so an empty ledger is its true state.
+  # Afterwards a missing ledger is lost state that only `grndctl sandbox reconcile` rebuilds.
+  "$dry_run" && { echo "initialize empty allocation ledger for the new project"; return 0; }
+  install -d -m 0750 "$STATE_ROOT/state"
+  printf '{}' >"$STATE_ROOT/state/allocations.json"
+  chmod 0640 "$STATE_ROOT/state/allocations.json"
+}
+
 install_resources() {
   run apt-get update
   run apt-get install -y incus nftables tmux
@@ -183,6 +194,7 @@ install_resources() {
   require_pinned_image
   run incus project create "$PROJECT"
   "$dry_run" || printf '%s\n' project >>"$OWNERSHIP_RECORD"
+  initialize_ledger
   run incus project set "$PROJECT" restricted true
   run incus project set "$PROJECT" restricted.containers.nesting block
   run incus project set "$PROJECT" restricted.devices.disk block

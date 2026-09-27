@@ -7,7 +7,7 @@ import { readSync } from "node:fs";
 import { captureMigration, parseMigrationSpec, prepareSource, transferMigration } from "./source.mjs";
 import { isTaskAction, runTaskCommand } from "./task_client.mjs";
 
-const ACTIONS = new Set(["create", "list", "attach", "stop", "start", "delete", "status", "diagnose"]);
+const ACTIONS = new Set(["create", "list", "attach", "stop", "start", "delete", "status", "diagnose", "reconcile"]);
 const NAME = /^[a-z][a-z0-9-]{0,47}$/;
 const HELPER = "/usr/local/lib/gc-incus-sandbox/helper.py";
 
@@ -16,8 +16,8 @@ export function parseArguments(argv) {
     throw new Error("unsupported lifecycle action");
   }
   const [action, name] = argv;
-  if (action === "list") {
-    if (name !== undefined) throw new Error("list does not accept a sandbox name");
+  if (action === "list" || action === "reconcile") {
+    if (name !== undefined) throw new Error(`${action} does not accept a sandbox name`);
     return { action, name: undefined };
   }
   if (!NAME.test(name ?? "")) throw new Error("sandbox name is invalid");

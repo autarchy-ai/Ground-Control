@@ -12,29 +12,42 @@ import time
 from pathlib import Path
 from collections.abc import Callable
 if __package__:
-    from .allocations import SANDBOX_NAME, AdmissionError, locked_allocations, save_allocations, unlock
+    from .allocations import (
+        CLEANUP_PENDING, RUNNING, SANDBOX_NAME, STOPPED, AdmissionError, CleanupPendingError, Ledger,
+        fits, headroom,
+    )
     from .config import SandboxConfig, load_config
     from .events import EventWriter
-    from .observations import observation, observed_facts, positive_fact, query_payload, status_state
+    from .observations import observation, positive_fact, query_payload, status_document
     from .owned_process import COMMAND_ERRORS, capture, run_owned
+    from .reconcile import reconcile_ledger
     from .task_environment import redacted_task_observation, state_lock
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from allocations import SANDBOX_NAME, AdmissionError, locked_allocations, save_allocations, unlock
+    from allocations import (
+        CLEANUP_PENDING, RUNNING, SANDBOX_NAME, STOPPED, AdmissionError, CleanupPendingError, Ledger,
+        fits, headroom,
+    )
     from config import SandboxConfig, load_config
     from events import EventWriter
-    from observations import observation, observed_facts, positive_fact, query_payload, status_state
+    from observations import observation, positive_fact, query_payload, status_document
     from owned_process import COMMAND_ERRORS, capture, run_owned
+    from reconcile import reconcile_ledger
     from task_environment import redacted_task_observation, state_lock
 
 
 class UsageError(RuntimeError):
     """The caller requested a lifecycle action outside the closed vocabulary."""
 
-_ACTIONS = {"create", "list", "attach", "stop", "start", "delete", "status", "diagnose"}
+
+_ACTIONS = {"create", "list", "attach", "stop", "start", "delete", "status", "diagnose", "reconcile"}
 _INCUS = "/usr/bin/incus"
 _IP = "/usr/sbin/ip"
 _INVALID_OPERATOR = "caller is not the configured sandbox operator"
+_PENDING = "sandbox cleanup is pending; remove it with `grndctl sandbox delete NAME --confirm NAME`"
+_ResourceFacts = dict[str, int | bool]
+_Record = dict[str, int | str]
+
 
 def _network_policy_fresh(config: SandboxConfig) -> bool:
     """A changed host address set invalidates starts until setup refreshes nft sets."""
@@ -52,20 +65,27 @@ def _failure_code(error: BaseException) -> str:
     return "command_timeout" if isinstance(error, subprocess.TimeoutExpired) else "command_failed"
 
 
+def _capture(argv: list[str], deadline_seconds: int) -> str:
+    """Run a fixed query argv, resolved at call time so a test can patch `capture`."""
+    return capture(argv, deadline_seconds)
+
+
 class LifecycleHelper(object):
     """Validates caller intent, reserves capacity, then emits only fixed Incus argv."""
 
     def __init__(self, config: SandboxConfig, *, runner: Callable[[list[str], str], object] | None = None,
-                 event_writer: EventWriter, observer: Callable[[], dict[str, int | bool]] = observation,
+                 event_writer: EventWriter, observer: Callable[[], _ResourceFacts] | None = None,
                  network_checker: Callable[[SandboxConfig], bool] = _network_policy_fresh,
-                 caller_uid: int | None = None) -> None:
-        """Bind the host policy; the runner defaults to deadline-bounded Incus execution."""
+                 caller_uid: int | None = None,
+                 query: Callable[[list[str], int], str] = _capture) -> None:
+        """Bind the host policy; the runner and query default to deadline-bounded Incus execution."""
         self.config = config
         self.runner = runner if runner is not None else self._run
         self.events = event_writer
-        self.observer = observer
+        self.observer = observer if observer is not None else self._observe
         self.network_checker = network_checker
         self.caller_uid = os.getuid() if caller_uid is None else caller_uid
+        self.query = query
 
     def _run(self, argv: list[str], operation: str) -> object:
         """Run one fixed Incus argv under its operation's configured deadline."""
@@ -75,14 +95,35 @@ class LifecycleHelper(object):
             return subprocess.run(argv, check=True)
         return run_owned(argv, deadline_seconds=getattr(self.config.deadlines, operation))
 
+    def _incus_query(self, path: str) -> object:
+        """GET one Incus API path under the query deadline; None when it cannot be read."""
+        try:
+            return query_payload(self.query([_INCUS, "query", path, "--raw"], self.config.deadlines.query))
+        except COMMAND_ERRORS:
+            return None
+
+    def _observe(self) -> _ResourceFacts:
+        """Host facts plus the configured storage pool's observed space."""
+        return observation(lambda: self._incus_query(f"/1.0/storage-pools/{self.config.pool}/resources"))
+
+    def inventory(self, *, recursive: bool = False) -> object:
+        """The project's instances as Incus lists them, or None when unobservable."""
+        suffix = "&recursion=1" if recursive else ""
+        try:
+            return json.loads(self.query([_INCUS, "query", f"/1.0/instances?project={self.config.project}{suffix}",
+                                          "--raw"], self.config.deadlines.query))
+        except (*COMMAND_ERRORS, ValueError):
+            return None
+
     @staticmethod
     def _name(name: str) -> str:
         if not isinstance(name, str) or not SANDBOX_NAME.fullmatch(name):
             raise UsageError("sandbox name must be lowercase letters, digits, and hyphens")
         return name
 
-    def _emit(self, action: str, outcome: str, name: str | None, *, error_code: str = "none",
-              started: float | None = None, observed: dict[str, int | bool] | None = None) -> None:
+    def emit(self, action: str, outcome: str, name: str | None, *, error_code: str = "none",
+             started: float | None = None, observed: _ResourceFacts | None = None) -> None:
+        """Write one allowlisted lifecycle event."""
         duration = int((time.monotonic() - started) * 1000) if started is not None else 0
         self.events.write({"action": action, "outcome": outcome, "sandbox_id": name,
                            "error_code": error_code, "duration_ms": duration,
@@ -91,87 +132,90 @@ class LifecycleHelper(object):
                                         "disk_gib": self.config.vm.disk_gib},
                            "observed": observed})
 
-    def _locked_allocations(self) -> tuple[int, dict[str, dict[str, int]]]:
+    def ledger(self, *, recover: bool = False) -> Ledger:
         """Take the allocation lock for this host policy's state directory."""
-        return locked_allocations(self.config.state_dir)
+        return Ledger(self.config.state_dir, recover=recover)
 
-    def _admission_observation(self) -> dict[str, int | bool]:
-        """Read and validate the host facts used for a new reservation."""
+    def vm_record(self, state: str) -> _Record:
+        """The configured per-VM reservation, owned by the host operator, in `state`."""
+        return {"cpu": self.config.vm.cpu, "memory_mib": self.config.vm.memory_mib,
+                "disk_gib": self.config.vm.disk_gib, "owner_uid": self.config.operator_uid, "state": state}
+
+    def _admission_observation(self) -> _ResourceFacts:
+        """Read and validate the host and pool facts used for a new reservation."""
         observed = self.observer()
         if observed.get("fresh") is not True:
             raise AdmissionError("host observations are stale")
-        if positive_fact(observed.get("memory_mib")) is None:
+        if any(positive_fact(observed.get(fact)) is None for fact in ("memory_mib", "disk_gib")):
             raise AdmissionError("host observations are unavailable")
-        if positive_fact(observed.get("disk_gib")) is None:
-            raise AdmissionError("host observations are unavailable")
+        if any(positive_fact(observed.get(fact)) is None for fact in ("pool_total_gib", "pool_free_gib")):
+            raise AdmissionError("storage pool observations are unavailable")
         if not self.network_checker(self.config):
             raise AdmissionError("network policy observations are stale")
         return observed
 
-    def _has_headroom(self, observed: dict[str, int | bool]) -> bool:
+    def _has_headroom(self, observed: _ResourceFacts) -> bool:
         """Check host reserves before taking the allocation lock."""
-        memory = positive_fact(observed.get("memory_mib"))
-        disk = positive_fact(observed.get("disk_gib"))
-        if memory is None or disk is None:
-            return False
         required_memory = self.config.host.reserve_memory_mib + self.config.vm.memory_mib
         required_disk = self.config.host.reserve_disk_gib + self.config.vm.disk_gib
-        return memory >= required_memory and disk >= required_disk
+        return int(observed["memory_mib"]) >= required_memory and int(observed["disk_gib"]) >= required_disk
 
-    def _aggregate_fits(self, records: dict[str, dict[str, int]]) -> bool:
-        """Check aggregate VM allocations against the fixed host capacity."""
-        active = [record for record in records.values() if record["active"]]
-        cpu = sum(record["cpu"] for record in active) + self.config.vm.cpu
-        memory = sum(record["memory_mib"] for record in active) + self.config.vm.memory_mib
-        disk = sum(record["disk_gib"] for record in active)
-        disk += self.config.vm.disk_gib + self.config.host.overhead_disk_gib
-        return (
-            cpu <= self.config.host.max_cpu and memory <= self.config.host.max_memory_mib
-            and disk <= self.config.host.max_disk_gib
-        )
-
-    def _check_transition(self, previous: dict[str, int] | None, fresh: bool,
-                          records: dict[str, dict[str, int]]) -> None:
+    def _check_transition(self, previous: _Record | None, fresh: bool) -> None:
         """Refuse a reservation that is not a legal transition for this action."""
-        if previous is not None and previous["active"]:
+        if previous is not None and previous["state"] == RUNNING:
             raise AdmissionError("sandbox is already reserved")
         if fresh and previous is not None:
             raise AdmissionError("sandbox is already allocated")
         if not fresh and previous is None:
             raise UsageError("sandbox is not owned by this operator")
-        if not self._aggregate_fits(records):
-            raise AdmissionError("aggregate allocation is insufficient")
+        if previous is not None and previous["state"] == CLEANUP_PENDING:
+            raise UsageError(_PENDING)
         if self.caller_uid != self.config.operator_uid:
             raise UsageError(_INVALID_OPERATOR)
 
-    def _admit(self, name: str, fresh: bool) -> tuple[
-        int, dict[str, dict[str, int]], dict[str, int | bool], dict[str, int] | None,
-    ]:
+    def _check_capacity(self, ledger: Ledger, name: str, fresh: bool, observed: _ResourceFacts) -> None:
+        """Admit only a prospective ledger that fits, and only a fresh name Incus proves unused."""
+        prospective = {**ledger.records, name: self.vm_record(RUNNING)}
+        if not fits(prospective, self.config.host, int(observed["pool_total_gib"])):
+            raise AdmissionError("aggregate allocation is insufficient")
+        if not fresh:
+            return
+        if int(observed["pool_free_gib"]) < self.config.vm.disk_gib:
+            raise AdmissionError("storage pool free space is insufficient")
+        listed = self.inventory()
+        if not isinstance(listed, list):
+            raise AdmissionError("project inventory is unavailable")
+        if f"/1.0/instances/{name}" in listed:
+            # Any instance present after a failed launch must be provably this call's own.
+            raise AdmissionError("an unrecorded instance has this name; run `grndctl sandbox reconcile`")
+
+    def _admit(self, name: str, fresh: bool) -> tuple[Ledger, _ResourceFacts, _Record | None]:
         """Reserve capacity for a caller after fresh local admission checks."""
         observed = self._admission_observation()
         if not self._has_headroom(observed):
             raise AdmissionError("host headroom is insufficient")
-        fd, records = self._locked_allocations()
-        previous = records.get(name)
+        ledger = self.ledger()
+        previous = ledger.records.get(name)
         try:
-            self._check_transition(previous, fresh, records)
-        except Exception:
-            unlock(fd)
+            self._check_transition(previous, fresh)
+            self._check_capacity(ledger, name, fresh, observed)
+            ledger.records[name] = self.vm_record(RUNNING)
+            ledger.save()
+        except BaseException:
+            ledger.release()
             raise
-        records[name] = {"cpu": self.config.vm.cpu, "memory_mib": self.config.vm.memory_mib,
-                         "disk_gib": self.config.vm.disk_gib, "owner_uid": self.caller_uid, "active": True}
-        return fd, records, observed, previous
+        return ledger, observed, previous
 
-    def _require_owner(self, name: str) -> None:
+    def _require_owner(self, name: str, *, allow_pending: bool = False) -> None:
+        """Admit only the operator's recorded VM; one awaiting cleanup only when allowed."""
         if self.caller_uid != self.config.operator_uid:
             raise UsageError(_INVALID_OPERATOR)
-        fd, records = self._locked_allocations()
-        try:
-            record = records.get(name)
-            if record is None or record["owner_uid"] != self.caller_uid:
-                raise UsageError("sandbox is not owned by this operator")
-        finally:
-            unlock(fd)
+        with self.ledger() as ledger:
+            record = ledger.records.get(name)
+        if record is None or record["owner_uid"] != self.caller_uid:
+            raise UsageError("sandbox is not owned by this operator")
+        if record["state"] == CLEANUP_PENDING and not allow_pending:
+            raise UsageError(_PENDING)
 
     def require_active_owner(self, name: str) -> None:
         """Admit transfer only to this operator's active, still-isolated sandbox."""
@@ -180,112 +224,62 @@ class LifecycleHelper(object):
             raise UsageError(_INVALID_OPERATOR)
         if not self.network_checker(self.config):
             raise AdmissionError("sandbox network isolation observation is stale")
-        fd, records = self._locked_allocations()
-        try:
-            record = records.get(name)
-            if record is None or record["owner_uid"] != self.caller_uid or not record["active"]:
-                raise UsageError("migration target is not an active sandbox owned by this operator")
-        finally:
-            unlock(fd)
+        with self.ledger() as ledger:
+            record = ledger.records.get(name)
+        if record is None or record["owner_uid"] != self.caller_uid or record["state"] != RUNNING:
+            raise UsageError("migration target is not an active sandbox owned by this operator")
 
     def _release(self, name: str) -> None:
-        fd, records = self._locked_allocations()
-        try:
-            if name in records:
-                records[name]["active"] = False
-            save_allocations(fd, records)
-        finally:
-            unlock(fd)
+        """Return a confirmed-stopped VM's CPU and memory; its disk stays charged."""
+        with self.ledger() as ledger:
+            if name in ledger.records:
+                ledger.records[name] = {**ledger.records[name], "state": STOPPED}
+                ledger.save()
 
-    def _forget(self, name: str) -> None:
-        fd, records = self._locked_allocations()
-        try:
-            records.pop(name, None)
-            save_allocations(fd, records)
-        finally:
-            unlock(fd)
+    def forget(self, name: str) -> None:
+        """Clear the state derived from a VM whose deletion or absence is confirmed."""
         (self.config.state_dir / "source-bindings" / f"{name}.json").unlink(missing_ok=True)
-        (self.config.state_dir / "tasks" / f"{name}.json").unlink(missing_ok=True)
+        self._task_state_path(name).unlink(missing_ok=True)
 
-    def _headroom(self) -> dict[str, int]:
-        fd, records = self._locked_allocations()
-        try:
-            return {
-                "cpu": self.config.host.max_cpu - sum(record["cpu"] for record in records.values() if record["active"]),
-                "memory_mib": self.config.host.max_memory_mib - sum(
-                    record["memory_mib"] for record in records.values() if record["active"]
-                ),
-                "disk_gib": self.config.host.max_disk_gib - self.config.host.overhead_disk_gib - sum(
-                    record["disk_gib"] for record in records.values() if record["active"]
-                ),
-            }
-        finally:
-            unlock(fd)
+    def _headroom(self, observed: _ResourceFacts | None = None) -> dict[str, int | None]:
+        """The aggregate headroom admission would use, given the observed pool."""
+        with self.ledger() as ledger:
+            records = ledger.records
+        pool_total = positive_fact((observed or {}).get("pool_total_gib"))
+        return headroom(records, self.config.host, pool_total)
 
     def normalized_observation(self, name: str, incus_info: dict[str, object] | None) -> dict[str, object]:
         """Render the closed status shape; malformed daemon JSON remains unavailable."""
         observed = self.observer()
-        available, status = status_state(incus_info, observed)
-        return {
-            "schema": "gc.incus-sandbox.status/v2",
-            "sandbox_id": name,
-            "desired_state": "running" if name in self._allocation_names() else "stopped",
-            "observed_state": status,
-            "assigned": {"cpu": self.config.vm.cpu, "memory_mib": self.config.vm.memory_mib,
-                         "disk_gib": self.config.vm.disk_gib},
-            "observed": observed_facts(observed, incus_info, available),
-            "admission_headroom": self._headroom(),
-            "last_transition": "unavailable",
-            "failure_reason": "none" if available else "observation_unavailable",
-            "task_environment": redacted_task_observation(
-                self._task_state_path(name), status == "running",
-            ),
-        }
-
-    def _allocation_names(self) -> set[str]:
-        fd, records = self._locked_allocations()
-        try:
-            return {name for name, record in records.items() if record["active"]}
-        finally:
-            unlock(fd)
+        with self.ledger() as ledger:
+            record = ledger.records.get(name)
+        return status_document(
+            name, str(record["state"]) if record is not None else STOPPED, self.vm_record(RUNNING), observed,
+            incus_info, self._headroom(observed),
+            lambda running: redacted_task_observation(self._task_state_path(name), running))
 
     def _query(self, name: str, action: str) -> None:
         name = self._name(name)
         self.events.ensure_available()
-        self._require_owner(name)
+        self._require_owner(name, allow_pending=True)
         started = time.monotonic()
         try:
             deadline = self.config.deadlines.query
             instance_path = f"/1.0/instances/{name}?project={self.config.project}"
-            info = query_payload(capture([_INCUS, "query", instance_path, "--raw"], deadline))
+            info = query_payload(self.query([_INCUS, "query", instance_path, "--raw"], deadline))
             if isinstance(info, dict):
                 state_path = f"/1.0/instances/{name}/state?project={self.config.project}"
-                info["state"] = query_payload(capture([_INCUS, "query", state_path, "--raw"], deadline))
+                info["state"] = query_payload(self.query([_INCUS, "query", state_path, "--raw"], deadline))
             report = self.normalized_observation(name, info)
             print(json.dumps(report, separators=(",", ":")))
-            self._emit(action, "success", name, started=started, observed=self.observer())
+            self.emit(action, "success", name, started=started, observed=self.observer())
         except Exception as exc:
-            self._emit(action, "failure", name, error_code=_failure_code(exc), started=started)
+            self.emit(action, "failure", name, error_code=_failure_code(exc), started=started)
             raise
-
-    def _reservation(self, name: str, reserve: bool, fresh: bool) -> tuple[
-        int | None, dict[str, dict[str, int]] | None, dict[str, int | bool] | None, dict[str, int] | None,
-    ]:
-        """Authorize an existing VM or hold capacity for a new one."""
-        if not reserve:
-            self._require_owner(name)
-            return None, None, None, None
-        descriptor, records, observed, previous = self._admit(name, fresh)
-        save_allocations(descriptor, records)
-        return descriptor, records, observed, previous
 
     def _instance_absent(self, name: str) -> bool:
         """True only on positive proof that the project holds no instance of this name."""
-        try:
-            listed = json.loads(capture([_INCUS, "query", f"/1.0/instances?project={self.config.project}",
-                                          "--raw"], self.config.deadlines.query))
-        except (*COMMAND_ERRORS, ValueError):
-            return False
+        listed = self.inventory()
         return isinstance(listed, list) and f"/1.0/instances/{name}" not in listed
 
     def _delete_instance(self, name: str) -> None:
@@ -296,30 +290,38 @@ class LifecycleHelper(object):
             if not self._instance_absent(name):
                 raise
 
-    def _rollback_reservation(self, name: str, descriptor: int | None,
-                              records: dict[str, dict[str, int]] | None,
-                              previous: dict[str, int] | None, *, delete: bool) -> None:
-        """Remove only an instance this call may have created, then restore the prior allocation."""
-        if descriptor is None or records is None:
-            return
-        if delete:
-            try:
+    def _compensate(self, name: str, ledger: Ledger, previous: _Record | None, *, fresh: bool,
+                    error: BaseException) -> str | None:
+        """Undo a reservation this call could not complete; return a failed cleanup's code.
+
+        Admission proved a fresh name unused, so an instance present now is this call's own
+        and is deleted. Capacity is released only once that VM is gone or proven absent; when
+        the delete fails too, the VM keeps its full reservation as cleanup-pending.
+        """
+        if not fresh:
+            # A start that timed out may have started the VM, so it keeps its reservation.
+            if previous is not None and not isinstance(error, subprocess.TimeoutExpired):
+                ledger.records[name] = previous
+                ledger.save()
+            return None
+        try:
+            if not self._instance_absent(name):
                 self._delete_instance(name)
-            except Exception:
-                # The instance may still exist, so its reservation stays held and the
-                # owner's delete reconciles it; capacity is never freed under a live VM.
-                return
-        if previous is None:
-            records.pop(name, None)
-        else:
-            records[name] = previous
-        save_allocations(descriptor, records)
+        except Exception as cleanup:
+            ledger.records[name] = {**ledger.records[name], "state": CLEANUP_PENDING}
+            ledger.save()
+            return _failure_code(cleanup)
+        ledger.records.pop(name, None)
+        ledger.save()
+        return None
 
     @staticmethod
     def _admission_error_code(error: AdmissionError) -> str:
         """Map detailed local admission errors to the bounded audit vocabulary."""
         if "stale" in str(error) or "unavailable" in str(error):
             return "admission_observation_stale"
+        if "unrecorded instance" in str(error):
+            return "admission_conflict"
         return "admission_insufficient"
 
     def _step(self, operation: str, argv: list[str]) -> Callable[[], object]:
@@ -327,41 +329,45 @@ class LifecycleHelper(object):
         return lambda: self.runner(argv, operation)
 
     def _mutate(self, action: str, name: str, steps: list[Callable[[], object]], *, reserve: bool = False,
-                release: bool = False, fresh: bool = False) -> None:
-        """Run one audited lifecycle mutation, rolling back a reservation it could not complete."""
+                release: bool = False, fresh: bool = False, allow_pending: bool = False) -> None:
+        """Run one audited lifecycle mutation, compensating for a reservation it could not complete."""
         name = self._name(name)
         started = time.monotonic()
         self.events.ensure_available()
-        descriptor: int | None = None
-        records: dict[str, dict[str, int]] | None = None
-        observed: dict[str, int | bool] | None = None
-        previous: dict[str, int] | None = None
-        created = False
+        ledger: Ledger | None = None
+        observed: _ResourceFacts | None = None
+        previous: _Record | None = None
+        applied = False
         try:
-            descriptor, records, observed, previous = self._reservation(name, reserve, fresh)
+            if reserve:
+                ledger, observed, previous = self._admit(name, fresh)
+            else:
+                self._require_owner(name, allow_pending=allow_pending)
             for step in steps:
                 step()
-                created = fresh
-            if descriptor is not None and records is not None:
-                save_allocations(descriptor, records)
+            # Incus made the change, so the ledger already tells the truth about it; a later
+            # ledger or audit failure is raised as is and never compensated.
+            applied = True
             if release:
                 self._release(name)
-            self._emit(action, "success", name, started=started, observed=observed)
+            self.emit(action, "success", name, started=started, observed=observed)
         except AdmissionError as exc:
             code = self._admission_error_code(exc)
-            self._emit(action, "denied", name, error_code=code, started=started, observed=observed)
+            self.emit(action, "denied", name, error_code=code, started=started, observed=observed)
             raise
         except Exception as exc:
-            # Only an instance this invocation launched is deleted, including a launch that
-            # timed out after the daemon may have created it; a reservation that never
-            # completed is returned to the state it replaced.
-            timed_out = isinstance(exc, subprocess.TimeoutExpired)
-            self._rollback_reservation(name, descriptor, records, previous, delete=created or (fresh and timed_out))
-            self._emit(action, "failure", name, error_code=_failure_code(exc), started=started, observed=observed)
-            raise
+            if applied:
+                raise
+            cleanup_code = (self._compensate(name, ledger, previous, fresh=fresh, error=exc)
+                            if ledger is not None else None)
+            self.emit(action, "failure", name, error_code=_failure_code(exc), started=started, observed=observed)
+            if cleanup_code is None:
+                raise
+            self.emit("cleanup", "failure", name, error_code=cleanup_code, started=started)
+            raise CleanupPendingError(action, name, _failure_code(exc), cleanup_code) from exc
         finally:
-            if descriptor is not None:
-                unlock(descriptor)
+            if ledger is not None:
+                ledger.release()
 
     def create(self, name: str) -> None:
         name = self._name(name)
@@ -376,7 +382,7 @@ class LifecycleHelper(object):
                                      f"{self.config.vm.memory_mib}MiB", "--project", project]),
         ]
         self._mutate("create", name, steps, reserve=True, fresh=True)
-        self._emit("boot", "success", name)
+        self.emit("boot", "success", name)
     def start(self, name: str) -> None:
         name = self._name(name)
         with state_lock(self.config.state_dir, name):
@@ -407,10 +413,13 @@ class LifecycleHelper(object):
         if confirmation != name:
             raise UsageError("delete requires the exact sandbox name as confirmation")
         with state_lock(self.config.state_dir, name):
-            self._require_owner(name)
+            self._require_owner(name, allow_pending=True)
             self._terminate_task(name)
-            self._mutate("delete", name, [lambda: self._delete_instance(name)], release=True)
-            self._forget(name)
+            self._mutate("delete", name, [lambda: self._delete_instance(name)], allow_pending=True)
+            with self.ledger() as ledger:
+                ledger.records.pop(name, None)
+                ledger.save()
+            self.forget(name)
 
     def attach(self, name: str) -> None:
         name = self._name(name)
@@ -421,10 +430,16 @@ class LifecycleHelper(object):
     def list(self) -> None:
         self.events.ensure_available()
         self.runner([_INCUS, "list", "--project", self.config.project, "--format", "json"], "query")
-        self._emit("status", "success", None)
+        self.emit("status", "success", None)
 
     def status(self, name: str) -> None:
         self._query(name, "status")
+
+    def reconcile(self) -> None:
+        """Bring the ledger in line with one positive inventory of the sandbox project."""
+        if self.caller_uid != self.config.operator_uid:
+            raise UsageError(_INVALID_OPERATOR)
+        print(json.dumps(reconcile_ledger(self), separators=(",", ":")))
 
     def diagnose(self, name: str) -> None:
         self._query(name, "diagnose")
@@ -432,10 +447,10 @@ class LifecycleHelper(object):
     def dispatch(self, action: str, name: str | None = None, confirmation: str | None = None) -> None:
         if action not in _ACTIONS:
             raise UsageError("unsupported lifecycle action")
-        if action == "list":
+        if action in {"list", "reconcile"}:
             if name is not None:
-                raise UsageError("list does not accept a sandbox name")
-            self.list()
+                raise UsageError(f"{action} does not accept a sandbox name")
+            getattr(self, action)()
             return
         if name is None:
             raise UsageError("lifecycle action requires a sandbox name")
@@ -470,3 +485,6 @@ if __name__ == "__main__":
     except (UsageError, AdmissionError) as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(64)
+    except CleanupPendingError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1)
