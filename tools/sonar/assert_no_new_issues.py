@@ -35,6 +35,10 @@ class AnalysisScope:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-key", required=True, help="SonarCloud project key.")
+    parser.add_argument(
+        "--organization",
+        help="SonarCloud organization; required when SONAR_TOKEN is an organization token.",
+    )
     parser.add_argument("--pull-request", help="Pull request number to inspect.")
     parser.add_argument("--branch", help="Branch name to inspect when this is not a PR run.")
     parser.add_argument(
@@ -72,8 +76,9 @@ def resolve_scope(args: argparse.Namespace) -> AnalysisScope:
     raise SystemExit("Unable to determine SonarCloud PR or branch scope.")
 
 
-def build_request_url(project_key: str, scope: AnalysisScope, page: int) -> str:
+def build_request_url(project_key: str, scope: AnalysisScope, page: int, organization: str | None) -> str:
     query = {
+        **({"organization": organization} if organization else {}),
         "componentKeys": project_key,
         scope.query_key: scope.query_value,
         "issueStatuses": OPEN_ISSUE_STATUSES,
@@ -91,12 +96,14 @@ def fetch_json(url: str, token: str) -> dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
-def fetch_issues(project_key: str, scope: AnalysisScope, token: str) -> list[dict[str, Any]]:
+def fetch_issues(
+    project_key: str, scope: AnalysisScope, token: str, organization: str | None,
+) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     page = 1
     total = 0
     while page == 1 or len(issues) < total:
-        payload = fetch_json(build_request_url(project_key, scope, page), token)
+        payload = fetch_json(build_request_url(project_key, scope, page, organization), token)
         total = int(payload.get("total", 0))
         issues.extend(payload.get("issues", []))
         if not payload.get("issues"):
@@ -111,11 +118,12 @@ def fetch_issues_with_retry(
     token: str,
     wait_seconds: int,
     poll_interval: int,
+    organization: str | None = None,
 ) -> list[dict[str, Any]]:
     deadline = time.monotonic() + wait_seconds
     while True:
         try:
-            return fetch_issues(project_key, scope, token)
+            return fetch_issues(project_key, scope, token, organization)
         except Exception as exc:  # noqa: BLE001 - CI gate should retry any transient API failure.
             if time.monotonic() >= deadline:
                 raise SystemExit(f"SonarCloud issue lookup failed: {exc}") from exc
@@ -147,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         token,
         args.wait_seconds,
         args.poll_interval,
+        args.organization,
     )
     if not issues:
         print(f"SonarCloud new-issue gate passed for {scope.label}.")

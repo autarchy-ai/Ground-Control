@@ -109,6 +109,10 @@ def status_document(name: str, state: str, assigned: dict[str, int | str], obser
                     task: Callable[[bool], dict[str, object]]) -> dict[str, object]:
     """The closed `status`/`diagnose` document for one recorded VM in its ledger `state`."""
     available, status = status_state(incus_info, observed)
+    if state == CLEANUP_PENDING:
+        failure_reason = "cleanup_pending"
+    else:
+        failure_reason = "none" if available else "observation_unavailable"
     return {
         "schema": "gc.incus-sandbox.status/v3",
         "sandbox_id": name,
@@ -118,7 +122,6 @@ def status_document(name: str, state: str, assigned: dict[str, int | str], obser
         "observed": observed_facts(observed, incus_info, available),
         "admission_headroom": headroom,
         "last_transition": "unavailable",
-        "failure_reason": ("cleanup_pending" if state == CLEANUP_PENDING
-                           else "none" if available else "observation_unavailable"),
+        "failure_reason": failure_reason,
         "task_environment": task(status == "running"),
     }

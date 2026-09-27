@@ -54,6 +54,6 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       - name: SonarCloud zero-open-issues gate
         if: ${{ !cancelled() }}
-        run: python3 tools/sonar/assert_no_new_issues.py --project-key autarchy-ai_Ground-Control
+        run: python3 tools/sonar/assert_no_new_issues.py --project-key autarchy-ai_Ground-Control --organization autarchy-ai
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

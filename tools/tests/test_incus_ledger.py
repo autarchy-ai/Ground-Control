@@ -242,29 +242,31 @@ class FailedCompensationTest(LedgerTestCase):
         self.assertEqual(ledger(self)["agent-1"]["state"], "running")
 
 
+def fail_success_events(case: LedgerTestCase) -> None:
+    """Make every success event fail to write, as a full or damaged log would."""
+    real_write = case.writer.write
+
+    def write(event: dict[str, object]) -> None:
+        if event.get("outcome") == "success":
+            raise OSError(28, "no space")
+        real_write(event)
+
+    case.writer.write = write
+
+
 class AuditFailureAfterSideEffectTest(LedgerTestCase):
     """An Incus step that succeeded is never compensated for a later audit failure (review core-F3)."""
-
-    def fail_success_events(self) -> None:
-        real_write = self.writer.write
-
-        def write(event: dict[str, object]) -> None:
-            if event.get("outcome") == "success":
-                raise OSError(28, "no space")
-            real_write(event)
-
-        self.writer.write = write
 
     def test_a_started_vm_stays_charged_when_its_event_cannot_be_written(self) -> None:
         self.helper.create("agent-1")
         self.helper.stop("agent-1")
-        self.fail_success_events()
+        fail_success_events(self)
         with self.assertRaises(OSError):
             self.helper.start("agent-1")
         self.assertEqual(ledger(self)["agent-1"]["state"], "running")
 
     def test_a_created_vm_is_kept_and_owned_when_its_event_cannot_be_written(self) -> None:
-        self.fail_success_events()
+        fail_success_events(self)
         with self.assertRaises(OSError):
             self.helper.create("agent-1")
         self.assertIn("agent-1", self.instances)
